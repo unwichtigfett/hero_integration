@@ -408,7 +408,7 @@ class TestDeferredReplay(TestCase):
 class TestDeferredWakeups(TestCase):
     def test_only_successful_nonpreview_runs_enqueue_their_own_relationship_page(self):
         run = NS(state='Running',mode='Execute')
-        fake = NS(db=NS(get_value=Mock(return_value=run),exists=Mock(return_value=True)),enqueue=Mock())
+        fake = NS(db=NS(get_value=Mock(return_value=run),exists=Mock(return_value=True),sql=Mock(return_value=[])),enqueue=Mock())
         with patch.object(deferred,'frappe',fake), patch.object(deferred,'installed',return_value=True):
             for state in ('Running','Queued','Blocked','Failed','Cancelled','Completed With Conflicts'):
                 run.state = state

@@ -36,6 +36,100 @@ class TestSync(unittest.TestCase):
   self.field=BoundField("1",self.binding,("name",))
  def engine(self,provider,processor=None,fields=None): return SyncEngine(self.ledger,plan(),provider,Index([self.field] if fields is None else fields),processor or Processor())
  def configured(self,engine): return engine.configure(self.config)
+ def test_hundred_bound_records_progress_across_budgets_with_unresolved_field(self):
+  from dataclasses import replace
+  from unittest.mock import Mock
+  ids = [f"{n:03}" for n in range(100)]
+  fields = [replace(self.field, object_id=key) for key in ids]
+  provider = Mock(capabilities=ChangeCapabilities(False, False, True))
+  provider.read_bound.side_effect = lambda key: {"id": key}
+  processor = Mock()
+  processor.accepted.return_value = False
+  open_reviews = set()
+  def apply(row, *_):
+   if row["id"] == "001":
+    open_reviews.add("001")
+    return SyncStatus.CONFLICT
+   return True
+  processor.process_event.side_effect = apply
+  processor.durable_conflict.return_value = True
+  engine = self.engine(provider, processor, fields)
+  engine.index.has_open_review = lambda *_: bool(open_reviews)
+  state = self.configured(engine)
+  visited = []
+  for cycle in range(4):
+   reserved = []
+   def reserve(_kind, identity):
+    if len(reserved) == 50: return False
+    reserved.append(identity)
+    return True
+   engine.reserve_identity = reserve
+   state = engine.compare_bound(SyncRun(f"bounded-{cycle}", "site", "admin", state.generation, False))
+   visited.extend(reserved)
+   self.assertEqual(state.status, SyncStatus.BUDGET_REACHED if cycle % 2 == 0 else SyncStatus.CONFLICT)
+   self.assertEqual(state.bounded_after, "049" if cycle % 2 == 0 else None)
+   self.assertIsNone(state.cursor)
+  self.assertEqual(visited, ids + ids)
+  self.assertEqual([call.args[0] for call in provider.read_bound.call_args_list], visited)
+
+ def test_bounded_replay_checkpoints_accepted_conflict_without_fetching_or_consuming_it_again(self):
+  from dataclasses import replace
+  from unittest.mock import Mock
+  provider = Mock(capabilities=ChangeCapabilities(False, False, True))
+  processor = Mock()
+  processor.accepted.return_value = SyncStatus.CONFLICT
+  engine = self.engine(provider, processor, [self.field, replace(self.field, object_id="2")])
+  state = self.configured(engine)
+  engine.reserve_identity = lambda kind, identity: identity == "1"
+  state = engine.compare_bound(SyncRun("bounded", "site", "admin", state.generation, False))
+  self.assertEqual((state.status, state.bounded_after, state.cursor), (SyncStatus.BUDGET_REACHED, "1", None))
+  provider.read_bound.assert_not_called()
+  processor.process_event.assert_not_called()
+
+ def test_delta_watermark_requires_persisted_field_review(self):
+  from unittest.mock import Mock
+  from dataclasses import replace
+  for persisted in (False, True):
+   self.ledger = InMemorySyncLedger()
+   processor = Mock()
+   processor.accepted.return_value = False
+   processor.process_event.side_effect = [SyncStatus.CONFLICT, True]
+   processor.durable_conflict.return_value = persisted
+   provider = Provider({None: ChangePage(({"id":"1"},{"id":"2"}), None, True, "cutoff")})
+   engine = self.engine(provider, processor, [self.field, replace(self.field, object_id="2")])
+   state = self.configured(engine)
+   state = engine.pending_sync(SyncRun("delta","site","admin",state.generation,False))
+   self.assertEqual(state.status, SyncStatus.CONFLICT)
+   self.assertEqual(state.cursor, "cutoff" if persisted else None)
+   self.assertEqual(processor.process_event.call_count, 2)
+
+ def test_cursor_replay_reports_open_review_after_watermark_failure(self):
+  from dataclasses import replace
+  from unittest.mock import Mock, patch
+  receipts = {}
+  def apply(record, fields, key, version):
+   identity = record["id"]
+   receipts[identity, key] = SyncStatus.CONFLICT if identity == "1" else True
+   return receipts[identity, key]
+  processor = Mock()
+  processor.process_event.side_effect = apply
+  processor.accepted.side_effect = lambda identity, key, fields: receipts.get((identity, key), False)
+  processor.durable_conflict.return_value = True
+  provider = Provider({None: ChangePage(({"id":"1"},{"id":"2"}), None, True, "watermark")})
+  engine = self.engine(provider, processor, [self.field, replace(self.field, object_id="2")])
+  state = self.configured(engine)
+  save = self.ledger.save_state
+  def fail_watermark(new, expected):
+   if new.cursor == "watermark":
+    raise RuntimeError("simulated crash after record commits")
+   return save(new, expected)
+  with patch.object(self.ledger, "save_state", side_effect=fail_watermark):
+   state = engine.pending_sync(SyncRun("first", "site", "admin", state.generation, False))
+  self.assertEqual((state.status, state.cursor), (SyncStatus.FAILED, None))
+  state = engine.pending_sync(SyncRun("replay", "site", "admin", state.generation, False))
+  self.assertEqual((state.status, state.cursor), (SyncStatus.CONFLICT, "watermark"))
+  self.assertEqual([call.args[0]["id"] for call in processor.process_event.call_args_list], ["1", "2"])
+
  def test_delta_fetches_bindings_only_for_identities_on_the_page(self):
   from unittest.mock import Mock
   provider = Provider({None: ChangePage(({"id": "1"}, {"id": "2"}), None, True, "w")})

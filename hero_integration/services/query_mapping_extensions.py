@@ -54,11 +54,15 @@ def bound_user(value, source_instance):
     if type(value) is not int or value <= 0:
         raise ValueError('User identity must be a positive integer.')
     import frappe
-    rows = frappe.db.sql('''SELECT target_name FROM `tabHERO Object Binding`
+    rows = frappe.db.sql('''SELECT target_name, target_incarnation FROM `tabHERO Object Binding`
         WHERE site_scope=%s AND source_instance=%s AND object_type=%s AND external_object_id=%s
           AND target_doctype=%s AND lifecycle=%s ORDER BY name LIMIT 2''',
         (frappe.local.site, source_instance, 'User', str(value), 'User', 'VALID'), as_dict=True)
     if len(rows) != 1 or not frappe.db.get_value('User', rows[0].target_name, 'enabled'):
         return None
-    frappe.has_permission('User', 'read', doc=frappe.get_doc('User', rows[0].target_name), throw=True)
+    from hero_integration.services.binding_registry import matches_incarnation
+    user = frappe.get_doc('User', rows[0].target_name)
+    if not matches_incarnation(rows[0].target_incarnation, user.creation):
+        return None
+    frappe.has_permission('User', 'read', doc=user, throw=True)
     return rows[0].target_name

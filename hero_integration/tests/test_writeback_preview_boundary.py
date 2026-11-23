@@ -14,6 +14,7 @@ class Document:
     doctype = 'Customer'
     name = 'CUST-1'
     modified = 'v1'
+    creation = '2026-01-01 00:00:00'
 
     def __init__(self, fields):
         self.__dict__.update(fields)
@@ -197,11 +198,14 @@ class TestWritebackPreviewBoundary(unittest.TestCase):
         binding = SimpleNamespace(object_binding_key='object', source_instance='hero', mapping_revision=3,
                                   target_doctype='Customer', target_field='email_id', target_name='CUST-1',
                                   identity_key='binding', revision=2)
-        parent = SimpleNamespace(source_instance='hero', external_object_id='42', lifecycle='VALID', reconciliation='')
-        storage = SimpleNamespace(field=lambda *a: binding, object=lambda *a: parent)
+        parent = SimpleNamespace(source_instance='hero', external_object_id='42', lifecycle='VALID', reconciliation='',
+                                 target_doctype='Customer', mapping_revision=3, target_name='CUST-1', identity_key='object', site_scope='test.local',
+                                 target_incarnation='2026-01-01T00:00:00.000000')
+        storage = SimpleNamespace(field=lambda *a: binding, object=lambda *a: parent, fields_for_object=lambda *a: [binding])
         selection = SimpleNamespace(mapping_revision=3, schema_snapshot='S1', schema_fingerprint='fp')
         plan = SimpleNamespace(selection=selection, plan_key='plan', generation=4)
         service = SimpleNamespace(resolve_executable_plan=lambda *a: plan)
+        self.frappe.db = SimpleNamespace(exists=lambda *a: False)
         self.frappe.local = SimpleNamespace(site='test.local')
         self.frappe.session = SimpleNamespace(user='owner')
         with patch.object(api, 'frappe', self.frappe), patch.object(api, '_validated_snapshot', return_value=(self.snapshot, schema())), \

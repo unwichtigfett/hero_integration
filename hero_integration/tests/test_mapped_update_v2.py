@@ -48,6 +48,14 @@ def mapping(area='HeroTasks'):
 
 
 class TestMappedUpdateSchema(TestCase):
+    def test_project_update_guard_requires_the_bound_uid_and_explicit_active_lifecycle(self):
+        ctx = SimpleNamespace(content={"area": "HeroProjectMatches"}, hero_id="42")
+        for row in ({"id": 42}, {"id": 42, "is_deleted": True}, {"id": 42, "is_deleted": 0},
+                    {"id": 43, "is_deleted": False}, {"id": "042", "is_deleted": False}):
+            with self.subTest(row=row), self.assertRaises(update.MappedUpdateError):
+                update._guard_record(ctx, row)
+        update._guard_record(ctx, {"id": 42, "is_deleted": False})
+
     def test_all_nine_are_schema_bound(self):
         for area in update.AREAS:
             with self.subTest(area=area):self.assertEqual(update.normalise_mapping(mapping(area),SCHEMA)['area'],area)
@@ -170,8 +178,9 @@ class TestMappedUpdatePrepare(TestCase):
           proof=SimpleNamespace(fingerprint='proof'))
         return ctx
 
-    def prepare(self,area,remote):
+    def prepare(self,area,remote,review_fields=None):
         ctx=self.context(area)
+        ctx.review_fields=review_fields or {}
         def source(_ctx,item,_remote):
             ctx.source_documents[item['id']]=ctx.document;ctx.source_links[item['id']]=ctx.link
             return ctx.document,'new'
@@ -190,9 +199,37 @@ class TestMappedUpdatePrepare(TestCase):
         self.assertEqual(result.variables['input']['email'],'person@example.org')
         self.assertEqual(result.variables['input']['first_name'],'First')
 
+    def test_held_required_employee_input_prevents_resending_that_field(self):
+        remote={'id':7,'first_name':'First','last_name':'Last','email':'person@example.org','name':'old'}
+        with self.assertRaisesRegex(update.MappedUpdateBindingError, 'requires a field held'):
+            self.prepare('HeroEmployees',remote,{'first_name':'first_name'})
+        result=self.prepare('HeroEmployees',remote,{'signature':'signature'})
+        self.assertEqual(result.variables['input']['name'],'new')
+        self.assertNotIn('signature',result.variables['input'])
+
     def test_file_binds_actual_scalar_variable_names(self):
         result=self.prepare('HeroDocuments',{'id':7,'name':'old'})
         self.assertEqual(result.variables,{'key':7,'value':'new'})
+
+    def test_file_ack_only_confirms_the_sent_metadata_field(self):
+        from hero_integration.services.file_transfer import value_hash
+        import json
+        ctx = self.context('HeroDocuments')
+        item, = ctx.content['assignments']
+        field = item['source']['field']
+        before = {'version': 2, 'mapped_fields': [field, 'description'], 'fields': 'old-remote-digest',
+                  'target': {field: value_hash('previous'), 'description': value_hash('local baseline')}}
+        ctx.link.target_field_hashes = json.dumps(before)
+        ctx.link.source_field_hashes = '{}'
+        ctx.source_links[item['id']] = ctx.link
+        change = {'id': item['id'], 'local': 'sent'}
+        write = Mock()
+        with patch.object(update,'_canonical',return_value='sent'), patch.object(update,'frappe',SimpleNamespace(db=SimpleNamespace(set_value=write))):
+            update._acknowledge(ctx,SimpleNamespace(changes=[change]),{field:'sent','description':'independent change'})
+        stored = json.loads(write.call_args.args[2]['target_field_hashes'])
+        self.assertEqual(stored['target'][field],value_hash('sent'))
+        self.assertEqual((stored['target']['description'],stored['fields']),
+                         (before['target']['description'],before['fields']))
 
     def test_missing_required_member_blocks_before_transport(self):
         with self.assertRaisesRegex(ValueError,'required unchanged'):

@@ -113,9 +113,18 @@ class TestSyntheticDeferredMariaDB(TestCase):
             frappe.db.delete('HERO Integration Run',{'source_instance':self.source})
             frappe.db.commit()
 
+    def _bind_fixture_target(self, doctype, name, source_id):
+        from frappe.modules.utils import get_module_app
+        from hero_integration.services.binding_registry import BindingRegistryService, FrappeBindingStorage
+        BindingRegistryService(FrappeBindingStorage()).create_or_resolve_object_binding(
+            site_scope=frappe.local.site, source_instance=self.source, object_type=doctype,
+            external_object_id=str(source_id), target_app=get_module_app(frappe.get_meta(doctype).module),
+            target_doctype=doctype, target_name=name, mapping_definition_id="synthetic-mapping", mapping_revision=1)
+
     def _task_and_pending(self):
         result = migration._migrate_mapped_task(self.row, self.run, self.plan, self.scope)
         self.assertEqual(result.code, 'CREATED')
+        self._bind_fixture_target('Task', result.target_name, self.row['id'])
         self.assertFalse(frappe.get_doc('Task', result.target_name).project)
         with patch.object(migration, '_mapping_plan_for_run', return_value=self.plan):
             deferred.remember(self.run, 'Task', self.row, result)
@@ -572,8 +581,10 @@ class TestSyntheticDeferredMariaDB(TestCase):
             'gender':genders[0], 'date_of_birth':'1990-01-01', 'create_user_permission':0,
             'create_user_automatically':0}).insert()
         baseline = {name:employee.get(name) for name in ('first_name','last_name','status','company','date_of_joining')}
+        self._bind_fixture_target('Employee', employee.name, row['id'])
         employees._write_link(None, self.source, 'partner', row['id'], employee, baseline, row, read.mapping_version)
         self.assertEqual(employees.upsert(row, self.source, company, [], read=read), 'updated')
+        self.assertEqual(employees.upsert(row, self.source, company, [], read=read), 'unchanged')
         employees.remember_relationships(self.run.name, self.source, company, read, row)
         pending = deferred.observation_key(self.source, 'HeroEmployees', '70001', self.run.name)
         saved = frappe.get_doc(deferred.MAIN, pending)
@@ -620,7 +631,7 @@ class TestSyntheticDeferredMariaDB(TestCase):
         with self.assertRaises(employees.EmployeeMigrationBlocked):
             self._resolve_employee(employees, read, company, pending.name)
         self.assertFalse(frappe.get_doc('Employee', saved['employee_name']).user_id)
-        self.assertFalse(frappe.db.exists('HERO Object Binding', {'source_instance':self.source}))
+        self.assertFalse(frappe.db.exists('HERO Object Binding', {'source_instance':self.source,'target_doctype':'User'}))
 
     def test_local_employee_edit_is_preserved_before_binding(self):
         import json
@@ -632,7 +643,7 @@ class TestSyntheticDeferredMariaDB(TestCase):
             self._resolve_employee(employees, read, company, pending.name)
         self.assertEqual(frappe.db.get_value('Employee', employee_name, 'first_name'), 'Local employee edit')
         self.assertFalse(frappe.get_doc('Employee', employee_name).user_id)
-        self.assertFalse(frappe.db.exists('HERO Object Binding', {'source_instance':self.source}))
+        self.assertFalse(frappe.db.exists('HERO Object Binding', {'source_instance':self.source,'target_doctype':'User'}))
 
     def test_primary_customer_contact_and_address_wait_for_success(self):
         from hero_integration.tests.mapping_fixture import fixture_plan
@@ -712,6 +723,7 @@ class TestSyntheticDeferredMariaDB(TestCase):
             'sync_status':'Synchronized', 'source_payload_hash':files.source_hash(row),
             'target_payload_hash':hashlib.md5(content).hexdigest(), 'mapping_version':read.mapping_version,
             'target_field_hashes':files._target_baseline(document.name, fields)}).insert()
+        self._bind_fixture_target('File',document.name,row['id'])
         detail = {'file_upload_matches':[{'project_match_id':20001}], 'file_upload_links':[], 'customer_document':None}
         frappe.db.set_value('HERO Integration Run', self.run.name, 'state', 'Running')
         deferred.remember_file(self.run.name, self.source, 'HeroDocuments', read, row, detail)
@@ -836,6 +848,7 @@ class TestSyntheticDeferredMariaDB(TestCase):
             self.run,source_instance=self.source,creation_values={'event_type':'Private','send_reminder':0,
                 'sync_with_google_calendar':0,'add_video_conferencing':0})
         self.assertEqual(result.code,'CREATED')
+        self._bind_fixture_target('Event', result.target_name, self.row['id'])
         with patch.object(migration,'_mapping_plan_for_run',return_value=self.plan):
             deferred.remember(self.run,'CalendarEvent',self.row,result)
         pending=deferred.observation_key(self.source,'HeroCalendarEvents','50001',self.run.name)

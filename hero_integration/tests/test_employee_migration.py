@@ -50,10 +50,21 @@ class TestEmployeeWrites(unittest.TestCase):
             return doc
         return self.docs[(dt, name)]
 
+    def bind_existing_user(self):
+        baseline = {"email": self.user.email}
+        self.links["User"] = Doc(name="account-link", target_name=self.user.name, target_field_hashes=json.dumps(baseline),
+                                 target_payload_hash=em._digest(baseline))
+
+    def test_login_match_alone_does_not_authorize_user_adoption(self):
+        with self.assertRaisesRegex(em.EmployeeMigrationBlocked, 'verified source User'):
+            self.run_import()
+        self.write_link.assert_not_called()
+
     def run_import(self):
         return em.upsert(self.row, 'source-a', 'Synthetic Company', {'de'})
 
     def test_insert_reuses_native_fields_and_explicit_company_joining_date(self):
+        self.bind_existing_user()
         self.assertEqual(self.run_import(), 'added')
         employee = self.new_docs[0]
         self.assertEqual(employee.company, 'Synthetic Company')
@@ -69,6 +80,7 @@ class TestEmployeeWrites(unittest.TestCase):
         self.assertEqual(self.write_link.call_count, 2)
 
     def test_partner_id_preserves_identity_when_source_email_changes(self):
+        self.bind_existing_user()
         self.find_user.return_value = self.user.name
         self.row['user']['email'] = 'changed@example.invalid'
         self.assertEqual(self.run_import(), 'added')
@@ -123,6 +135,7 @@ class TestEmployeeWrites(unittest.TestCase):
         self.assertEqual(self.new_docs, [])
 
     def test_employee_link_changed_locally_is_a_conflict_before_any_write(self):
+        self.bind_existing_user()
         employee = Doc(doctype='Employee', name='employee-1', user_id=self.user.name, first_name='Locally changed')
         self.docs[('Employee', employee.name)] = employee
         self.links['partner'] = Doc(target_name=employee.name, target_field_hashes=json.dumps({'first_name':'Synthetic'}),
@@ -133,6 +146,7 @@ class TestEmployeeWrites(unittest.TestCase):
         self.assertNotIn('phone', self.user)
 
     def test_resume_after_local_and_source_edits_preserves_local_employee(self):
+        self.bind_existing_user()
         # Use the real employee writer and baseline guard across both invocations.
         isolate_direct_materialization(self)
         checkpoint = {}

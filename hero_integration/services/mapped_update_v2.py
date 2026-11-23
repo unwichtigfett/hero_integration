@@ -252,12 +252,12 @@ def validate_sources(content, *, field_provider=None):
             raise MappedUpdateError('Only reviewed Item master names may map to textual HERO master fields.')
 
 
-def _link(doctype,name,source,kind):
+def _link(doctype,name,source,kind,*,check_observation=True):
     rows=frappe.get_all('HERO Integration Link',filters={'source_system':'HERO','source_instance':source,
         'target_doctype':doctype,'target_name':name,'source_type':kind},pluck='name',limit_page_length=2)
     if len(rows)!=1: raise MappedUpdateBindingError('Exactly one native source binding is required.')
     link=frappe.get_doc('HERO Integration Link',rows[0])
-    if link.sync_status!='Synchronized' or getattr(link,'observed_source_hash',None) and link.observed_source_hash!=link.source_payload_hash:
+    if link.sync_status!='Synchronized' or check_observation and getattr(link,'observed_source_hash',None) and link.observed_source_hash!=link.source_payload_hash:
         raise MappedUpdateBindingError('The native binding requires synchronization or conflict review.')
     return link
 
@@ -304,7 +304,7 @@ def _load_context(mapping_name,doctype,name):
         raise MappedUpdateError('The selected document is outside this mapping namespace.')
     document=frappe.get_doc(doctype,name);frappe.has_permission(doctype,'write',doc=document,throw=True)
     proof=capture_source(snapshot,config.source_instance,config)
-    link=_link(doctype,name,proof.source_instance,AREAS[content['area']][1])
+    link=_link(doctype,name,proof.source_instance,AREAS[content['area']][1],check_observation=False)
     read=send_helpers._load_read(content['read_service'],snapshot)
     if read.contract.target_operation!=content['area'] or read.contract.identity_path!=content['identity']['read_path']:
         raise MappedUpdateError('Approved readback and native source identity differ.')
@@ -325,6 +325,9 @@ def _load_context(mapping_name,doctype,name):
     from hero_integration.services.migration import _mapping_plan_for_run
     ctx.query_plan=_mapping_plan_for_run(SimpleNamespace(graphql_service=read.service.name,graphql_mapping=read.mapping.name,
         service_revision=read.contract.service_revision,mapping_revision=read.contract.mapping_revision),content['area'])
+    ctx.review_fields = send_helpers._bound_review_fields(document, link, read)
+    if not ctx.review_fields and getattr(link, 'observed_source_hash', None) and link.observed_source_hash != link.source_payload_hash:
+        raise MappedUpdateBindingError('The native binding requires synchronization or conflict review.')
     return ctx
 
 
@@ -374,7 +377,13 @@ def _read_record(ctx,client):
 
 
 def _guard_record(ctx,record):
+    from hero_integration.services.writeback_readback import active_bound_project
     area=ctx.content['area']
+    from hero_integration.services.mapping_runtime import source_lifecycle
+    if area == 'HeroProjectMatches' and not active_bound_project(record, ctx.hero_id):
+        raise MappedUpdateError('The HERO record is no longer eligible for this bound write.')
+    if source_lifecycle(area, record) in {'CONTACT_PERSON', 'UNVERIFIED'}:
+        raise MappedUpdateError('The HERO contact is no longer a Customer.')
     if record.get('is_deleted') is True or record.get('deleted') is True:
         raise MappedUpdateError('A deleted HERO record cannot be updated.')
     if area=='HeroCalendarEvents' and (record.get('readonly') is not False or record.get('is_recurring') is not False):
@@ -727,8 +736,11 @@ def _prepare(ctx,client,*,preview_only=False):
     actual_id=_typed(int(actual_id) if str(get_named_type(identity_kind))=='Int' else str(actual_id),identity_kind)
     inputs={};_put(inputs,ctx.content['identity']['input_path'],actual_id)
     copied=[]
+    held_sources = set(getattr(ctx, 'review_fields', {}).values())
     for copy in ctx.content['required_readback']:
         if copy['input_path'].endswith('.address.id'): continue
+        if copy['read_path'] in held_sources:
+            raise MappedUpdateBindingError('The approved mutation requires a field held for conflict review.')
         observed=_at(remote,copy['read_path'])
         if observed is MISSING: raise MappedUpdateError('A required unchanged input member is missing from approved readback.')
         if copy['input_path'].endswith('.id') and (type(observed) is not int or observed<=0):
@@ -772,7 +784,9 @@ def _prepare(ctx,client,*,preview_only=False):
         change={'id':item['id'],'field':item['input_path'],'source_doctype':doc.doctype,
             'source_field':item['source']['field'],'label':frappe.get_meta(doc.doctype).get_field(item['source']['field']).label,
             'hero':None if previous is MISSING else previous,'new':wire,'local':local,'canonical_remote':canonical}
-        if not _baseline_matches(ctx,item,remote,canonical): conflicts.append(change)
+        if (doc.doctype == ctx.document.doctype and item['source']['field'] in getattr(ctx, 'review_fields', ())
+                or not _baseline_matches(ctx,item,remote,canonical)):
+            conflicts.append(change)
         else: changes.append(change)
     # All mapped event times travel together: an all-day toggle cannot silently
     # reinterpret an unchanged local end date under the other interval convention.
@@ -782,12 +796,23 @@ def _prepare(ctx,client,*,preview_only=False):
         if not needed<=assigned.keys(): raise MappedUpdateError('Event time updates require start, end and all-day bindings together.')
         for path in needed:
             item,doc,local,wire,previous,canonical=evaluated[path]
-            if not _baseline_matches(ctx,item,remote,canonical) and not any(c['id']==item['id'] for c in conflicts):
+            if (item['read_path'] in held_sources or not _baseline_matches(ctx,item,remote,canonical)) and not any(c['id']==item['id'] for c in conflicts):
                 conflicts.append({'id':item['id'],'field':path,'source_doctype':doc.doctype,
                     'source_field':item['source']['field'],
                     'label':frappe.get_meta(doc.doctype).get_field(item['source']['field']).label,
                     'hero':None if previous is MISSING else previous,'new':wire,'local':local,'canonical_remote':canonical})
-        selected|=needed
+        if any(change['field'] in needed for change in conflicts):
+            changes = [change for change in changes if change['field'] not in needed]
+            selected -= needed
+        else:
+            selected |= needed
+    # An input required by the approved mutation cannot be omitted, even when
+    # the conflicting assignment itself was removed from the requested changes.
+    if {copy['input_path'] for copy in copied} & {change['field'] for change in conflicts}:
+        changes = []
+        selected.clear()
+    sent_ids = {evaluated[path][0]['id'] for path in selected}
+    checks = [check for check in checks if check['id'] in sent_ids]
     for path in selected:
         parts=path.split('.');owner=inputs
         for part in parts[:-1]: owner=owner.setdefault(part,{})
@@ -796,6 +821,8 @@ def _prepare(ctx,client,*,preview_only=False):
         if not copy['input_path'].endswith('.address.id'): continue
         prefix=copy['input_path'].rsplit('.',1)[0]+'.'
         if not any(path.startswith(prefix) for path in selected): continue
+        if copy['read_path'] in held_sources:
+            raise MappedUpdateBindingError('The approved mutation requires a field held for conflict review.')
         observed=_at(remote,copy['read_path'])
         if type(observed) is not int or observed<=0:
             raise MappedUpdateError('The related HERO identity is invalid.')
@@ -826,7 +853,7 @@ def preview(mapping_name,doctype,name,*,client=None):
     return {'mapping':mapping_name,'doctype':doctype,'name':name,'area':ctx.content['area'],
         'hero_id':ctx.hero_id,'mutation_id':prepared.mutation_id,'create':False,'changes':prepared.changes,
         'conflicts':prepared.conflicts,'fingerprint':prepared.fingerprint,'sending_enabled':enabled,
-        'can_send':enabled and bool(prepared.changes) and not prepared.conflicts}
+        'can_send':enabled and bool(prepared.changes)}
 
 
 def _check_local_current(ctx,prepared):
@@ -868,11 +895,11 @@ def _acknowledge(ctx,prepared,after):
             state.setdefault('values',{})[field]=value
         elif area=='HeroEmployees': state[field]=str(change['local'] or '')
         elif area in {'HeroDocuments','HeroPictures'}:
-            from hero_integration.services.file_transfer import field_hashes,mapped_values,value_hash
+            from hero_integration.services.file_transfer import value_hash
             if state.get('version')!=2 or field not in state.get('mapped_fields',[]) or not isinstance(state.get('target'),dict):
                 raise MappedUpdateError('The imported file has no verified target baseline and requires review.')
             state['target'][field]=value_hash(change['local'])
-            state['fields']=json.loads(field_hashes(mapped_values(SimpleNamespace(plan=ctx.query_plan),after)))['fields']
+            # The full metadata snapshot belongs to the inbound import. Only this field was sent.
         else:
             key=_baseline_key(ctx,item)
             data['source_field_hashes'][key]=send_helpers._hash(canonical)
@@ -920,7 +947,7 @@ def send(mapping_name,doctype,name,*,fingerprint='',confirmed=False,client=None,
     prepared=_prepare(ctx,client)
     if confirmed not in (True,1,'1','true') or not fingerprint or fingerprint!=prepared.fingerprint:
         raise MappedUpdateError('The mapped update preview changed; review and confirm it again.')
-    if prepared.conflicts or not prepared.changes:
+    if not prepared.changes or {c.get('field') for c in prepared.changes} & {c.get('field') for c in prepared.conflicts}:
         raise MappedUpdateError('Send requires mapped local changes without remote baseline conflicts.')
     audit=_reserve_mutation(operation_name=ctx.mapping.operation_name,schema_fingerprint=ctx.snapshot.schema_fingerprint,
         mapping_revision=int(ctx.mapping.mapping_revision),request_fingerprint=prepared.fingerprint)

@@ -24,3 +24,4 @@ hero_integration.patches.v0_3.task_author_field
 hero_integration.patches.v0_3.project_image_categories
 hero_integration.patches.v0_3.compact_project_workspace
 hero_integration.patches.v0_3.require_project_address
+hero_integration.patches.v0_3.binding_incarnations

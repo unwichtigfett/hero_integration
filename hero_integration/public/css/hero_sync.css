@@ -35,7 +35,7 @@
 .hero-integration-ui .hero-sync-error { color: var(--hero-sync-error); font-size: 13px; margin-top: 8px !important; }
 .hero-integration-ui .hero-sync-mono { font-family: var(--font-family-monospace, ui-monospace, monospace); font-size: 12px; }
 .hero-integration-ui .hero-sync-notice:empty { display: none; }
-.hero-integration-ui .hero-sync-notice { margin-top: 8px; font-size: 13px; }
+.hero-integration-ui .hero-sync-notice { margin-bottom: 8px; font-size: 13px; }
 .hero-integration-ui .hero-sync-notice[data-tone="ok"] { color: var(--hero-sync-ok); }
 .hero-integration-ui .hero-sync-notice[data-tone="error"] { color: var(--hero-sync-error); }
 
@@ -160,12 +160,6 @@
 .hero-integration-ui .tone-busy { --tone: var(--hero-sync-ok); }
 .hero-integration-ui .tone-muted { --tone: var(--hero-sync-muted); }
 .hero-integration-ui .hero-sync-status .hero-sync-dot { color: var(--tone); }
-.hero-integration-ui .hero-sync-progress { display: flex; align-items: center; gap: 8px; }
-.hero-integration-ui .hero-sync-bar { position: relative; display: block; width: 96px; height: 8px; overflow: hidden; border-radius: 999px; background: var(--hero-sync-field); }
-.hero-integration-ui .hero-sync-bar > span { position: absolute; inset: 0; border-radius: inherit; background: var(--tone); }
-.hero-integration-ui .hero-sync-bar.is-running > span { width: 35%; animation: hero-sync-running 1.4s ease-in-out infinite; }
-@keyframes hero-sync-running { from { transform: translateX(-100%); } to { transform: translateX(290%); } }
-@media (prefers-reduced-motion: reduce) { .hero-integration-ui .hero-sync-bar.is-running > span { width: 100%; animation: none; opacity: .5; } }
 .hero-integration-ui .hero-sync-pager { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px; }
 .hero-integration-ui .hero-sync-pages { display: flex; flex-wrap: wrap; gap: 6px; }
 .hero-integration-ui .hero-sync-page { min-width: 34px; }
@@ -223,7 +217,7 @@
 /* Small or low windows: one view at a time (Migration · Sync · Runtime). */
 @container hero-sync (max-width: 719px) {
     .hero-integration-ui .hero-sync-views { display: flex; }
-    .hero-integration-ui .hero-sync-table .is-optional, .hero-integration-ui .hero-sync-bar { display: none; }
+    .hero-integration-ui .hero-sync-table .is-optional { display: none; }
     .hero-integration-ui .hero-sync[data-view="migration"] > [data-views]:not([data-views~="migration"]),
     .hero-integration-ui .hero-sync[data-view="sync"] > [data-views]:not([data-views~="sync"]),
     .hero-integration-ui .hero-sync[data-view="runtime"] > [data-views]:not([data-views~="runtime"]) { display: none; }

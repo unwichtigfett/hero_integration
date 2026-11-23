@@ -23,14 +23,15 @@ function setup(dialogs = {}) {
         frappe: {...dialogs, utils: {escape_html: String}, call({method, args, type, callback}) {
             calls.push({method, type, args});
             callback({message: method.endsWith('sync_page_state') ? data : method.endsWith('sync_page_pending_relationships')
-                ? data.pending_response : method.endsWith('runtime_plan_status') ? data.plan : {rows: [], start: 0, total: 0}});
+                ? data.pending_response : method.endsWith('sync_page_conflicts') ? data.conflicts_response
+                    : method.endsWith('runtime_plan_status') ? data.plan : {rows: [], start: 0, total: 0}});
             return Promise.resolve();
         }}};
     vm.runInNewContext(readFileSync(new URL('../public/js/hero_migration.js', import.meta.url), 'utf8'), context);
     const main = {empty() { return main; }, addClass() { return main; }, get() { return host; }};
     const view = context.window.hero_integration_migration.mount({main});
     async function tick() {
-        // Advance both the live heartbeat and the independently scheduled page refresh.
+        // Advance the live snapshot heartbeat and the independently scheduled page refresh.
         assert.equal(timers.size, 2);
         for (const [key, timer] of [...timers]) {
             if (timers.delete(key)) timer.fn();
@@ -62,6 +63,9 @@ test('idle page discovers automatic runs, shows outcomes, and resumes idle refre
     assert.equal(metric('Running'), '0');
     assert.equal(metric('Pass'), '1');
     assert.ok(app.calls.every(call => call.type === 'GET'));
+    assert.ok(app.calls.some(call => call.method.endsWith('sync_page_runs') && call.args.live === 1));
+    assert.ok(app.host.querySelectorAll('section').some(el => el.className.includes('hero-sync-live')));
+    assert.equal(app.host.querySelectorAll('progress').length, 0);
     assert.ok(app.calls.every(call => /\.(sync_page_state|sync_page_runs)$/.test(call.method)));
     app.view.destroy(); assert.equal(app.timers.size, 0);
 });
@@ -139,6 +143,19 @@ test('pending relationships disappear from the list after resolution', async () 
     app.view.destroy();
 });
 
+test('a linked import conflict in the Conflicts tab can be reported without approval actions', async () => {
+    const app = setup(); await flush();
+    app.data.conflicts_response = {start: 0, total: 1, rows: [{kind: 'record', name: 'observation',
+        source_id: '6', area: 'Contacts', sync_status: 'Import conflict', run: 'RUN-1'}]};
+    app.host.querySelectorAll('button').find(button => button.textContent === 'Conflicts').listeners.click();
+    await flush();
+    const row = app.host.querySelectorAll('tr').find(tr => tr.children.some(cell => cell.textContent === 'HERO 6'));
+    assert.ok(row.children.some(cell => cell.textContent === 'Import conflict (RUN-1)'));
+    assert.deepEqual(row.querySelectorAll('button').map(button => button.textContent), ['Report']);
+    assert.ok(!row.querySelectorAll('span').some(span => span.textContent.startsWith('Fix in HERO')));
+    app.view.destroy();
+});
+
 test('execution evidence and the unconfirmed one-shot dialog only read the approved plan', async () => {
     const shown = [];
     const app = setup({msgprint: () => shown.push('status'), confirm: () => shown.push('confirmation')});
@@ -149,7 +166,9 @@ test('execution evidence and the unconfirmed one-shot dialog only read the appro
     await app.tick();
     app.calls.length = 0;
     for (const label of ['Execution status', 'Compare bound objects once']) {
-        await app.host.querySelectorAll('button').find(button => button.textContent === label).listeners.click();
+        const button = app.host.querySelectorAll('button').find(button => button.textContent === label);
+        assert.equal(button.className, 'hero-sync-small');
+        await button.listeners.click();
     }
     assert.deepEqual(shown, ['status', 'confirmation']);
     assert.deepEqual(app.calls.map(c => [c.method, c.type, c.args.source_instance, c.args.include_execution]), [

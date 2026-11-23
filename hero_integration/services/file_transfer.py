@@ -230,7 +230,7 @@ def belongs_to_test_cohort(detail: dict, cohort: dict) -> bool:
 def skip_reason(row: dict, detail: dict | None) -> str | None:
     if detail is None:
         return "no_detail"
-    if detail.get("is_deleted"):
+    if detail.get("is_deleted") is True:
         return "deleted"
     document = detail.get("customer_document") or {}
     if document.get("status_code") == DELETED_DOCUMENT_STATUS:
@@ -290,10 +290,11 @@ class StoredFile:
     file_name: str
     file_url: str
     old_url: str | None = None
+    has_field_conflict: bool = False
 
 
 def commit_file(row: dict, size: int, md5: str, temp: str, target: tuple, folder: str, existing,
-                source_instance: str, read=None, *, run_name=None) -> str:
+                source_instance: str, read=None, *, run_name=None, report_outcome=None) -> str:
     """Store and commit one file. Blobs are only removed once the database agrees:
     the replaced blob after a successful commit, the new blob after any failure."""
     stored = store(row, size, md5, temp, target, folder, existing, source_instance, read, run_name=run_name)
@@ -305,6 +306,8 @@ def commit_file(row: dict, size: int, md5: str, temp: str, target: tuple, folder
         raise
     if stored.old_url and stored.old_url != stored.file_url:
         _discard_unreferenced(stored.old_url)
+    if report_outcome:
+        report_outcome("conflict" if stored.has_field_conflict else "updated" if existing else "added")
     return stored.file_name
 
 
@@ -312,22 +315,28 @@ def store(row: dict, size: int, md5: str, temp: str, target: tuple, folder: str,
     """Move the downloaded blob into place and create or update the File and its link (not committed)."""
     operation = "HeroPictures" if row.get("category") == "images" else "HeroDocuments"
     read = read or direct_runtime.resolve_read(operation, source_instance)
-    try:
-        _assert_target_baseline(existing, mapped_values(read, row), lock=True)
-    except FileConflict:
-        _remove(temp)
-        raise
     file_url = f"/private/files/hero-{row['id']}-{uuid4().hex}-{safe_name(row.get('filename'))}"
-    os.replace(temp, _disk_path(file_url))
+    stored = None
+    def write():
+        nonlocal stored
+        _assert_target_baseline(existing, mapped_values(read, row), lock=True)
+        os.replace(temp, _disk_path(file_url))
+        stored = _record(row, size, md5, file_url, target, folder, existing, source_instance, read)
+        return stored
+
     try:
         from hero_integration.services.execution_runtime import process_migration_record
         if read.validate_write:
             read.validate_write()
-        return process_migration_record(read.plan, row, source_instance, SOURCE_TYPE,
-            lambda: _record(row, size, md5, file_url, target, folder, existing, source_instance, read),
+        outcome = process_migration_record(read.plan, row, source_instance, SOURCE_TYPE, write,
             evidence=run_name or "file-storage", successful=lambda result: isinstance(result, StoredFile))
+        if stored is None:
+            raise FileConflict("The source lifecycle does not authorize storing this file.")
+        stored.has_field_conflict = outcome == "conflict"
+        return stored
     except Exception:
         frappe.db.rollback()  # the File row goes back to the previous blob, which is still on disk
+        _remove(temp)
         _remove(_disk_path(file_url))
         raise
 
@@ -396,9 +405,17 @@ def _target_hash(name, fields, *, document=None):
             '_blob_sha256': digest.hexdigest(), '_blob_md5': md5.hexdigest()}
 
 
-def _target_baseline(name, fields):
-    return json.dumps({**json.loads(field_hashes(fields)), 'version': 2,
-                       'mapped_fields': sorted(fields), 'target': _target_hash(name, fields)})
+def _target_baseline(name, fields, existing=None):
+    from hero_integration.services.execution_runtime import field_decisions
+    current = {**json.loads(field_hashes(fields)), 'version': 2,
+               'mapped_fields': sorted(fields), 'target': _target_hash(name, fields)}
+    held = {key for key, action in field_decisions('File', name).items() if action in (None, 'local')}
+    if held and existing:
+        prior = json.loads(frappe.db.get_value('HERO Integration Link', existing.name, 'target_field_hashes'))
+        current['fields'] = prior['fields']
+        for field in held & prior['target'].keys():
+            current['target'][field] = prior['target'][field]
+    return json.dumps(current)
 
 
 def _legacy_fields_digest(raw):
@@ -507,7 +524,11 @@ def _assert_target_baseline(existing, fields, *, lock=False):
     if not valid:
         raise FileConflict('The imported file has no verified target baseline and requires review.')
     current_hashes = _target_hash(existing.target_name, names, document=target)
-    if current_hashes != baseline.get('target') or current_hashes['_blob_md5'] != content_hash:
+    from hero_integration.services.execution_runtime import field_decisions
+    bound = field_decisions('File', existing.target_name).keys() - set(FILE_CONTEXT)
+    prior = baseline['target']
+    if (set(current_hashes) != set(prior) or current_hashes['_blob_md5'] != content_hash
+            or any(current_hashes[key] != prior[key] for key in current_hashes.keys() - bound)):
         raise FileConflict('The imported file was changed locally and requires review.')
     additions = set(fields) - set(names)
     if additions:
@@ -544,7 +565,7 @@ def _record(row, size, md5, file_url, target, folder, existing, source_instance,
         old_url = frappe.db.get_value("File", existing.target_name, "file_url")
         # The old blob stays until the commit succeeded (see commit_file).
         _save_file(existing.target_name, {"file_url": file_url, "file_size": size, "content_hash": md5,
-                                          **fields, **metadata, **_attachment(target, folder)}, fields, existing.name)
+                                          **fields, **_attachment(target, folder)}, fields, existing.name)
         file_name = existing.target_name
     else:
         doc = frappe.get_doc({"doctype": "File", **fields, **metadata, "file_url": file_url,
@@ -558,7 +579,7 @@ def _record(row, size, md5, file_url, target, folder, existing, source_instance,
         doc.insert(ignore_permissions=True)
         file_name = doc.name
     values = {"sync_status": "Synchronized", "target_name": file_name, "source_payload_hash": source_hash(row),
-              "target_payload_hash": md5, "target_field_hashes": _target_baseline(file_name, fields),
+              "target_payload_hash": md5, "target_field_hashes": _target_baseline(file_name, fields, existing),
               "mapping_version": read.mapping_version, "last_synced_on": frappe.utils.now_datetime()}
     if existing:
         frappe.db.set_value("HERO Integration Link", existing.name, values)
@@ -576,6 +597,10 @@ def _save_file(name, values, mapped_fields, link_name):
 
     document = frappe.get_doc("File", name, for_update=True)
     document.load_doc_before_save(raise_exception=True)
+    from hero_integration.services.execution_runtime import field_decisions
+    held = {key for key, action in field_decisions('File', name).items() if action in (None, 'local')}
+    values = {key: value for key, value in values.items() if key not in held}
+    mapped_fields = {key: value for key, value in mapped_fields.items() if key not in held}
     document.update(values)
     if "file_name" in values:
         document.set_file_type()
@@ -798,6 +823,11 @@ def transfer(phase: str, *, source_instance: str | None = None, client=None, dow
             if reason:
                 if reason == 'deleted' and not dry_run:
                     from hero_integration.services.deferred_references import installed, invalidate
+                    if link and detail.get('is_deleted') is True and read.plan.binding_contract:
+                        # The exact ID+UUID detail describes this FileUpload. A deleted
+                        # customer_document alone only invalidates its attachment.
+                        direct_runtime.process_record(read, {**row, 'is_deleted': True}, source_instance,
+                                                      SOURCE_TYPE, run_name, lambda: 'unchanged')
                     if installed():
                         invalidate(source_instance, operation, direct_runtime.identity(read, row))
                 bump("unchanged" if unchanged else f"skipped_{reason}")
@@ -832,7 +862,8 @@ def transfer(phase: str, *, source_instance: str | None = None, client=None, dow
                             bump('baselines_verified')
                         bump(reconciled)
                         continue
-                _assert_target_baseline(link, fields, lock=not dry_run and unchanged)
+                if dry_run or not read.plan.binding_contract:
+                    _assert_target_baseline(link, fields, lock=not dry_run and unchanged)
             except BudgetReached:
                 raise
             except DirectContractChanged:
@@ -857,12 +888,13 @@ def transfer(phase: str, *, source_instance: str | None = None, client=None, dow
                     moved = False
                     def update_metadata():
                         nonlocal moved
+                        _assert_target_baseline(link, fields, lock=True)
                         moved = relink(link, target, folders[bool(target[0])])
                         if changed:
                             _save_file(link.target_name, fields, fields, link.name)
                         if changed or moved:
                             frappe.db.set_value("HERO Integration Link", link.name, {
-                                "target_field_hashes": _target_baseline(link.target_name, fields),
+                                "target_field_hashes": _target_baseline(link.target_name, fields, link),
                                 "mapping_version": read.mapping_version, "sync_status": "Synchronized",
                                 "conflict_detail": '', "last_synced_on": frappe.utils.now_datetime()})
                         return 'updated' if changed or moved else 'unchanged'
@@ -900,8 +932,8 @@ def transfer(phase: str, *, source_instance: str | None = None, client=None, dow
             try:
                 size, md5 = downloader.fetch(row["downloadUrl"], temp, row.get("size"))
                 remember_attachment()
-                commit_file(row, size, md5, temp, target, folders[bool(target[0])], link, source_instance, read, run_name=run_name)
-                bump("updated" if link else "added")
+                commit_file(row, size, md5, temp, target, folders[bool(target[0])], link, source_instance, read,
+                            run_name=run_name, report_outcome=bump)
                 bump("bytes", size)
             except DirectContractChanged:
                 raise

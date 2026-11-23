@@ -33,7 +33,7 @@ class TestBindingRegistry(unittest.TestCase):
         first = self.obj()
         from dataclasses import asdict
         values = asdict(first)
-        for field in ("identity_key", "revision", "lifecycle", "reconciliation"):
+        for field in ("identity_key", "revision", "lifecycle", "reconciliation", "target_incarnation"):
             del values[field]
         for changes in (dict(site_scope="two.test"), dict(source_instance="hero-b"), dict(object_type="Company"),
                         dict(external_object_id="43"), dict(target_app="other-app"), dict(target_name="CUST-2"),

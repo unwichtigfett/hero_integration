@@ -142,7 +142,7 @@ class TestProjectDelivery(TestCase):
 class TestProjectIdentityRead(TestCase):
     def schema(self,extra=''):
         return introspection_from_schema(build_schema('''
-          type Project {id:Int notes:String histories(first:Int,offset:Int):[History]}
+          type Project {id:Int is_deleted:Boolean notes:String histories(first:Int,offset:Int):[History]}
           type History {id:Int}
           type Query {project_matches(first:Int,offset:Int,orderBy:String):[Project]
                       project_match(project_match_id:Int):Project '''+extra+'''}
@@ -236,7 +236,7 @@ class TestProjectNamingProtection(TestCase):
     def test_native_readback_reads_one_project_and_completes_its_nested_history(self):
         from hero_integration.services.read_contract import ReadContract
         schema=TestProjectIdentityRead().schema()
-        document='query Read($first:Int,$offset:Int,$history:Int){project_matches(first:$first,offset:$offset){id notes histories(first:$first,offset:$history){id}}}'
+        document='query Read($first:Int,$offset:Int,$history:Int){project_matches(first:$first,offset:$offset){id is_deleted notes histories(first:$first,offset:$history){id}}}'
         contract=ReadContract('service',1,'mapping',1,'HeroProjectMatches','project_matches','id',(),
             {'first':'$page_size','offset':'$offset','history':0},1,adapter_options={'logbook':{
                 'path':'histories','identity_path':'id','offset_variable':'history','max_pages':10}})
@@ -244,7 +244,7 @@ class TestProjectNamingProtection(TestCase):
                read=NS(service=NS(name='service',query_document=document),mapping=NS(name='mapping'),contract=contract),
                snapshot=NS(),proof=NS(source_instance='source'))
         client=Mock()
-        client.query.side_effect=lambda doc,args:{'project_match':{'id':7,'notes':'n',
+        client.query.side_effect=lambda doc,args:{'project_match':{'id':7,'is_deleted':False,'notes':'n',
             'histories':[{'id':1}] if args['history']==0 else [{'id':2}] if args['history']==1 else []}}
         fake=NS(get_doc=lambda dt,name:ctx.read.service if dt=='HERO GraphQL Service' else ctx.read.mapping)
         with patch.object(mapped_update_v2,'frappe',fake), \

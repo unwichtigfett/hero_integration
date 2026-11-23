@@ -41,8 +41,8 @@ class TestFormVerifiedWriteback(TestCase):
         self.mutation.return_value.execute_once.return_value = {'update_contact': {'id': '42'}}
         if mutation: self.mutation.return_value.execute_once.side_effect = mutation
         self.read.return_value.query.side_effect = read_values or [
-            {'contacts': [{'id': '42', 'full_name': 'Old'}]},
-            {'contacts': [{'id': '42', 'full_name': 'Expected'}]},
+            {'contacts': [{'is_contact_person': False, 'is_deleted': False, 'id': '42', 'full_name': 'Old'}]},
+            {'contacts': [{'is_contact_person': False, 'is_deleted': False, 'id': '42', 'full_name': 'Expected'}]},
         ]
         with ExitStack() as stack:
             for name, value in (('frappe', fake), ('_writeback_context', Mock(return_value=form)),
@@ -87,7 +87,7 @@ class TestFormVerifiedWriteback(TestCase):
         for timeout in (False, True):
             form, fixture = self.make_context()
             with self.subTest(timeout=timeout), self.assertRaises(ValueError):
-                self.execute(form, read_values=[{'contacts': [{'id': '42', 'full_name': 'Old'}]}] * 2,
+                self.execute(form, read_values=[{'contacts': [{'is_contact_person': False, 'is_deleted': False, 'id': '42', 'full_name': 'Old'}]}] * 2,
                              mutation=TimeoutError() if timeout else None)
             self.mutation.return_value.execute_once.assert_called_once()
             self.assertEqual(self.finalize.call_args.args[1], 'Timeout' if timeout else 'Failed')

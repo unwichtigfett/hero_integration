@@ -4,6 +4,9 @@
  "module": "HERO Integration",
  "autoname": "field:event_id",
  "fields": [
+  {"fieldname": "object_binding", "label": "Object Binding", "fieldtype": "Data", "read_only": 1, "search_index": 1},
+  {"fieldname": "open_field", "label": "Unresolved Field Binding", "fieldtype": "Data", "read_only": 1, "unique": 1},
+  {"fieldname": "resolution_json", "label": "Resolution", "fieldtype": "Code", "options": "JSON", "read_only": 1},
   {"fieldname": "updated_documents", "label": "Updated documents", "fieldtype": "Int", "read_only": 1},
   {"fieldname": "unchanged_documents", "label": "Unchanged documents", "fieldtype": "Int", "read_only": 1},
 

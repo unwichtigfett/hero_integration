@@ -110,6 +110,9 @@ def _check_references(payload):
                 or binding.object_type != 'User' or binding.target_app != 'frappe' or binding.target_doctype != 'User' or binding.lifecycle != 'VALID'
                 or not frappe.db.get_value('User', binding.target_name, 'enabled')):
             raise PolicyError('Policy User binding is not valid for this scope.')
+        from hero_integration.services.binding_registry import matches_incarnation
+        if not matches_incarnation(binding.target_incarnation, frappe.db.get_value('User', binding.target_name, 'creation', for_update=True)):
+            raise PolicyError('Policy User binding is not valid for this scope.')
         matches = frappe.get_all('HERO Object Binding', filters={'site_scope': payload['site_scope'],
             'source_instance': payload['source_instance'], 'object_type': 'User', 'external_object_id': binding.external_object_id,
             'target_doctype': 'User', 'lifecycle': 'VALID'}, pluck='name', limit=2)

@@ -332,6 +332,27 @@ def _profile_name(rows, doctype, mode):
         raise MappedSendError('Exactly one active Send to HERO mapping is required for this document and source.')
     return candidates[0]
 
+def _bound_review_fields(doc, link, read):
+    """Verify the native target and return fields held by the shared review ledger."""
+    from hero_integration.services.binding_registry import BindingConflict, FrappeBindingStorage, verify_incarnation
+    site = frappe.local.site
+    storage = FrappeBindingStorage()
+    rows = frappe.get_all(storage.OBJECT, filters={"site_scope": site, "target_doctype": doc.doctype,
+        "target_name": doc.name, "lifecycle": ["!=", "LEGACY"]}, fields=["*"], limit_page_length=2)
+    if not rows:
+        raise BindingConflict("A technical link alone cannot authorize a bound send. Identity review is required.")
+    parent = storage._object(rows[0])
+    verify_incarnation(parent, doc)
+    if (len(rows) != 1 or parent.reconciliation or parent.source_instance != link.source_instance
+            or parent.external_object_id != str(link.source_id) or parent.mapping_revision != read.contract.mapping_revision
+            or parent.mapping_definition_id != read.mapping.definition_id):
+        raise BindingConflict("Bound native identity or mapping changed before sending.")
+    reviews = set(frappe.get_all("HERO Sync Change Event", filters={"object_binding": parent.identity_key,
+        "outcome": "FIELD_CONFLICT"}, pluck="open_field"))
+    return {field.target_field: field.source_field for field in storage.fields_for_object(site, parent.identity_key)
+            if field.identity_key in reviews}
+
+
 def _load_context(doctype, name, *, exclude_audit=None):
     from hero_integration.client.settings import get_configuration
     from hero_integration.services.personal_mapping_content import unique_json_object
@@ -372,8 +393,6 @@ def _load_context(doctype, name, *, exclude_audit=None):
                 or links[0].source_type != expected_type or links[0].source_instance != source):
             raise MappedSendError('Send requires one synchronized native HERO Integration Link for this source.')
         link = links[0]
-        if getattr(link, 'observed_source_hash', None) and link.observed_source_hash != link.source_payload_hash:
-            raise MappedSendError('The linked HERO source changed; reconcile before sending.')
         try:
             hero_id = int(link.source_id)
             if hero_id <= 0 or str(hero_id) != str(link.source_id):
@@ -399,6 +418,10 @@ def _load_context(doctype, name, *, exclude_audit=None):
         contract=contract, service=service, parsed=parsed, proof=proof, read=read, hero_id=hero_id, related={}, related_selection={}, baseline_links={}, condition_values=[])
     if mode == 'CREATE':
         _assert_create_available(ctx, exclude=exclude_audit)
+    else:
+        ctx.review_fields = _bound_review_fields(document, link, read)
+        if not ctx.review_fields and getattr(link, 'observed_source_hash', None) and link.observed_source_hash != link.source_payload_hash:
+            raise MappedSendError('The linked HERO source changed; reconcile before sending.')
     return ctx
 
 
@@ -456,6 +479,9 @@ def _read_record(ctx, client):
     matched = [row for row in rows if str(_at(row, path, None)) == str(ctx.hero_id)]
     if len(matched) != 1:
         raise MappedSendError('The approved query did not prove the unique bound HERO record.')
+    from hero_integration.services.mapping_runtime import source_lifecycle
+    if ctx.document.doctype == "Customer" and source_lifecycle("HeroCustomers", matched[0]):
+        raise MappedSendError("The HERO record is no longer an active Customer.")
     return matched[0]
 
 
@@ -822,7 +848,8 @@ def _prepare(ctx, client, phase_id=None):
             'source_field': source['field'], 'label': getattr(frappe.get_meta(source['doctype']).get_field(source['field']), 'label', source['field']),
             'hero': None if creating else observed, 'new': value, 'value': value, 'baseline_key': baseline_key,
             'local': document.get(source['field']), 'canonical_remote': canonical_remote}
-        if not creating and (baseline_key not in source_base or baseline_key not in target_base
+        if not creating and (source["doctype"] == ctx.document.doctype and source["field"] in getattr(ctx, "review_fields", ())
+                or baseline_key not in source_base or baseline_key not in target_base
                 or source_base[baseline_key] != _hash(canonical_remote)):
             conflicts.append(change)
         else:
@@ -880,7 +907,7 @@ def preview(doctype, name, *, phase_id=None, client=None):
     return {doctype.lower(): name, 'hero_id': '' if ctx.hero_id is None else str(ctx.hero_id), 'create': ctx.content['send_options']['mode'] == 'CREATE', 'mapping': ctx.mapping.name,
         'changes': changes, 'conflicts': conflicts, 'fingerprint': fingerprint, 'phases': phases,
         'hero': {'phase_id': phase_id},
-        'can_send': enabled and bool(changes) and not conflicts, 'sending_enabled': enabled}
+        'can_send': enabled and bool(changes), 'sending_enabled': enabled}
 
 
 def _check_conditions_current(ctx):
@@ -969,7 +996,7 @@ def send(doctype, name, *, fingerprint='', confirmed=0, phase_id=None, client=No
     before, changes, conflicts, variables, current, _phases = _prepare(ctx, client, phase_id)
     if confirmed not in (True, 1, '1', 'true') or not fingerprint or fingerprint != current:
         raise MappedSendError('The mapped Send preview changed; review and confirm it again.')
-    if conflicts or not changes:
+    if not changes:
         raise MappedSendError('Send requires mapped local changes without remote baseline conflicts.')
     creating = ctx.content['send_options']['mode'] == 'CREATE'
     if creating:
@@ -983,7 +1010,7 @@ def send(doctype, name, *, fingerprint='', confirmed=0, phase_id=None, client=No
         # permissions, mappings, bindings and values before the external write.
         fresh = _load_context(doctype, name, exclude_audit=audit.correlation_id)
         checked = _prepare(fresh, client, phase_id)
-        if checked[4] != current or checked[2] or not checked[1]:
+        if checked[4] != current or not checked[1]:
             raise MappedSendError('The mapped Send authority or payload changed after reservation.')
         ctx = fresh
         before, changes, conflicts, variables, current, _phases = checked

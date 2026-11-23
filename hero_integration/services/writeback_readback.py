@@ -23,7 +23,10 @@ def validate_readback(context, plan):
     }.get(binding.target_doctype)
     field = mapping['target']['field']
     paths = {item.selection_path for item in plan.request.result_bindings}
-    if (expected is None or plan.request.protocol_field_name != expected[0]
+    lifecycle_paths = {("is_deleted",)}
+    if binding.target_doctype == "Customer":
+        lifecycle_paths.add(("is_contact_person",))
+    if (not lifecycle_paths <= paths or expected is None or plan.request.protocol_field_name != expected[0]
             or parent.object_type not in expected[1]
             or plan.source_instance != parent.source_instance
             or binding.source_field != field
@@ -33,6 +36,19 @@ def validate_readback(context, plan):
             or binding.mapping_revision != plan.sealed.contract.mapping_revision):
         raise WritebackContractError('The approved read contract cannot verify this bound writeback field.')
     return plan
+
+
+def _matches_numeric_uid(observed, external_id):
+    if type(observed) not in (str, int):
+        return False
+    uid = str(observed)
+    return uid.isascii() and uid.isdecimal() and not uid.startswith("0") and uid == str(external_id)
+
+
+def active_bound_project(record, external_id):
+    """A ProjectMatch update requires its exact positive UID and an explicit GraphQL Boolean."""
+    return (isinstance(record, Mapping) and _matches_numeric_uid(record.get("id"), external_id)
+            and record.get("is_deleted") is False)
 
 
 def read_bound_value(context, client):
@@ -45,10 +61,15 @@ def read_bound_value(context, client):
     records = value_at(payload, plan.sealed.contract.records_path)
     if not isinstance(records, list):
         raise WritebackContractError('HERO readback did not return the approved record list.')
-    matches = [row for row in records if isinstance(row, Mapping) and str(row.get('id')) == str(parent.external_object_id)]
+    matches = [row for row in records if isinstance(row, Mapping) and _matches_numeric_uid(row.get('id'), parent.external_object_id)]
     field = mapping['target']['field']
     if len(matches) != 1 or field not in matches[0]:
         raise WritebackContractError('HERO readback did not prove the unique bound record and field.')
+    from hero_integration.services.mapping_runtime import source_lifecycle
+    doctype = context['binding'].target_doctype
+    if ((doctype == "Project" and not active_bound_project(matches[0], parent.external_object_id))
+            or (doctype == "Customer" and source_lifecycle("HeroCustomers", matches[0]))):
+        raise WritebackContractError("The HERO record is no longer eligible for this bound write.")
     return matches[0][field]
 
 

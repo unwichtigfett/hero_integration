@@ -37,7 +37,7 @@ class TestNativeSyncEvents(IntegrationTestCase):
             self.skipTest("This test requires a disposable site with an unused synchronization slot.")
         self.identity = uuid4().hex
         self.identity = str(int(self.identity[:7],16)+1)
-        schema=introspection_from_schema(build_schema("type Query { contacts(ids: [Int!]): [Contact] } type Contact { id: ID category: String }"))
+        schema=introspection_from_schema(build_schema("type Query { contacts(ids: [Int!]): [Contact] } type Contact { id: ID category: String is_contact_person: Boolean is_deleted: Boolean }"))
         self.snapshot=frappe.get_doc({"doctype":"HERO GraphQL Schema Snapshot","source_instance":"hero",
                                       "endpoint_fingerprint":endpoint_fingerprint(
                                           frappe.get_single("HERO Integration Settings").hero_api_url,"hero"),
@@ -48,14 +48,14 @@ class TestNativeSyncEvents(IntegrationTestCase):
             "status":"Active"}).insert()
         request=QueryAdapter().materialize(SnapshotAdapter().adapt(StoredSnapshot(
             self.snapshot.name,self.snapshot.snapshot_json,self.snapshot.schema_fingerprint,"hero")),
-            QueryDraft("contacts","contacts","contacts",("id","category"),{}))
+            QueryDraft("contacts","contacts","contacts",("id","category","is_contact_person","is_deleted"),{}))
         self.request=request
         self.provisional=RuntimePlanSelection(self.site,"hero","service",1,1,"mapping",1,
             self.snapshot.name,self.snapshot.schema_fingerprint,"contacts","AUTO_SYNC")
         config={"target_operation":"HeroCustomers","mapping_definition_ids":[self.rule.definition_id],
             "identity_path":"id","records_path":"contacts","variables":{},"page_size":10,
             "b8_compilation":{"version":1,"operation_name":"contacts","alias":"contacts","field":"contacts",
-                "selected_paths":["id","category"],"variables":{}},
+                "selected_paths":["id","category","is_contact_person","is_deleted"],"variables":{}},
             "b8_canonical_operation":canonical_operation_contract(self.provisional,request)}
         self.mapping=frappe.get_doc({"doctype":"HERO GraphQL Mapping","schema_snapshot":self.snapshot.name,
             "operation_kind":"QUERY","operation_name":"contacts","direction":"QUERY_TO_FRAPPE","status":"Active",
@@ -74,7 +74,7 @@ class TestNativeSyncEvents(IntegrationTestCase):
         self.addCleanup(self.clear_fixture)
         self.hooks = []
         self.post_commit = []
-        self.payload = {"id":self.identity,"category":"  revised  "}
+        self.payload = {"id":self.identity,"is_deleted":False,"is_contact_person":False,"category":"  revised  "}
         self.pages = {None:ChangePage((self.payload,),None,True,"w1")}
         self.processor = FrappeBoundProcessor(1,(self.rule.definition_id,),run_id=self.identity,object_type="Contact",mapping_name=self.mapping.name)
         contract=ReadContract("synthetic-service",1,self.mapping.name,1,"HeroCustomers","contacts","id",
@@ -167,16 +167,59 @@ class TestNativeSyncEvents(IntegrationTestCase):
         self.processor.contract_fingerprint = "b" * 64
         self.assertNotEqual(previous, self.processor._event_id(self.identity, "v1", fields))
 
-    def test_local_conflict_preserves_value_and_cursor(self):
+    def test_local_conflict_preserves_value_and_advances_verified_watermark(self):
         self.doc.customer_details="local"
         self.doc.save()
         frappe.db.commit()
         with self.observe_native_save():
             result=self.run_sync()
-        self.assertEqual((result.status,result.cursor),(SyncStatus.CONFLICT,None))
+        self.assertEqual((result.status,result.cursor),(SyncStatus.CONFLICT,"w1"))
         self.assertEqual(self.hooks,[])
         self.assertEqual(frappe.get_doc("Customer",self.doc.name).customer_details,"local")
-        self.assertEqual(frappe.db.get_value("HERO Sync Change Event",{"external_id":self.identity},"outcome"),"CONFLICT")
+        self.assertEqual(frappe.db.count("HERO Sync Change Event",{"external_id":self.identity,"outcome":"FIELD_CONFLICT"}),1)
+
+    def test_watermark_failure_replays_open_field_review_without_a_second_native_write(self):
+        self.doc.customer_details = "locally edited"
+        self.doc.save()
+        frappe.db.commit()
+        save_state = self.ledger.save_state
+        def reject_watermark(state, generation):
+            if state.cursor == "w1":
+                raise RuntimeError("watermark transaction interrupted")
+            return save_state(state, generation)
+
+        with patch.object(self.ledger, "save_state", side_effect=reject_watermark):
+            failed = self.run_sync()
+        self.assertEqual((failed.status, failed.cursor), (SyncStatus.FAILED, None))
+        review = frappe.db.get_value("HERO Sync Change Event", {"open_field": self.binding.identity_key}, "name")
+        self.assertTrue(review)
+        with self.observe_native_save():
+            replay = self.run_sync()
+        self.assertEqual((replay.status, replay.cursor), (SyncStatus.CONFLICT, "w1"))
+        self.assertEqual(frappe.db.get_value("HERO Sync Change Event", review, "outcome"), "FIELD_CONFLICT")
+        self.assertEqual(self.doc.reload().customer_details, "locally edited")
+        self.assertEqual(self.hooks, [])
+        self.assertEqual(frappe.db.count("HERO Sync Change Event", {"external_id": self.identity}), 2)
+        self.pages["w1"] = ChangePage((), None, True, "w2")
+        idle_interval = self.run_sync()
+        self.assertEqual((idle_interval.status, idle_interval.cursor), (SyncStatus.CONFLICT, "w2"))
+        self.assertFalse(FrappeBoundIndex(object_type="ProjectMatch").has_open_review(self.site, "hero", 1))
+
+    def test_replayed_review_converging_on_next_page_finishes_without_open_conflict(self):
+        self.doc.customer_details = "locally edited"
+        self.doc.save()
+        frappe.db.commit()
+        self.pages[None] = ChangePage((self.payload,), "next", False)
+        interrupted = self.run_sync()
+        self.assertEqual((interrupted.status, interrupted.cursor), (SyncStatus.FAILED, None))
+        review = frappe.db.get_value("HERO Sync Change Event", {"open_field": self.binding.identity_key}, "name")
+        self.assertTrue(review)
+        self.pages["next"] = ChangePage((dict(self.payload, category="locally edited"),), None, True, "w1")
+        with self.observe_native_save():
+            resumed = self.run_sync()
+        self.assertEqual(frappe.db.get_value("HERO Sync Change Event", review, "outcome"), "CONVERGED")
+        self.assertEqual(self.hooks, [])
+        self.assertEqual((resumed.status, resumed.cursor), (SyncStatus.SUCCEEDED, "w1"))
 
     def test_ack_exception_rolls_back_native_write_and_after_commit_work(self):
         with self.observe_native_save(), patch.object(BindingRegistryService,"record_verified_acknowledgment",
@@ -265,3 +308,127 @@ class TestNativeSyncEvents(IntegrationTestCase):
         self.assertEqual(frappe.get_doc("Customer",self.doc.name).customer_details,"revised")
         self.assertIsNone(self.ledger.state(self.site).cursor)
         self.assertEqual(frappe.get_single("HERO Integration Settings").polling_mode,"OFF")
+        doc = self.doc.reload()
+        doc.customer_details = "local decision"
+        doc.save()
+        frappe.db.commit()
+        self.payload["category"] = "HERO decision"
+        self.pages[None] = ChangePage((self.payload,), None, True, "w2")
+        self.assertEqual(self.run_sync().status, SyncStatus.CONFLICT)
+        event = frappe.get_doc("HERO Sync Change Event", {"open_field": self.binding.identity_key})
+        with patch("hero_integration.client.settings.get_configuration", return_value=config), \
+             patch.object(HeroGraphQLClient, "query", return_value={"contacts": [self.payload]}) as query:
+            preview = api.preview_sync_field(event.name, str(event.modified), "HERO")
+            result = api.resolve_sync_field(event.name, str(event.modified), "HERO",
+                confirmation_fingerprint=preview["confirmation_fingerprint"], confirmed=True)
+        self.assertEqual((result["field"], doc.reload().customer_details), ("customer_details", "HERO decision"))
+        self.assertEqual(query.call_count, 2)
+        self.assertIn("ids:", query.call_args.args[0])
+        self.assertEqual(event.reload().outcome, "RESOLVED")
+
+
+    def test_field_preview_is_read_only_and_confirmation_binds_actor_values_and_revision(self):
+        from types import SimpleNamespace
+        from hero_integration import api
+        from hero_integration.services import conflict_report
+
+        self.doc.customer_details = "local"
+        self.doc.save()
+        frappe.db.commit()
+        self.assertEqual(self.run_sync().status, SyncStatus.CONFLICT)
+        event = frappe.get_doc("HERO Sync Change Event", {"open_field": self.binding.identity_key})
+        args = dict(event=event.name, expected_modified=str(event.modified), choice="CUSTOM",
+                    mutation_mapping="approved", value_json=json.dumps("chosen"))
+        context = dict(mapping={"target": {"operation": "updateContact", "field": "category", "argument": "data"}},
+                       intent=SimpleNamespace(variables={"data": {"id": int(self.identity), "category": "chosen"}}),
+                       fingerprint="approved-revision-1")
+        read = lambda *_: (self.payload, self.processor._approved_plan(frappe, "hero"), 1, "id")
+        with patch.object(conflict_report, "_read_reviewed_record", side_effect=read), \
+             patch.object(api, "_sync_hero_context", return_value=context), \
+             patch.object(api, "_reserve_mutation") as reserve:
+            try:
+                frappe.set_user("Guest")
+                with self.assertRaises(frappe.PermissionError):
+                    api.preview_sync_field(**args)
+            finally:
+                frappe.set_user("Administrator")
+            preview = api.preview_sync_field(**args)
+            self.assertEqual((preview["hero_value"], preview["erpnext_value"], preview["chosen_value"],
+                              preview["operation"]), ("revised", "local", "chosen", "updateContact"))
+            self.assertEqual(event.reload().outcome, "FIELD_CONFLICT")
+            self.assertFalse(event.resolution_json)
+            self.assertEqual(preview["remote_change"], {"object_type": "Contact", "id": int(self.identity),
+                                                        "field": "category", "value": "chosen"})
+            self.assertEqual(self.doc.reload().customer_details, "local")
+            token = preview["confirmation_fingerprint"]
+            for overrides in ({"confirmed": False}, {"confirmation_fingerprint": ""},
+                              {"value_json": json.dumps("another choice")}, {"expected_modified": "stale"}):
+                confirmation = dict(args, confirmed=True, confirmation_fingerprint=token)
+                confirmation.update(overrides)
+                with self.assertRaises(frappe.ValidationError):
+                    api.resolve_sync_field(**confirmation)
+            with patch.object(frappe.local, "lang", "de"):
+                with self.assertRaisesRegex(frappe.ValidationError, "Öffnen Sie die Vorschau erneut"):
+                    api.resolve_sync_field(**args, confirmation_fingerprint=token, confirmed=False)
+            context["fingerprint"] = "approved-revision-2"
+            with self.assertRaises(frappe.ValidationError):
+                api.resolve_sync_field(**args, confirmation_fingerprint=token, confirmed=True)
+            reserve.assert_not_called()
+
+    def test_admin_custom_field_decision_commits_one_dispatch_and_verified_ack(self):
+        self._resolve_reviewed_outbound("CUSTOM", timeout=False)
+
+    def test_admin_local_field_after_timeout_requires_readback_without_resend(self):
+        self._resolve_reviewed_outbound("ERPNEXT", timeout=True)
+
+    def _resolve_reviewed_outbound(self, choice, *, timeout):
+        from types import SimpleNamespace
+        from hero_integration import api
+        from hero_integration.services import conflict_report
+
+        self.doc.customer_details = "locally selected"
+        self.doc.save()
+        frappe.db.commit()
+        self.assertEqual(self.run_sync().status, SyncStatus.CONFLICT)
+        event = frappe.get_doc("HERO Sync Change Event", {"open_field": self.binding.identity_key})
+        version = str(event.modified)
+        chosen = "reviewed correction" if choice == "CUSTOM" else self.doc.customer_details
+        args = dict(value=chosen, mutation_mapping="approved-test-mapping")
+        read = lambda *_: (self.payload, self.processor._approved_plan(frappe, "hero"), 1, "id")
+        audit_scope = self.identity
+        wire_context = {"mapping": {"target":{"operation":"review_fixture","argument":"data","field":"category"}}, "fingerprint": audit_scope,
+            "executable": SimpleNamespace(selection=SimpleNamespace(schema_fingerprint=self.snapshot.schema_fingerprint)),
+            "intent": SimpleNamespace(document="synthetic", variables={"data": {"id": int(self.identity), "category": chosen}})}
+        def deliver(transport, _document, variables):
+            transport._context["before_mutation"]()
+            if timeout:
+                raise TimeoutError("synthetic unknown outcome")
+            self.payload["category"] = variables["data"]["category"]
+        try:
+            with patch.object(conflict_report, "_read_reviewed_record", side_effect=read), \
+                 patch.object(api, "_assert_mutation_execution_released"), \
+                 patch.object(api, "_sync_hero_context", return_value=wire_context), \
+                 patch.object(api._SyncHeroTransport, "execute_once", autospec=True, side_effect=deliver) as dispatch:
+                def resolve_current():
+                    preview = conflict_report.preview_field(event.name, version, choice, **args)
+                    return conflict_report.resolve_field(event.name, version, choice, **args, confirmed=True,
+                        confirmation_fingerprint=preview["confirmation_fingerprint"])
+                if timeout:
+                    with self.assertRaises(TimeoutError):
+                        resolve_current()
+                    with self.assertRaises(frappe.ValidationError):
+                        resolve_current()
+                    self.assertEqual(self.registry.get_field_bindings(self.site,self.parent.identity_key)[0].acknowledged_version,1)
+                    self.payload["category"] = chosen  # Late confirmed remote delivery.
+                result = resolve_current()
+                frappe.db.commit()
+                self.assertEqual(result["status"], "RESOLVED")
+                dispatch.assert_called_once()
+            self.assertEqual(self.doc.reload().customer_details, chosen)
+            current, = self.registry.get_field_bindings(self.site,self.parent.identity_key)
+            self.assertEqual((current.acknowledged_version,json.loads(current.acknowledged_value_json)),(2,chosen))
+            self.assertEqual(event.reload().outcome, "RESOLVED")
+        finally:
+            frappe.db.rollback()
+            frappe.db.delete("HERO Mutation Audit", {"request_fingerprint":sha256((event.name + audit_scope).encode()).hexdigest()})
+            frappe.db.commit()

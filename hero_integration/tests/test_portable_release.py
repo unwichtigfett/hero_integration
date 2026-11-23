@@ -115,12 +115,14 @@ class TestPortableRelease(unittest.TestCase):
             set(fields),
             {
                 "source_system", "source_instance", "source_type", "source_id", "source_key",
-                "target_doctype", "target_name", "sync_status", "last_synced_on", "conflict_detail",
+                "target_doctype", "target_name", "target_incarnation", "sync_status", "last_synced_on", "conflict_detail",
                 "source_payload_hash", "target_payload_hash", "source_field_hashes", "target_field_hashes",
                 "observed_source_hash", "observed_target_hash", "last_observed_on", "mapping_version",
             },
         )
         self.assertTrue(fields["source_key"]["unique"])
+        self.assertTrue(fields["target_incarnation"]["read_only"])
+        self.assertFalse(fields["target_incarnation"].get("reqd", False))
         self.assertEqual(fields["target_name"]["fieldtype"], "Dynamic Link")
         self.assertEqual(fields["target_name"]["options"], "target_doctype")
 

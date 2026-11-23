@@ -30,7 +30,7 @@ def mutation_snapshot(*, include_id=False):
     from hero_integration.services.mapping_contract_v1 import StoredSnapshot
     identity = 'id:Int! ' if include_id else ''
     raw = introspection_from_schema(build_schema('type Query { contacts:[Contact] } '
-        'type Contact { id:ID full_name:String } input ContactInput { ' + identity + 'full_name:String } '
+        'type Contact { id:ID is_deleted:Boolean is_contact_person:Boolean full_name:String } input ContactInput { ' + identity + 'full_name:String } '
         'type Mutation { update_contact(contact:ContactInput):Contact }'))
     return StoredSnapshot('writeback', raw, analyze_snapshot(raw).fingerprint, 'hero')
 
@@ -41,8 +41,8 @@ def configuration(**changes):
 
 
 def context():
-    request = NS(protocol_field_name='contacts', document='query Read { contacts { id full_name } }', variables={},
-                 result_bindings=[NS(selection_path=('id',)), NS(selection_path=('full_name',))])
+    request = NS(protocol_field_name='contacts', document='query Read { contacts { id is_deleted is_contact_person full_name } }', variables={},
+                 result_bindings=[NS(selection_path=(path,)) for path in ('id','is_deleted','is_contact_person','full_name')])
     plan = NS(request=request, source_instance='hero', sealed=NS(contract=NS(identity_path='id', records_path='contacts', definition_ids=('d',), mapping_revision=1)))
     value = 'Expected'
     return {'snapshot': mutation_snapshot(), 'source_context': SourceContext('hero', 7, endpoint_fingerprint('https://example.invalid/graphql', 'hero')),
@@ -63,6 +63,69 @@ class TestVerifiedWriteback(TestCase):
             with self.subTest(change=change), self.assertRaises(WritebackContractError):
                 validate_readback(c, c['readback_plan'])
 
+    def test_project_requires_approved_lifecycle_projection(self):
+        ctx = self._project_context()
+        plan = ctx["readback_plan"]
+        plan.request.result_bindings = [path for path in plan.request.result_bindings
+                                        if path.selection_path != ("is_deleted",)]
+        with self.assertRaises(WritebackContractError):
+            validate_readback(ctx, plan)
+
+    def _project_context(self, identity="42"):
+        from graphql import build_schema, introspection_from_schema
+        from hero_integration.services.graphql_graph import analyze_snapshot
+        from hero_integration.services.mapping_contract_v1 import StoredSnapshot
+
+        ctx = context()
+        raw = introspection_from_schema(build_schema(
+            "type Query { project_matches:[Project] } "
+            "type Project { id:ID is_deleted:Boolean partner_notes:String } "
+            "input ProjectMatchInput { id:Int! partner_notes:String } "
+            "type Mutation { update_project_match(project_match:ProjectMatchInput):Project }"))
+        ctx["snapshot"] = StoredSnapshot("project", raw, analyze_snapshot(raw).fingerprint, "hero")
+        ctx["mapping"]["target"] = {"operation": "update_project_match", "argument": "project_match",
+                                    "field": "partner_notes"}
+        ctx["parent"].object_type = "ProjectMatch"
+        ctx["parent"].external_object_id = identity
+        ctx["binding"].target_doctype = "Project"
+        ctx["binding"].source_field = "partner_notes"
+        plan = ctx["readback_plan"]
+        plan.request.protocol_field_name = plan.sealed.contract.records_path = "project_matches"
+        plan.request.document = "query Read { project_matches { id is_deleted partner_notes } }"
+        plan.request.result_bindings = [NS(selection_path=(key,)) for key in ("id", "is_deleted", "partner_notes")]
+        return ctx
+
+    def test_project_preflight_blocks_unverified_lifecycle_or_uid_before_transport(self):
+        for identity, row in (
+            ("42", {"id": 42}), ("42", {"id": 42, "is_deleted": True}),
+            ("42", {"id": 42, "is_deleted": None}), ("42", {"id": 42, "is_deleted": 0}),
+            ("42", {"id": 42, "is_deleted": "false"}), ("42", {"id": 43, "is_deleted": False}),
+            ("True", {"id": True, "is_deleted": False}), ("0", {"id": 0, "is_deleted": False}),
+        ):
+            ctx = self._project_context(identity)
+            with self.subTest(identity=identity, row=row), \
+                    patch("hero_integration.client.settings.get_configuration", return_value=configuration()), \
+                    patch("hero_integration.client.graphql_mutation.HeroMutationClient") as mutation, \
+                    patch("hero_integration.client.graphql.HeroGraphQLClient") as reader:
+                reader.return_value.query.return_value = {"project_matches": [dict(row, partner_notes="old")]}
+                mutation.return_value.execute_once.return_value = {"update_project_match": {"id": identity}}
+                document = "mutation Write($project_match:ProjectMatchInput){update_project_match(project_match:$project_match){id}}"
+                with self.assertRaises(WritebackContractError):
+                    api._SyncHeroTransport(ctx, NS(correlation_id="audit")).execute_once(
+                        document, {"project_match": {"id": 42, "partner_notes": "old"}})
+                mutation.assert_not_called()
+
+    def test_project_preflight_accepts_one_bound_active_project(self):
+        from hero_integration.services.writeback_readback import read_bound_value
+        ctx = self._project_context()
+        validate_readback(ctx, ctx["readback_plan"])
+        rows = [{"id": 42, "is_deleted": False, "partner_notes": "old"}]
+        reader = Mock(query=Mock(return_value={"project_matches": rows}))
+        self.assertEqual(read_bound_value(ctx, reader), "old")
+        rows.append(dict(rows[0]))
+        with self.assertRaises(WritebackContractError):
+            read_bound_value(ctx, reader)
+
     def test_id_only_response_cannot_acknowledge_a_write(self):
         c = context()
         for rows in ([{'id': '42'}], [{'id': '42', 'full_name': 'Old'}], [],
@@ -74,15 +137,15 @@ class TestVerifiedWriteback(TestCase):
 
     def test_matching_value_hashes_the_canonical_field_and_uses_exact_approved_request(self):
         c = context()
-        reader = Mock(query=Mock(return_value={'contacts': [{'id': '42', 'full_name': 'Expected'}]}))
+        reader = Mock(query=Mock(return_value={'contacts': [{'is_contact_person': False, 'is_deleted': False, 'id': '42', 'full_name': 'Expected'}]}))
         result = verify_readback(c, reader, {'contact': {'id': 42, 'full_name': 'Expected'}})
         self.assertEqual(result, state_fingerprint('Expected', present=True))
         reader.query.assert_called_once_with(c['readback_plan'].request.document, {})
 
     def test_null_false_and_zero_are_distinct_and_errors_are_not_success(self):
         c = context()
-        for response in ({'contacts': [{'id': '42', 'full_name': None}]},
-                         {'contacts': [{'id': '42', 'full_name': False}]},
+        for response in ({'contacts': [{'is_contact_person': False, 'is_deleted': False, 'id': '42', 'full_name': None}]},
+                         {'contacts': [{'is_contact_person': False, 'is_deleted': False, 'id': '42', 'full_name': False}]},
                          {'errors': [{'message': 'redacted'}], 'data': {'contacts': []}}):
             with self.subTest(response=response), self.assertRaises(WritebackContractError):
                 verify_readback(c, Mock(query=Mock(return_value=response)), {'contact': {'full_name': 0}})
@@ -101,7 +164,7 @@ class TestVerifiedWriteback(TestCase):
                 patch('hero_integration.client.graphql_mutation.HeroMutationClient') as mutation, \
                 patch('hero_integration.client.graphql.HeroGraphQLClient') as read:
             mutation.return_value.execute_once.return_value = {'update_contact': {'id': '42'}}
-            read.return_value.query.return_value = {'contacts': [{'id': '42', 'full_name': 'Old'}]}
+            read.return_value.query.return_value = {'contacts': [{'is_contact_person': False, 'is_deleted': False, 'id': '42', 'full_name': 'Old'}]}
             with self.assertRaises(WritebackContractError):
                 api._SyncHeroTransport(c, NS(correlation_id='audit')).execute_once(MUTATION, {'contact': {'full_name': 'Expected'}})
             mutation.return_value.execute_once.assert_called_once()
@@ -119,8 +182,8 @@ class TestVerifiedWriteback(TestCase):
                     patch('hero_integration.client.graphql.HeroGraphQLClient') as read:
                 mutation.return_value.execute_once.return_value = {'update_contact': {'id': '42'}}
                 read.return_value.query.side_effect = [
-                    {'contacts': [{'id': '42', 'full_name': remote_before}]},
-                    {'contacts': [{'id': '42', 'full_name': 'Expected'}]},
+                    {'contacts': [{'is_contact_person': False, 'is_deleted': False, 'id': '42', 'full_name': remote_before}]},
+                    {'contacts': [{'is_contact_person': False, 'is_deleted': False, 'id': '42', 'full_name': 'Expected'}]},
                 ]
                 transport = api._SyncHeroTransport(c, NS(correlation_id='audit'))
                 if succeeds:

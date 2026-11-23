@@ -231,15 +231,18 @@ def _managed_owner(doc, owner):
 
 def _observe_bound_changes(frappe, doc, previous):
     """Capture a native save once per bound object in the document transaction."""
-    from hero_integration.services.binding_registry import native_fingerprint
+    from hero_integration.services.binding_registry import incarnation, native_fingerprint
     from hero_integration.services.integration_events import record_output
 
+    if not getattr(doc, "creation", None):
+        return {}  # Singles have no native row incarnation to bind.
     parent = frappe.qb.DocType("HERO Object Binding")
     field = frappe.qb.DocType("HERO Field Binding")
     rows = (frappe.qb.from_(parent).join(field).on(field.object_binding == parent.name)
             .select(parent.name, parent.source_instance, parent.external_object_id, parent.object_type, field.target_field)
             .where((parent.site_scope == frappe.local.site) & (parent.target_doctype == doc.doctype)
-                   & (parent.target_name == doc.name) & (field.site_scope == parent.site_scope)
+                   & (parent.target_name == doc.name) & (parent.lifecycle == "VALID")
+                   & (parent.target_incarnation == incarnation(doc.creation)) & (field.site_scope == parent.site_scope)
                    & (field.source_instance == parent.source_instance) & (field.target_name == parent.target_name)
                    & (field.target_doctype == parent.target_doctype))).run(as_dict=True)
     groups = {}
@@ -290,7 +293,7 @@ def observe_frappe_target_change(doc, method=None) -> None:
     covered = _observe_bound_changes(frappe, doc, previous) if previous else {}
     links = frappe.get_all(
         "HERO Integration Link",
-        filters={"target_doctype": doc.doctype, "target_name": doc.name},
+        filters={"target_doctype": doc.doctype, "target_name": doc.name, "sync_status": ["!=", "Source Deleted"]},
         fields=["name", "source_instance", "source_type", "source_id", "target_field_hashes", "observed_target_hash"],
     )
     for row in links:

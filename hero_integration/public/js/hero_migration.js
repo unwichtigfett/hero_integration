@@ -152,7 +152,7 @@
         const notice = el("div", {class: "hero-sync-notice", role: "status", "aria-live": "polite"});
         const head = el("header", {class: "hero-sync-panel hero-sync-head", "data-views": "migration"},
             el("h2", {text: tr("Hero Migration / Synchronization")}),
-            el("p", {text: tr("Import and synchronize data from HERO to Frappe.")}), notice);
+            el("p", {text: tr("Import and synchronize data from HERO to Frappe.")}));
         const subscription = el("section", {class: "hero-sync-panel hero-sync-subscription", "data-views": "sync", "aria-label": tr("Subscription Service")});
         const viewSwitch = el("nav", {class: "hero-sync-views", "aria-label": tr("Synchronization views")},
             ...[["migration", "Migration"], ["sync", "Sync"], ["runtime", "Runtime"]].map(([key, label]) =>
@@ -164,7 +164,7 @@
         const work = el("section", {class: "hero-sync-panel hero-sync-work", "data-views": "runtime"});
         const root = el("section", {class: "hero-sync", "data-view": state.view}, viewSwitch, head, subscription, manual, service, states, live, work);
         // The frame is the size container: the layout follows the space the page really has.
-        const frame = el("div", {class: "hero-sync-frame"}, root);
+        const frame = el("div", {class: "hero-sync-frame"}, notice, root);
         host.append(frame);
 
         function renderView() {
@@ -258,9 +258,10 @@
             put(service, 
                 el("div", {class: "hero-sync-service-grid"},
                     el("div", {class: "hero-sync-sub hero-sync-sub-areas"}, el("h3", {text: tr("Sync Services")}), el("p", {class: "hero-sync-hint", text: tr("Enable or disable synchronization per area.")}), switches, monitorNote,
-                        el("button", {type: "button", onclick: showSyncEvidence, text: tr("Execution status")}),
-                        svc.mode === "OFF" ? el("button", {type: "button", disabled: state.busy,
-                            onclick: reviewBoundSync, text: tr("Compare bound objects once")}) : null),
+                        el("div", {class: "hero-sync-detail-actions"},
+                            el("button", {type: "button", class: "hero-sync-small", onclick: showSyncEvidence, text: tr("Execution status")}),
+                            svc.mode === "OFF" ? el("button", {type: "button", class: "hero-sync-small", disabled: state.busy,
+                                onclick: reviewBoundSync, text: tr("Compare bound objects once")}) : null)),
                     el("div", {class: "hero-sync-sub hero-sync-sub-mode"},
                         el("div", {class: "hero-sync-row"}, el("h3", {text: tr("Mode")}), el("span", {class: `hero-sync-mode mode-${String(svc.mode).toLowerCase()}`, text: tr(MODE_LABELS[svc.mode] || svc.mode)})),
                         readonly("Exec. time", svc.execution_window || tr("Any time")),
@@ -394,13 +395,9 @@
         function statusBadge(value) {
             return el("span", {class: `hero-sync-status tone-${STATE_TONE[value] || "muted"}`}, el("span", {class: "hero-sync-dot", "aria-hidden": "true"}), value ? tr(value) : "—");
         }
-        function progress(row) {
-            const tone = STATE_TONE[row.state] || "muted";
-            // HERO reports no total count, so a bar is shown only for finished or running work.
-            const finished = ["Completed", "Completed With Conflicts"].includes(row.state);
-            return el("div", {class: "hero-sync-progress"},
-                finished || tone === "busy" ? el("span", {class: `hero-sync-bar tone-${tone} ${finished ? "is-full" : "is-running"}`, "aria-hidden": "true"}, el("span")) : null,
-                el("span", {text: format("{0} processed", number(row.processed)) + (row.conflict_records ? " · " + format("{0} conflicts", number(row.conflict_records)) : "")}));
+        function progressText(row) {
+            return format("{0} processed", number(row.processed)) +
+                (row.conflict_records ? " · " + format("{0} conflicts", number(row.conflict_records)) : "");
         }
 
         function renderLive(rows) {
@@ -447,7 +444,7 @@
                     el("td", {class: "hero-sync-mono", text: row.name}),
                     el("td", {text: tr(row.area)}),
                     el("td", {}, statusBadge(row.state)),
-                    el("td", {}, progress(row)),
+                    el("td", {text: progressText(row)}),
                     el("td", {class: "is-optional", text: `${number(row.created_records)} / ${number(row.processed)}`}),
                     el("td", {text: formatDateTime(row.started_on || row.creation)}),
                     el("td", {class: "is-optional", text: row.started_on ? formatDuration(row.started_on, row.finished_on) : "—"}),
@@ -566,6 +563,8 @@
         function renderConflicts(main, side) {
             const data = state.conflicts;
             add(main, el("h3", {text: tr("Importing Conflicts")}));
+            add(side, el("button", {type: "button", text: tr("Review open field conflicts"),
+                onclick: () => frappe.set_route("List", "HERO Sync Change Event", {outcome: "FIELD_CONFLICT"})}));
             if (!data) { add(main, el("p", {class: "hero-sync-hint", text: tr("Loading conflicts …")})); return; }
             if (!data.rows.length) { add(main, el("p", {class: "hero-sync-hint", text: tr("No open conflicts.")})); return; }
             const decidable = (row) => row.kind !== "record";
@@ -581,10 +580,10 @@
                         el("td", {class: "hero-sync-mono", text: decidable(row) ? row.name : `HERO ${row.source_id}`}),
                         el("td", {text: row.conflict_detail ? diagnostic(row.conflict_detail) : tr("Conflict requires review.")}),
                         el("td", {text: tr(row.area)}),
-                        el("td", {text: !decidable(row) ? format("Not imported ({0})", row.run) : tr(row.sync_status === "Pending Review" ? "Confirmation pending" : (row.conflict_detail || "").startsWith("Recheck requested: ") ? "Recheck requested" : "Conflict")}),
+                        el("td", {text: !decidable(row) ? format(row.sync_status === "Import conflict" ? "Import conflict ({0})" : "Not imported ({0})", row.run) : tr(row.sync_status === "Pending Review" ? "Confirmation pending" : (row.conflict_detail || "").startsWith("Recheck requested: ") ? "Recheck requested" : "Conflict")}),
                         el("td", {}, decidable(row) ? [el("button", {type: "button", class: "hero-sync-small", text: tr("Approve"), disabled: state.busy || undefined, onclick: () => decideConflicts([row], "approve")}),
                             el("button", {type: "button", class: "hero-sync-small", text: tr("Decline"), disabled: state.busy || undefined, onclick: () => decideConflicts([row], "reject")})]
-                            : el("span", {class: "hero-sync-hint", text: tr("Fix in HERO; the next run imports it.")})),
+                            : row.sync_status === "Not imported" ? el("span", {class: "hero-sync-hint", text: tr("Fix in HERO; the next run imports it.")}) : "—"),
                         el("td", {}, el("button", {type: "button", class: "hero-sync-small", text: tr("Report"), "aria-haspopup": "dialog",
                             "aria-label": format("Report for {0}", decidable(row) ? row.name : `HERO ${row.source_id}`), onclick: () => openConflictReport(row)}))))))),
                 pager(data.start, data.total, data.rows.length, (start) => { state.conflictsStart = Math.max(0, start); state.selectedConflicts.clear(); loadConflicts(); }));
@@ -728,10 +727,10 @@
             state.destroyed = true;
             clearTimeout(state.timer);
             stopLive();
-            container?.off("hide.heroRunProgress", onHide);
+            container?.off("hide.heroMigration", onHide);
         }
         function onHide(event) { if (event.target === container[0]) destroy(); }
-        container?.on("hide.heroRunProgress", onHide);
+        container?.on("hide.heroMigration", onHide);
         return {destroy};
     }
 

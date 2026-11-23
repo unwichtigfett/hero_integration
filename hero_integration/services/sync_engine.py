@@ -76,7 +76,7 @@ class ChangePage:
         if not all(isinstance(x,Mapping) for x in self.records) or any(x is not None and not isinstance(x,str) for x in (self.next_cursor,self.watermark)): raise SyncError("Provider change page is invalid.")
 @dataclass(frozen=True, slots=True)
 class SyncState:
-    configuration:PollingConfiguration; cursor:str|None=None; coverage:tuple[str,...]=(); status:SyncStatus=SyncStatus.IDLE; generation:int=0; diagnostic:str=""
+    configuration:PollingConfiguration; cursor:str|None=None; coverage:tuple[str,...]=(); status:SyncStatus=SyncStatus.IDLE; generation:int=0; diagnostic:str=""; bounded_after:str|None=None
     def __post_init__(self):
         if self.cursor is not None: _text(self.cursor,"cursor")
         if not isinstance(self.status,SyncStatus) or not isinstance(self.generation,int) or self.generation<0 or len(set(self.coverage))!=len(self.coverage): raise SyncError("Sync state is invalid.")
@@ -182,7 +182,9 @@ class FrappeSyncLedger:
     def execution_lease(self,run_id):
         db = self._frappe().db
         lock = sha256(f"HERO:sync:{self._frappe().local.site}:{run_id}".encode()).hexdigest()
-        if db.sql("SELECT GET_LOCK(%s, 0)", (lock,))[0][0] != 1:
+        # GET_LOCK alone succeeds recursively on the same MariaDB connection. An
+        # overlapping caller must never qualify as the owner of an abandoned receipt.
+        if db.sql("SELECT IF(IS_FREE_LOCK(%s), GET_LOCK(%s, 0), 0)", (lock, lock))[0][0] != 1:
             raise SyncConflict("The sync worker still owns this run.")
         self._execution_lock = lock
         try:
@@ -252,29 +254,43 @@ class FrappeBoundIndex:
         parent = frappe.qb.DocType(storage.OBJECT)
         query = (frappe.qb.from_(field).join(parent).on(field.object_binding == parent.name)
                  .where((field.site_scope == site_scope) & (field.source_instance == source_instance)
-                        & (field.direction == MappingDirection.HERO_TO_FRAPPE.value)))
+                        & (field.direction == MappingDirection.HERO_TO_FRAPPE.value) & (parent.lifecycle == "VALID")))
         if self.object_type:
             query = query.where(parent.object_type == self.object_type)
         if self.definition_ids is not None:
             query = query.where(field.mapping_definition_id.isin(sorted(self.definition_ids)))
         return storage, query, parent, field
 
-    def identities(self, site_scope, source_instance):
+    def has_open_review(self, site_scope, source_instance, mapping_revision):
+        """Account for a still-open review from an earlier page, budget or run."""
+        if self.definition_ids == frozenset():
+            return False
+        storage, query, parent, field = self._scope_query(site_scope, source_instance)
+        event = storage._frappe().qb.DocType("HERO Sync Change Event")
+        query = (query.join(event).on(event.open_field == field.identity_key)
+                 .where((event.outcome == "FIELD_CONFLICT") & (event.object_binding == parent.name)
+                        & (field.mapping_revision == mapping_revision) & (event.mapping_revision == mapping_revision)
+                        & (event.source_instance == source_instance) & (event.site_scope == site_scope)))
+        return bool(query.select(event.name).limit(1).run())
+
+    def identities(self, site_scope, source_instance, *, after=None):
         from frappe.utils import now_datetime
 
         if self.definition_ids == frozenset():
             return
         _, query, parent, field = self._scope_query(site_scope, source_instance)
+        from pypika.terms import Function
+        sort_key = Function("HEX", parent.external_object_id)
         cutoff = now_datetime()
         query = (query.where((parent.creation <= cutoff) & (field.creation <= cutoff))
-                 .select(parent.external_object_id).distinct().orderby(parent.external_object_id).limit(50))
-        after = None
+                 .select(sort_key).distinct().orderby(sort_key).limit(50))
         while True:
-            page = (query.where(parent.external_object_id > after) if after is not None else query).run(pluck=True)
+            page = (query.where(sort_key > after.encode().hex().upper()) if after is not None else query).run(pluck=True)
             if not page:
                 return
-            yield from page
-            after = page[-1]
+            for encoded in page:
+                after = bytes.fromhex(encoded).decode()
+                yield after
 
     def fields(self, site_scope, source_instance):
         return self.fields_for_ids(site_scope, source_instance, None)
@@ -286,7 +302,8 @@ class FrappeBoundIndex:
         query = query.select(field.star, parent.external_object_id, parent.object_type,
                              parent.site_scope.as_("parent_site"), parent.source_instance.as_("parent_source"))
         if identities is not None:
-            query = query.where(parent.external_object_id.isin(identities))
+            from pypika.terms import Function
+            query = query.where(Function("HEX", parent.external_object_id).isin([i.encode().hex().upper() for i in identities]))
         result = []
         for row in query.orderby(field.identity_key).run(as_dict=True):
             if row.parent_site != site_scope or row.parent_source != source_instance or not row.external_object_id:
@@ -330,7 +347,18 @@ class FrappeBoundProcessor:
     def accepted(self, identity, event_key, fields):
         if not self.run_id or not self.mapping_name or not self.object_type:
             return False
-        return self._frappe().db.get_value(self.EVENT, self._event_id(identity,event_key,fields), "outcome") == "APPLIED"
+        db = self._frappe().db
+        outcome = db.get_value(self.EVENT, self._event_id(identity, event_key, fields), "outcome")
+        if outcome not in {"APPLIED", "CONFLICT"}:
+            return False
+        # The receipt suppresses reapplication. Its immutable outcome can outlive
+        # the field review or predate a newer one on the same bound field.
+        open_review = db.exists(self.EVENT, {"open_field": ["in", [f.binding.identity_key for f in fields]],
+                                            "outcome": "FIELD_CONFLICT"})
+        return SyncStatus.CONFLICT if open_review else True
+
+    def durable_conflict(self, identity, event_key, fields):
+        return self._frappe().db.get_value(self.EVENT, self._event_id(identity, event_key, fields), "outcome") == "CONFLICT"
 
     def _approved_plan(self, frappe, source):
         from hero_integration.services.mapping_runtime import BindingContract, active_mapping_plan
@@ -399,13 +427,23 @@ class FrappeBoundProcessor:
         owners = {}
         from hero_integration.services.execution_runtime import link_source_type, locked_provenance
         source_type = link_source_type(plan.target_operation or plan.operation)
-        deleted = any(rule.purpose == "Lifecycle Flag" and rule.source_path in {"is_deleted", "deleted"}
-                      and record.get(rule.source_path) is True for rule in plan.definitions)
+        from hero_integration.services.binding_registry import verify_incarnation
+        from hero_integration.services.execution_runtime import (
+            finish_field_review, open_field_reviews, record_field_conflict, retire_source)
+        from hero_integration.services.mapping_runtime import source_lifecycle
+        lifecycle = source_lifecycle(plan.target_operation or plan.operation, record)
+        if lifecycle == "UNVERIFIED":
+            return SyncStatus.PARTIAL
+        if not lifecycle and plan.source_deleted(record):
+            lifecycle = "DELETED"
+        pending = {}
+        protected = {}
+        equal_reviews = []
         destinations = set()
         for field in sorted(fields,key=lambda item:item.binding.identity_key):
             parent = storage.object(first.site_scope, field.binding.object_binding_key, for_update=True)
             bound = storage.field(first.site_scope, field.binding.identity_key, for_update=True)
-            if (not parent or not bound or bound.object_binding_key != parent.identity_key or parent.reconciliation
+            if (not parent or not bound or bound.object_binding_key != parent.identity_key or parent.lifecycle != "VALID" or parent.reconciliation
                     or parent.mapping_definition_id not in {plan.binding_contract.definition_id, *self.definition_ids}):
                 raise SyncConflict("The bound object no longer has its approved mapping identity.")
             spec = rules.get(bound.mapping_definition_id)
@@ -437,15 +475,19 @@ class FrappeBoundProcessor:
                     target = frappe.get_doc(*target_key, for_update=True)
                 except frappe.DoesNotExistError as error:
                     raise SyncConflict("The bound native target no longer exists.") from error
+                try:
+                    verify_incarnation(parent, target)
+                except BindingConflict as error:
+                    raise SyncConflict(str(error)) from error
                 target.check_permission("write")
                 if get_module_app(target.meta.module) != bound.target_app:
                     raise SyncConflict("Target app no longer owns the bound document.")
+                if lifecycle:
+                    retire_source(parent, link.name if link else None, lifecycle)
+                    return SyncStatus.CONFLICT
+                pending.update(open_field_reviews(parent))
                 targets[target_key] = (target,{})
             target,updates = targets[target_key]
-            if deleted:
-                blocked = True
-                changes.append({"binding": bound.identity_key, "field": bound.target_field, "action": "SOURCE_DELETED"})
-                continue
             supported = self.supports_scalar(spec, target)
             projected = self.project_scalar(plan, spec, record, bound.source_instance) if supported else None
             if projected is None:
@@ -458,9 +500,28 @@ class FrappeBoundProcessor:
             previous = native_fingerprint(target.get(bound.target_field), fieldtype)
             decision = bindings.inbound_reconciliation(bound,active_mapping_revision=self.mapping_revision,
                                                        source_fingerprint=source_fp,target_fingerprint=previous)
-            if bound.state in {BindingState.MAPPING_CHANGED, BindingState.RECONCILIATION_REQUIRED}:
-                decision = "CONFLICT"
-            if decision == "KEEP_LOCAL":
+            if (bound.state in {BindingState.MAPPING_CHANGED, BindingState.RECONCILIATION_REQUIRED}
+                    or decision in {"MAPPING_CHANGED", "UNACKNOWLEDGED"}):
+                incomplete = True
+                protected[target_key, bound.target_field] = previous
+                changes.append({"binding": bound.identity_key, "field": bound.target_field, "action": "REVIEW_MAPPING"})
+                continue
+            review = pending.get(bound.identity_key)
+            if review and review.resolution_json:
+                blocked = True
+                protected[target_key, bound.target_field] = previous
+                changes.append({"binding": bound.identity_key, "field": bound.target_field, "action": "AWAITING_READBACK"})
+                continue
+            if decision == "CONFLICT" or review and decision != "CONFIRM_EQUAL":
+                record_field_conflict(parent, bound, target, projected, record, run=self.run_id, mapping=self.mapping_name)
+            if decision == "CONFLICT" or bound.identity_key in pending and decision != "CONFIRM_EQUAL":
+                blocked = True
+                protected[target_key, bound.target_field] = previous
+                changes.append({"binding": bound.identity_key, "field": bound.target_field, "action": "FIELD_CONFLICT"})
+                continue
+            if decision == "CONFIRM_EQUAL" and bound.identity_key in pending:
+                equal_reviews.append(pending.pop(bound.identity_key).name)
+            if decision in {"KEEP_LOCAL", "UNCHANGED"}:
                 continue
             if decision == "CONFIRM_EQUAL" and source_fp == bound.acknowledged_source_fingerprint and previous == bound.acknowledged_target_fingerprint:
                 continue
@@ -481,19 +542,27 @@ class FrappeBoundProcessor:
                 binding_owner, link_owner = owners[target_key]
                 with managed_target_update(*target_key, binding_owner), managed_target_update(*target_key, link_owner):
                     target.save()
+        verified_targets = {key: frappe.get_doc(*key, for_update=True) if updates else target
+                            for key, (target, updates) in targets.items()}
+        for (target_key, field), prior in protected.items():
+            saved = verified_targets[target_key]
+            if native_fingerprint(saved.get(field), saved.meta.get_field(field).fieldtype) != prior:
+                raise SyncConflict("Native lifecycle changed a protected field.")
+        for event in equal_reviews:
+            finish_field_review(event, "CONVERGED")
         for bound,target_key,source_fp in ack:
-            saved = frappe.get_doc(*target_key,for_update=True)
+            saved = verified_targets[target_key]
             actual = native_fingerprint(saved.get(bound.target_field), saved.meta.get_field(bound.target_field).fieldtype)
             if actual != source_fp:
                 raise SyncConflict("Native lifecycle modified the proposed bound value.")
             bindings.record_verified_acknowledgment(bound,expected_revision=bound.revision,
                 mapping_definition_id=bound.mapping_definition_id,mapping_revision=self.mapping_revision,
                 source_fingerprint=source_fp,target_fingerprint=actual,evidence_id=event_id,
-                version=bound.acknowledged_version+1)
+                version=bound.acknowledged_version+1, value_json=json.dumps(saved.get(bound.target_field), default=str))
         # Internal receipts have read-only user permissions. Only this checked,
         # nonwhitelisted writer creates them. Conflicts are specific to a run.
-        outcome = "CONFLICT" if blocked else "PARTIAL" if incomplete else "APPLIED"
-        if outcome != "APPLIED":
+        outcome = "PARTIAL" if incomplete else "CONFLICT" if blocked else "APPLIED"
+        if outcome == "PARTIAL":
             event_id = self._event_id(identity,(outcome,event_id,self.run_id),fields)
         if not frappe.db.exists(self.EVENT,event_id):
             frappe.get_doc({"doctype":self.EVENT,"event_id":event_id,"site_scope":first.site_scope,
@@ -504,7 +573,7 @@ class FrappeBoundProcessor:
                 "unchanged_documents": len(targets) - updated_documents if outcome == "APPLIED" else 0,
                 "outcome":outcome,"field_changes":json.dumps(changes)
             }).insert(ignore_permissions=True)
-        return SyncStatus.CONFLICT if blocked else SyncStatus.PARTIAL if incomplete else True
+        return SyncStatus.PARTIAL if incomplete else SyncStatus.CONFLICT if blocked else True
 
 def scheduler_due(configuration:PollingConfiguration, elapsed_seconds:object)->bool:
     """Pure scheduler gate; scheduler registration and job enqueueing are external."""
@@ -530,7 +599,7 @@ class SyncEngine:
                                   interval_seconds=configuration.interval_seconds) == configuration
             return self.ledger.save_state(SyncState(configuration,prior.cursor if same_reader else None,
                 prior.coverage if same_reader else (),SyncStatus.RECONCILIATION_REQUIRED,
-                prior.generation+1,"configuration changed"),prior.generation)
+                prior.generation+1,"configuration changed",prior.bounded_after if same_reader else None),prior.generation)
         return self.ledger.save_state(SyncState(configuration),expected)
     def poll(self, run:SyncRun):
         state=self._state(run)
@@ -563,13 +632,21 @@ class SyncEngine:
         finish = getattr(self.ledger, "finish", None)
         commit()
         processed = skipped = rows_read = 0
+        saw_conflict = False
+        unresolved_input = False
         outcome = SyncStatus.FAILED
 
-        def checkpoint_record():
+        def checkpoint_record(bounded_id=None):
+            nonlocal state
+            next_state = state
+            if bounded and bounded_id is not None:
+                next_state = self.ledger.save_state(replace(state, bounded_after=bounded_id,
+                    generation=state.generation+1), state.generation)
             progress = getattr(self.ledger, "progress", None)
             if progress:
                 progress(run, processed, skipped, rows_read)
             commit()
+            state = next_state
 
         def stop(status, diagnostic):
             nonlocal outcome
@@ -584,6 +661,12 @@ class SyncEngine:
                 return stop(SyncStatus.RECONCILIATION_REQUIRED if caps.bounded_comparison else SyncStatus.INCOMPLETE,
                             "provider cannot prove complete cursor discovery")
             source = state.configuration.source_instance
+            def reviews_remain():
+                check = getattr(self.index, "has_open_review", None)
+                if unresolved_input or check is None:
+                    return unresolved_input or saw_conflict
+                return check(run.site_scope, source, state.configuration.mapping_revision)
+
             page_fields = getattr(self.index, "fields_for_ids", None)
             by_object = {}
             if page_fields is None:
@@ -593,8 +676,9 @@ class SyncEngine:
                     by_object.setdefault(field.object_id, []).append(field)
             identities = None
             if bounded:
-                identities = (self.index.identities(run.site_scope, source) if page_fields
-                              else iter(sorted(by_object)))
+                identities = (self.index.identities(run.site_scope, source, after=state.bounded_after) if page_fields and state.bounded_after else
+                              self.index.identities(run.site_scope, source) if page_fields
+                              else (key for key in sorted(by_object) if not state.bounded_after or key > state.bounded_after))
             commit()
             cursor = state.cursor
             seen_cursors = {cursor}
@@ -604,6 +688,9 @@ class SyncEngine:
                 if bounded:
                     bound_id = next(identities, None)
                     if bound_id is None:
+                        state = replace(state, bounded_after=None)
+                        if reviews_remain():
+                            return stop(SyncStatus.CONFLICT, "one or more bound objects require review")
                         if processed + skipped == 0:
                             return stop(SyncStatus.INCOMPLETE, "no eligible existing bound objects")
                         if self.revalidate:
@@ -645,10 +732,14 @@ class SyncEngine:
                     event_key = (("bound",run.run_id) if bounded else ("version", version) if fast else
                                  ("position", cursor, position, _page_marker(ChangePage((record,), None, True))))
                     receipt = getattr(self.processor, "accepted", None)
-                    if receipt and receipt(identity, event_key, selected):
-                        coverage.update(field.binding.identity_key for field in selected)
+                    already_processed = receipt(identity, event_key, selected) if receipt else False
+                    if already_processed:
+                        if already_processed == SyncStatus.CONFLICT:
+                            saw_conflict = True
+                        else:
+                            coverage.update(field.binding.identity_key for field in selected)
                         skipped += 1
-                        checkpoint_record()
+                        checkpoint_record(identity if not unresolved_input else None)
                         continue
                     if (bounded or fast) and self.revalidate:
                         self.revalidate()
@@ -669,25 +760,35 @@ class SyncEngine:
                     result = (apply(record, selected, event_key, version) if apply else
                               self.processor.process(record, selected))
                     if result == SyncStatus.CONFLICT:
-                        return stop(SyncStatus.CONFLICT, "binding or field baseline conflict")
+                        saw_conflict = True
+                        confirmed = getattr(self.processor, "durable_conflict", None)
+                        if confirmed and confirmed(identity, event_key, selected):
+                            processed += 1
+                            checkpoint_record(identity if not unresolved_input else None)
+                        else:
+                            unresolved_input = True
+                            checkpoint_record()
+                        continue
                     if result == SyncStatus.PARTIAL:
                         return stop(SyncStatus.PARTIAL, "bound record omitted a required or supported field")
                     if not result:
                         return stop(SyncStatus.PARTIAL, "local processing was not durable")
                     processed += 1
                     coverage.update(field.binding.identity_key for field in selected)
-                    checkpoint_record()  # Target save, acknowledgments and receipt commit together.
+                    checkpoint_record(identity if not unresolved_input else None)  # Target save, acknowledgments and receipt commit together.
                 if bounded:
                     continue
                 if page.next_cursor is None:
+                    if unresolved_input:
+                        return stop(SyncStatus.CONFLICT, "one or more changes lack durable evidence")
                     if not page.complete or not page.watermark:
                         return stop(SyncStatus.INCOMPLETE, "provider supplied no complete watermark")
                     if self.revalidate:
                         self.revalidate()
+                    outcome = SyncStatus.CONFLICT if reviews_remain() else SyncStatus.SUCCEEDED
                     done = self.ledger.save_state(replace(state,cursor=page.watermark,
-                        coverage=tuple(sorted(coverage)),status=SyncStatus.SUCCEEDED,
+                        coverage=tuple(sorted(coverage)),status=outcome,
                         generation=state.generation+1,diagnostic=""),state.generation)
-                    outcome = SyncStatus.SUCCEEDED
                     return done
                 cursor = page.next_cursor
                 seen_cursors.add(cursor)
@@ -759,8 +860,8 @@ def _assign(doc,values):
     for key,value in values.items(): setattr(doc,key,value)
 def _state_payload(state,*,doctype=True):
     config={key:getattr(state.configuration,key) for key in state.configuration.__dataclass_fields__}
-    fields={"site_scope":state.configuration.site_scope,"configuration_json":json.dumps(config,sort_keys=True,separators=(",",":")),"cursor":state.cursor or "","coverage_json":json.dumps(state.coverage),"status":state.status.value,"generation":state.generation,"diagnostic":state.diagnostic}
+    fields={"site_scope":state.configuration.site_scope,"configuration_json":json.dumps(config,sort_keys=True,separators=(",",":")),"cursor":state.cursor or "","bounded_after":state.bounded_after,"coverage_json":json.dumps(state.coverage),"status":state.status.value,"generation":state.generation,"diagnostic":state.diagnostic}
     return ({"doctype":FrappeSyncLedger.STATE,"name":state.configuration.site_scope}|fields) if doctype else fields
 def _state_from_doc(doc):
-    try: return SyncState(PollingConfiguration(**json.loads(doc.configuration_json)),doc.cursor or None,tuple(json.loads(doc.coverage_json or "[]")),SyncStatus(doc.status),int(doc.generation or 0),doc.diagnostic or "")
+    try: return SyncState(PollingConfiguration(**json.loads(doc.configuration_json)),doc.cursor or None,tuple(json.loads(doc.coverage_json or "[]")),SyncStatus(doc.status),int(doc.generation or 0),doc.diagnostic or "",getattr(doc,"bounded_after",None) or None)
     except (AttributeError,TypeError,ValueError,json.JSONDecodeError) as error: raise SyncError("Persistent sync state is malformed.") from error

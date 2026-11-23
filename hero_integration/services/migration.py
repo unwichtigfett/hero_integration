@@ -58,6 +58,8 @@ class Result:
     target_doctype: str = ""
     target_name: str = ""
     pending_relation: bool = False
+    related_field_conflict: bool = False
+    verified_object: str = ""
 
 
 class CustomerAddressError(ValueError):
@@ -985,12 +987,18 @@ def _migrate_customer(record: dict[str, object], run, *, plan=None) -> Result:
     if drift:
         return drift
 
+    address_conflict = False
+
+    def sync_relations(customer, contacts, phone):
+        nonlocal address_conflict
+        outcome = _synchronize_customer_relations(customer, contacts, phone, address,
+            _source_instance(record), plan.mapping_version, plan, record, getattr(run, "name", None))
+        address_conflict |= outcome == "conflict"
+
     def after_insert(customer):
         if defer_relations:
             return
-        _synchronize_customer_relations(
-            customer, contact_values, home_phone, address, _source_instance(record), plan.mapping_version,
-        )
+        sync_relations(customer, contact_values, home_phone)
         _keep_phone_originals(customer, phone_originals)
 
     def after_update(customer, outcome):
@@ -998,11 +1006,8 @@ def _migrate_customer(record: dict[str, object], run, *, plan=None) -> Result:
             return
         # Relations receive only the reconciled HERO changes: a locally edited
         # Contact value is never rewritten because another field changed.
-        _synchronize_customer_relations(
-            customer, {field: value for field, value in contact_values.items() if field in outcome.apply},
-            home_phone if "hero_phone_home" in outcome.apply else None,
-            address, _source_instance(record), plan.mapping_version,
-        )
+        sync_relations(customer, {field: value for field, value in contact_values.items() if field in outcome.apply},
+                       home_phone if "hero_phone_home" in outcome.apply else None)
         _keep_phone_originals(customer, {field: text for field, text in phone_originals.items() if field in outcome.apply})
 
     from hero_integration.services.deferred_references import realizing
@@ -1032,7 +1037,7 @@ def _migrate_customer(record: dict[str, object], run, *, plan=None) -> Result:
         frappe.db.savepoint('hero_customer_primary_relations')
         try:
             customer = frappe.get_doc('Customer', result.target_name)
-            _synchronize_customer_relations(customer, {}, None, address, _source_instance(record), plan.mapping_version)
+            sync_relations(customer, {}, None)
         except (HomePhoneConflict, CustomerAddressError) as error:
             frappe.db.rollback(save_point='hero_customer_primary_relations')
             return Result('CONFLICT', str(error), 'Customer', result.target_name)
@@ -1048,6 +1053,9 @@ def _migrate_customer(record: dict[str, object], run, *, plan=None) -> Result:
     if note and result.code != "BLOCKED_RECORD":
         from dataclasses import replace
         result = replace(result, detail=(result.detail or "") + note)
+    if address_conflict and result.code in {"CREATED", "UPDATED", "SKIPPED", "CONVERGED", "OBSERVED"}:
+        from dataclasses import replace
+        result = replace(result, code="CONFLICT", related_field_conflict=True, detail="Primary address fields await review.")
     return result
 
 
@@ -1142,8 +1150,8 @@ def _migrate_with_binding(record, run, plan, kind, write, *, relationships_only=
     if run.mode == "Preview":
         return _migrate_isolated(write)
     return _migrate_isolated(lambda: process_migration_record(plan, record, _source_instance(record), kind,
-        write, relationships_only=relationships_only, evidence=run.name, successful=lambda result: result.code in {
-            "CREATED", "UPDATED", "SKIPPED", "CONVERGED", "OBSERVED"} and bool(result.target_name)), savepoint="hero_runtime_record")
+        write, relationships_only=relationships_only, evidence=run.name, held=Result, successful=lambda result: (result.code in {
+            "CREATED", "UPDATED", "SKIPPED", "CONVERGED", "OBSERVED"} or result.related_field_conflict) and bool(result.target_name)), savepoint="hero_runtime_record")
 
 
 def _migrate_isolated(migrate, savepoint="hero_record") -> Result:
@@ -2722,8 +2730,11 @@ def _observe_link(link, source_hash: str, target_hash: str) -> None:
 
 
 def _update_link_baseline(link, source_hash, target_hash, source_fields, target_fields, mapping_version) -> None:
-    link.source_payload_hash = source_hash
-    link.target_payload_hash = target_hash
+    from hero_integration.services.execution_runtime import field_decisions
+    choices = field_decisions(getattr(link, "target_doctype", None), getattr(link, "target_name", None))
+    if all(decision not in {None, "local"} for decision in choices.values()):
+        link.source_payload_hash = source_hash
+        link.target_payload_hash = target_hash
     link.source_field_hashes = encode_hashes(source_fields)
     link.target_field_hashes = encode_hashes(target_fields)
     link.mapping_version = mapping_version
@@ -2810,17 +2821,44 @@ def _customer_primary_address(record: dict[str, object], selected_line2: str | N
     return address
 
 
-def _synchronize_customer_relations(customer, contact_values, home_phone, address, source_instance: str, mapping_version: str) -> None:
+def _synchronize_customer_relations(customer, contact_values, home_phone, address, source_instance: str, mapping_version: str,
+                                    plan=None, record=None, evidence=None):
     synchronize_primary_contact(customer, contact_values)
     synchronize_home_phone(customer, home_phone)
     if address is not None:
-        _synchronize_customer_address(customer, address, source_instance, mapping_version)
-        from hero_integration.services.primary_address import fill_primary_address
-
-        fill_primary_address(customer.name, source_instance)
+        return _realize_primary_address(customer, address, source_instance, mapping_version, plan, record, evidence)
 
 
-def _synchronize_customer_address(customer, address: dict[str, object], source_instance: str, mapping_version: str) -> None:
+def _realize_primary_address(customer, address, source_instance, mapping_version, plan, record, evidence):
+    def write_address(locked_target):
+        return _synchronize_customer_address(customer, address, source_instance, mapping_version,
+                                             locked_target=locked_target)
+
+    if budget := execution_budget.current_budget():
+        budget.reserve_many([("customer_address", str(address["id"]))])
+    if "mapped_values" in address:
+        if (not plan or not plan.binding_contract or not isinstance(record.get("address"), dict)
+                or str(record["address"].get("id")) != str(address["id"])):
+            raise BindingConflict("The primary address requires its approved Customer reader and identity.")
+        from hero_integration.services.execution_runtime import process_migration_record
+        status = process_migration_record(plan, record, source_instance, "customer_address", write_address,
+            evidence=evidence, successful=lambda result: True)
+    else:
+        # Legacy adapters cannot establish a native incarnation from a reused name.
+        from hero_integration.services.binding_registry import matches_incarnation
+        link = _link("customer_address", str(address["id"]), source_instance, for_update=True)
+        locked_target = frappe.get_doc("Address", link.target_name, for_update=True) if link else None
+        if link and (link.sync_status in {REVIEW_REJECTED, REVIEW_PENDING, "Source Deleted"}
+                or not matches_incarnation(link.target_incarnation, locked_target.creation)):
+            raise CustomerAddressError("Historical Address identity requires review.")
+        status = write_address(locked_target)
+    from hero_integration.services.primary_address import fill_primary_address
+    fill_primary_address(customer.name, source_instance)
+    return status
+
+
+def _synchronize_customer_address(customer, address: dict[str, object], source_instance: str, mapping_version: str,
+                                  *, locked_target=None):
     if not _target_available("Address"):
         raise CustomerAddressError("Address is not installed on this site.")
     source_id = str(address["id"])
@@ -2848,15 +2886,19 @@ def _synchronize_customer_address(customer, address: dict[str, object], source_i
     if "mapped_values" in address:
         values = {**address["mapped_values"], "country": country}
     payload = {"customer": customer.name, **address}
-    existing = _link("customer_address", source_id, source_instance)
+    existing = _link("customer_address", source_id, source_instance, for_update=True)
     if existing:
+        if getattr(existing, "sync_status", None) in {REVIEW_REJECTED, REVIEW_PENDING, "Source Deleted"}:
+            raise CustomerAddressError("Historical Address identity requires review.")
         if existing.target_doctype != "Address":
             _mark_link_conflict(existing, "Stored customer address reference has an incompatible target DocType.")
             raise CustomerAddressError("Stored customer address reference has an incompatible target DocType.")
         if not frappe.db.exists("Address", existing.target_name):
             _mark_link_conflict(existing, "Stored customer address reference no longer exists.")
             raise CustomerAddressError("Stored customer address reference no longer exists.")
-        target = frappe.get_doc("Address", existing.target_name)
+        target = locked_target or frappe.get_doc("Address", existing.target_name)
+        if target.name != existing.target_name:
+            raise CustomerAddressError("Historical Address identity requires review.")
         if "mapped_values" in address:
             _require_exclusive_customer_address(target, customer.name)
             prior_source = decode_hashes(getattr(existing, "source_field_hashes", ""))
@@ -2865,19 +2907,26 @@ def _synchronize_customer_address(customer, address: dict[str, object], source_i
                 raise CustomerAddressError("Mapped Address requires a verified field baseline.")
             comparison = _Comparison(values)
             current = comparison.target_values(target, lambda doc: _target_values(doc, values))
-            outcome = comparison.reconcile(prior_source, prior_target, current)
-            if outcome.conflicts:
-                _mark_link_conflict(existing, "Mapped Address fields require reconciliation.")
-                raise CustomerAddressError("Mapped Address fields require reconciliation.")
+            from hero_integration.services.execution_runtime import bound_outcome
+            comparison.omit(set(prior_source) | set(prior_target))
+            outcome = bound_outcome(comparison.reconcile(prior_source, prior_target, current),
+                                    "Address", target.name, comparison.tracked)
             if outcome.apply:
                 for field in outcome.apply:
                     if field in values: target.set(field, values[field])
                 with managed_target_update('Address', target.name, existing.name): target.save()
-            if outcome.advances_baseline:
-                current = comparison.target_values(target, lambda doc: _target_values(doc, values))
-                _update_link_baseline(existing, _digest(payload), _digest(current),
-                    next_baseline(prior_source, comparison.source_hashes, outcome, tracked=comparison.tracked),
-                    next_baseline(prior_target, field_hashes(current), outcome, tracked=comparison.tracked), mapping_version)
+            current = comparison.target_values(target, lambda doc: _target_values(doc, values))
+            source_fields = next_baseline(prior_source, comparison.source_hashes, outcome, tracked=comparison.tracked)
+            target_fields = next_baseline(prior_target, field_hashes(current), outcome, tracked=comparison.tracked)
+            if source_fields != prior_source or target_fields != prior_target:
+                partial = bool(outcome.conflicts or outcome.local or comparison.missing)
+                _update_link_baseline(existing,
+                    getattr(existing, "source_payload_hash", None) if partial else _digest(payload),
+                    getattr(existing, "target_payload_hash", None) if partial else _digest(current),
+                    source_fields, target_fields, mapping_version)
+            if outcome.conflicts:
+                _mark_link_conflict(existing, "Field conflict requires review: " + ", ".join(sorted(outcome.conflicts)) + ".")
+                return "conflict"
             return
         if "address_line2" not in values:
             prior_source = decode_hashes(getattr(existing, "source_field_hashes", ""))
@@ -2948,8 +2997,10 @@ def _synchronize_customer_address(customer, address: dict[str, object], source_i
         "links": [{"link_doctype": "Customer", "link_name": customer.name}],
     })
     target.insert()
+    from hero_integration.services.binding_registry import incarnation
     frappe.get_doc({
         "doctype": "HERO Integration Link", "source_system": "HERO", "source_type": "customer_address",
+        "target_incarnation": incarnation(target.creation),
         "source_id": source_id, "source_instance": source_instance, "sync_status": "Synchronized",
         "conflict_detail": "", "last_synced_on": now_datetime(), "target_doctype": "Address",
         "target_name": target.name, "source_payload_hash": _digest(payload),

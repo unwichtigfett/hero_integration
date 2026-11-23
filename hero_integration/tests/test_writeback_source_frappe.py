@@ -133,8 +133,8 @@ class TestWritebackSourceSnapshotMariaDB(IntegrationTestCase):
                 self.writer.commit()
                 stale = get_configuration()
                 self.assertEqual((stale.source_instance, stale.source_binding_revision, stale.timeout_seconds), ('hero', 7, 1))
-                return {'contacts': [{'id': '42', 'full_name': 'Old'}]}
-            return {'contacts': [{'id': '42', 'full_name': 'Expected'}]}
+                return {'contacts': [{'is_deleted': False, 'is_contact_person': False, 'id': '42', 'full_name': 'Old'}]}
+            return {'contacts': [{'is_deleted': False, 'is_contact_person': False, 'id': '42', 'full_name': 'Expected'}]}
         with patch('hero_integration.client.graphql.HeroGraphQLClient') as reader, \
                 patch('hero_integration.client.graphql_mutation.HeroMutationClient') as mutation:
             reader.return_value.query.side_effect = read

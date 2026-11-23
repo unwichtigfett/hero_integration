@@ -406,7 +406,7 @@ class TestApprovedSendPagination(TestCase):
     def setUp(self):
         isolate_saved_materialization(self)
         self.ctx = context()
-        self.ctx.read.service.query_document = 'query Read($first:Int!,$offset:Int!){contacts(first:$first,offset:$offset){id remarks}}'
+        self.ctx.read.service.query_document = 'query Read($first:Int!,$offset:Int!){contacts(first:$first,offset:$offset){id remarks is_deleted is_contact_person}}'
         self.ctx.read.contract = NS(target_operation='HeroCustomers', page_size=2, records_path='contacts',
             identity_path='id', variables={'first': '$page_size', 'offset': '$offset'}, materialized_request=None)
         self.frappe = NS(get_doc=lambda doctype, name: self.ctx.read.service if doctype == 'HERO GraphQL Service' else self.ctx.read.mapping)
@@ -418,7 +418,7 @@ class TestApprovedSendPagination(TestCase):
 
     def test_bound_record_on_second_page_uses_only_approved_offset_variables(self):
         client = NS(query=Mock(side_effect=[{'contacts': [{'id': 1}, {'id': 2}]},
-            {'contacts': [{'id': 42, 'remarks': 'Expected'}]}, {'contacts': []}]))
+            {'contacts': [{'id': 42, 'remarks': 'Expected', 'is_contact_person': False, 'is_deleted': False}]}, {'contacts': []}]))
         result = ms._read_record(self.ctx, client)
         self.assertEqual(result['id'], 42)
         self.assertEqual([call.args for call in client.query.call_args_list], [

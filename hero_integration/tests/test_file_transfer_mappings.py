@@ -356,6 +356,32 @@ class TestFileMappingImport(_FileFixture):
                         if value.get('source_id') == '7'))
                     self.db.commit()
 
+    def test_bound_file_review_keeps_only_held_metadata_and_its_baseline(self):
+        from hero_integration.services.execution_runtime import _migration_decisions
+        read = _own_read()
+        row = _row(title='Imported.pdf', section='Roof')
+        self.run_slice([row], read=read, downloader=_Download())
+        _, link = self.imported()
+        name = link['target_name']
+        self.db.data['File'][name]['custom_hero_section'] = 'Local section'
+        self.db.commit()
+        identity = next(key for key, item in self.db.data['HERO Integration Link'].items() if item.get('target_name') == name)
+        existing = SimpleNamespace(name=identity,target_name=name)
+        old = json.loads(link['target_field_hashes'])
+        fields = {'file_name':'Remote.pdf','custom_hero_section':'New section'}
+        token = _migration_decisions.set(('File',name,{'custom_hero_section':None}))
+        try:
+            ft._assert_target_baseline(existing,fields,lock=True)
+            ft._save_file(name,fields,fields,identity)
+            current = json.loads(ft._target_baseline(name,fields,existing))
+        finally:
+            _migration_decisions.reset(token)
+        self.assertEqual(self.db.data['File'][name]['file_name'],'Remote.pdf')
+        self.assertEqual(self.db.data['File'][name]['custom_hero_section'],'Local section')
+        self.assertEqual(current['target']['file_name'],ft.value_hash('Remote.pdf'))
+        self.assertEqual(current['target']['custom_hero_section'],old['target']['custom_hero_section'])
+        self.assertEqual(current['fields'],old['fields'])
+
     def test_legacy_locally_renamed_file_is_not_adopted_as_baseline(self):
         row = _row()
         self.run_slice([row], downloader=_Download())

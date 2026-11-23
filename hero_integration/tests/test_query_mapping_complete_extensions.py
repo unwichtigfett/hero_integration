@@ -61,10 +61,15 @@ class TestCompleteQueryExtensions(TestCase):
 
     def test_user_resolver_is_source_scoped_and_never_guesses_by_email(self):
         calls=[]
-        fake=NS(local=NS(site='site-a'),db=NS(sql=lambda query,args,**kw:(calls.append(args) or [NS(target_name='employee@example.invalid')]),get_value=lambda *a:1),
-                get_doc=lambda *a:NS(name=a[-1]),has_permission=lambda *a,**kw:True)
+        creation='2026-11-01T12:00:00.000001'
+        binding=NS(target_name='employee@example.invalid',target_incarnation=creation)
+        user=NS(name=binding.target_name,creation=creation)
+        fake=NS(local=NS(site='site-a'),db=NS(sql=lambda query,args,**kw:(calls.append(args) or [binding]),get_value=lambda *a:1),
+                get_doc=lambda *a:user,has_permission=lambda *a,**kw:True)
         with patch.dict('sys.modules',{'frappe':fake}):
             self.assertEqual(ext.bound_user(17,'source-b'),'employee@example.invalid')
+            user.creation='2026-11-02T12:00:00.000001'
+            self.assertIsNone(ext.bound_user(17,'source-b'))
         self.assertEqual(calls[0][:4],('site-a','source-b','User','17'))
 
     def test_native_contact_phone_and_designation_use_child_baselines(self):

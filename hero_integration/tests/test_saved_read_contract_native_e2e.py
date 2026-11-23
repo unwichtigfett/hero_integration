@@ -210,7 +210,7 @@ class TestSavedReadContractNativeE2E(IntegrationTestCase):
             "nr": self.token + "-number",
             "full_name": self.token + "-customer",
             "company_name": "",
-            "is_deleted": False,
+            "is_deleted": False, "is_contact_person": False,
         }
 
         self._execute(run, record)

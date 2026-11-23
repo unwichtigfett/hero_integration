@@ -256,7 +256,8 @@ class MappingPlan:
 
     def source_deleted(self, record: dict[str, object]) -> bool:
         definitions = self._with_purpose(PURPOSE_LIFECYCLE_FLAG)
-        return any(source_value(record, definition.source_path) is True for definition in definitions)
+        return (source_lifecycle(self.target_operation or self.operation, record) == "DELETED" or
+                any(source_value(record, definition.source_path) is True for definition in definitions))
 
     def home_phone(self, record: dict[str, object]) -> str | None:
         definitions = self._with_purpose(PURPOSE_CUSTOMER_HOME_PHONE)
@@ -511,3 +512,17 @@ def effective_rule_fingerprint(definition_ids, mapping_name, *, lock=False, frap
         raise MappingPlanError("Selected checkpoint field rules are missing, inactive or belong to another mapping.")
     content = [{field: row.get(field) for field in fields} for row in sorted(rows, key=lambda row: row['definition_id'])]
     return hashlib.sha256(json.dumps(content, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
+
+
+def source_lifecycle(operation, record):
+    """Canonical provider flags are meaningful even without a separate field assignment."""
+    canonical = {"HeroCustomers": "is_deleted", "HeroProjectMatches": "is_deleted",
+                 "HeroDocuments": "is_deleted", "HeroPictures": "is_deleted",
+                 "HeroTasks": "is_deleted", "HeroCalendarEvents": "deleted"}.get(operation)
+    if canonical and record.get(canonical) is True:
+        return "DELETED"
+    if operation == "HeroCustomers" and record.get("is_contact_person") is True:
+        return "CONTACT_PERSON"
+    if operation == "HeroCustomers" and any(type(record.get(key)) is not bool for key in ("is_deleted", "is_contact_person")):
+        return "UNVERIFIED"
+    return ""

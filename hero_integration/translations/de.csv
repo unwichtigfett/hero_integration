@@ -1139,6 +1139,9 @@ Not bound,Nicht gebunden
 Not configured,Nicht konfiguriert
 Not displayed,Nicht angezeigt
 Not imported ({0}),Nicht importiert ({0})
+Import conflict,Importkonflikt
+Import conflict ({0}),Importkonflikt ({0})
+The import reported a conflict for a record with an ERPNext link.,Der Import meldete einen Konflikt für einen mit ERPNext verknüpften Datensatz.
 Not inherited,Nicht übernommen
 Not provided,Nicht angegeben
 Not ready,Nicht bereit
@@ -4011,3 +4014,55 @@ The reader must contain one approved query.,Der Reader muss genau eine freigegeb
 The approved record path has no unique schema object type.,Der freigegebene Datensatzpfad hat keinen eindeutigen Schema-Objekttyp.
 The approved record path must describe an object.,Der freigegebene Datensatzpfad muss ein Objekt beschreiben.
 Runtime plan operation differs from its approved reader.,Die Operation des Laufzeitplans weicht vom freigegebenen Reader ab.
+Resolve the bound field conflict before sending.,Lösen Sie vor dem Senden den Konflikt für dieses Feld.
+The HERO record is no longer eligible for this bound write.,Der HERO-Datensatz ist für diesen gebundenen Schreibvorgang nicht mehr zulässig.
+Verified native creation,Verifizierter Erstellungszeitpunkt
+Last verified field value,Zuletzt bestätigter Feldwert
+Unresolved Field Binding,Feldbindung mit offenem Konflikt
+Last Compared Identity,Zuletzt abgeglichene Identität
+Review open field conflicts,Offene Feldkonflikte prüfen
+Resolve field conflict,Feldkonflikt lösen
+Decision,Entscheidung
+Selected value (JSON),Gewählter Wert (JSON)
+Mutation Mapping,Mutations-Mapping
+Apply decision,Entscheidung anwenden
+Verified Target Incarnation,Verifizierte Dokumentinkarnation
+Source binding changed during conflict review.,Die Quellbindung hat sich während der Konfliktprüfung geändert.
+Conflict review requires the current approved runtime plan.,Für die Konfliktprüfung wird der aktuell freigegebene Laufzeitplan benötigt.
+Field mapping changed during conflict review.,Das Feldmapping hat sich während der Konfliktprüfung geändert.
+Approved reader addresses another HERO object type.,Der freigegebene Reader liest einen anderen HERO-Objekttyp.
+This field decision is stale.,Diese Feldentscheidung ist veraltet.
+The reviewed address relationship has changed.,Die geprüfte Adresszuordnung hat sich geändert.
+Native link changed during conflict review.,Die ERPNext-Zuordnung hat sich während der Konfliktprüfung geändert.
+The reviewed field has changed.,Das geprüfte Feld hat sich geändert.
+Select a field conflict decision.,Wählen Sie eine Entscheidung für den Feldkonflikt.
+The mapping requires a scalar decision value.,Für dieses Mapping muss ein einzelner Feldwert angegeben werden.
+Resume the earlier field decision with its original value and mapping.,Verwenden Sie für die Wiederaufnahme den ursprünglichen Feldwert und das ursprüngliche Mapping.
+The reviewed HERO field has changed.,Der geprüfte HERO-Feldwert hat sich geändert.
+An approved single-field mutation mapping is required.,Für den Versand ist ein freigegebenes Mutations-Mapping für dieses einzelne Feld erforderlich.
+This field preview has changed or was not confirmed. Preview the decision again.,Die Feldvorschau hat sich geändert oder die Bestätigung fehlt. Öffnen Sie die Vorschau erneut.
+Native validation changed the selected value.,Die ERPNext-Validierung hat den gewählten Wert geändert.
+Native validation changed an independent bound field.,Die ERPNext-Validierung hat ein anderes gebundenes Feld geändert.
+The reviewed mutation reservation is ambiguous.,Die geprüfte Versandreservierung ist nicht eindeutig.
+The earlier mutation requires verified readback before another decision.,"Bevor eine weitere Entscheidung möglich ist, muss der frühere Versand durch Rücklesen bestätigt werden."
+HERO did not confirm the selected value.,HERO hat den gewählten Wert beim Rücklesen nicht bestätigt.
+Enter a valid JSON scalar for the selected field.,Geben Sie einen gültigen skalaren JSON-Wert für das gewählte Feld ein.
+Preview decision,Entscheidung prüfen
+Current HERO value,Aktueller HERO-Wert
+Current ERPNext value,Aktueller ERPNext-Wert
+HERO mutation,HERO-Mutation
+ERPNext field update,Aktualisierung des ERPNext-Feldes
+HERO object,HERO-Objekt
+Value sent to HERO,An HERO zu sendender Wert
+Verify the existing dispatch and resume this decision?,Vorhandenen Versand durch Rücklesen prüfen und die Entscheidung fortsetzen?
+Confirm this field decision?,Diese Feldentscheidung bestätigen?
+None,Keine
+No,Nein
+Yes,Ja
+Cancel the unsent reservation so the field can be reviewed again?,Unversendete Reservierung aufheben und das Feld zur erneuten Prüfung freigeben?
+Primary address fields await review.,Felder der Hauptadresse müssen geprüft werden.
+Historical Address identity requires review.,Die Identität der historisch verknüpften Adresse muss geprüft werden.
+This field review has no recoverable active dispatch slot.,Für diesen Feldkonflikt ist kein wiederherstellbarer Versandplatz belegt.
+Review dispatch slot,Versandreservierung prüfen
+Release this dispatch slot and keep the field open for verified readback?,Versandplatz freigeben und das Feld bis zur Bestätigung durch Rücklesen offenhalten?
+Confirm the HERO readback and open a new review for the later ERPNext edit?,Den HERO-Wert als zurückgelesen bestätigen und die spätere ERPNext-Änderung zur erneuten Prüfung öffnen?

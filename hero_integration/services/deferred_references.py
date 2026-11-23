@@ -19,6 +19,7 @@ from hero_integration.services.performance import measured, profiled
 MAIN = 'HERO Pending Reference'
 CHILD = 'HERO Pending Dependency'
 BATCH = 50
+ADDRESS_REVIEW = '__hero_reviewed_primary_address'
 _replaying = ContextVar('hero_reference_replay', default=False)
 _writing = ContextVar('hero_pending_reference_write', default=False)
 
@@ -260,6 +261,15 @@ def remember(run, source_type, record, result):
     from hero_integration.services.employee_migration import historical_users
     historical = historical_users(source)
     observation = {**record, '__hero_origin_binding': _origin_binding(source, operation, identity)}
+    # This service owns the admission evidence even if a reader returns the same JSON alias.
+    observation.pop(ADDRESS_REVIEW, None)
+    verified_object = getattr(result, "verified_object", "")
+    address = record.get("address")
+    if (operation == "HeroCustomers" and verified_object and not result.pending_relation
+            and plan.binding_contract and any(rule.target_doctype == "Address" for rule in plan.definitions)
+            and isinstance(address, dict) and type(address.get("id")) is int and address["id"] > 0):
+        observation[ADDRESS_REVIEW] = {"object": verified_object, "address_id": str(address["id"]),
+                                       "parent_field_conflict": result.code == "CONFLICT"}
     if historical:
         observation['__hero_historical_users'] = sorted(historical)
     save(run.name, source, operation, identity, plan.mapping_version,
@@ -353,7 +363,7 @@ def save(run_name, source, operation, identity, version, record, dependencies, *
     successful = result_code is None or result_code in {
         'CREATED', 'UPDATED', 'SKIPPED', 'CONVERGED', 'OBSERVED', 'UNCHANGED'
     }
-    review = ready and not successful
+    review = ready and not successful and not (operation == 'HeroCustomers' and record.get(ADDRESS_REVIEW))
     doc = frappe.get_doc(MAIN, name, for_update=True) if exists else frappe.get_doc({'doctype': MAIN, 'identity_key': name})
     doc.update({'source_instance': source, 'operation': operation, 'source_id': str(identity),
         'origin_run': run_name, 'mapping_version': version, 'status': 'Conflict' if review else 'Waiting',
@@ -392,13 +402,28 @@ def binding_updated(doc, method=None):
     _enqueue_dependency(doc.source_instance, doc.source_type, doc.source_id, enqueue_after_commit=True)
 
 
+def _reviewed_address_rows(*, origin=None, names=()):
+    """Find only frozen, service-admitted children of an otherwise conflicted import."""
+    if not names and not origin:
+        return set()
+    condition, value = ("p.origin_run=%s", origin) if origin else ("p.name IN %s", tuple(names))
+    rows = frappe.db.sql(f"""SELECT p.name FROM `tabHERO Pending Reference` p
+        JOIN `tabHERO Integration Run` r ON r.name=p.origin_run
+        WHERE {condition} AND p.operation='HeroCustomers' AND p.status='Waiting'
+        AND r.state='Completed With Conflicts' AND r.mode!='Preview'
+        AND JSON_VALUE(p.record_json, '$.{ADDRESS_REVIEW}.object') IS NOT NULL
+        {"LIMIT 1" if origin else ""}""", (value,))
+    return {row[0] for row in rows}
+
+
 def wake_reference(name, *, scheduled=None):
     """Post-commit race closure: enqueue only if every missing identity arrived."""
     try:
         pending = frappe.db.get_value(MAIN, name, ['source_instance', 'status', 'operation', 'origin_run', 'realization_started'], as_dict=True)
         if not pending or pending.status != 'Waiting':
             return
-        if frappe.db.get_value('HERO Integration Run', pending.origin_run, 'state') != 'Completed':
+        state = frappe.db.get_value('HERO Integration Run', pending.origin_run, 'state')
+        if state != 'Completed' and not (state == 'Completed With Conflicts' and _reviewed_address_rows(names=[name])):
             return
         dependencies = (frappe.get_all(CHILD, filters={'parent': name, 'parenttype': MAIN},
             fields=['source_type', 'source_id'], limit_page_length=0)
@@ -436,7 +461,9 @@ def recover_pending():
     completed = set(frappe.get_all('HERO Integration Run', filters={
         'name': ['in', list({row.origin_run for row in rows})], 'state': 'Completed'},
         pluck='name', limit_page_length=0))
-    eligible = [row for row in rows if row.origin_run in completed]
+    partial = _reviewed_address_rows(names=[row.name for row in rows if row.origin_run not in completed
+                                            and row.operation == 'HeroCustomers'])
+    eligible = [row for row in rows if row.origin_run in completed or row.name in partial]
     dependencies = defaultdict(list)
     if eligible:
         for item in frappe.get_all(CHILD, filters={
@@ -450,7 +477,7 @@ def recover_pending():
     readiness = {source: available_many(source, deps) for source, deps in by_source.items()}
     scheduled = set()
     for row in rows:
-        if row.origin_run in completed:
+        if row.origin_run in completed or row.name in partial:
             try:
                 _wake_observed(row.name, row, dependencies[row.name], scheduled=scheduled,
                     availability=readiness.get(row.source_instance, {}))
@@ -471,8 +498,9 @@ def notify_completed_run(run_name):
         if not installed():
             return
         run = frappe.db.get_value('HERO Integration Run', run_name, ['state', 'mode'], as_dict=True)
-        if (not run or run.state != 'Completed' or run.mode == 'Preview' or
-                not frappe.db.exists(MAIN, {'origin_run':run_name, 'status':'Waiting'})):
+        if (not run or run.mode == 'Preview' or
+                not (run.state == 'Completed' or run.state == 'Completed With Conflicts' and _reviewed_address_rows(origin=run_name))
+                or not frappe.db.exists(MAIN, {'origin_run':run_name, 'status':'Waiting'})):
             return
         _enqueue_completed_run(run_name)
     except Exception:
@@ -482,7 +510,8 @@ def notify_completed_run(run_name):
 def reconcile_completed_run(run_name, after=''):
     """Realize one bounded page belonging only to this successful origin run."""
     run = frappe.get_doc('HERO Integration Run', run_name)
-    if run.state != 'Completed' or run.mode == 'Preview':
+    if (run.mode == 'Preview' or not (run.state == 'Completed'
+            or run.state == 'Completed With Conflicts' and _reviewed_address_rows(origin=run_name))):
         return
     cursor, more = reconcile_source_page(run.source_instance, after, origin_runs=[run_name])
     if more and cursor != after:
@@ -624,7 +653,8 @@ def resolve_one(name, *, dependency=None):
         raise ValueError('The original migration does not permit deferred writes.')
     # A dependency can arrive while its originating area is still running.
     # Keep its observation intact until that exact run completed successfully.
-    if run.state != 'Completed':
+    if run.state != 'Completed' and not (run.state == 'Completed With Conflicts'
+            and pending.operation == 'HeroCustomers' and _source_observation(pending).get(ADDRESS_REVIEW)):
         return
     with execution_budget.run_scope(run) as budget:
         if budget:
@@ -641,6 +671,9 @@ def resolve_one(name, *, dependency=None):
 
 def _resolve_admitted(pending, run, name, dependency):
     record = _source_observation(pending) if pending.operation in OPERATIONS.values() else None
+    address_review = record.pop(ADDRESS_REVIEW, None) if pending.operation == 'HeroCustomers' else None
+    if address_review and not address_review.pop("parent_field_conflict", True) and run.state == "Completed":
+        address_review = None  # A successful origin retains its complete approved relationship pass.
     first_attempt = not getattr(pending, 'realization_started', 1)
     if first_attempt:
         frappe.db.set_value(MAIN, name, 'realization_started', 1)
@@ -650,7 +683,7 @@ def _resolve_admitted(pending, run, name, dependency):
     required = [(kind, identity) for kind, identity in dependencies if not first_attempt or kind != 'customer_address']
     if pending.operation == 'HeroEmployees':
         required = []  # The employee service realizes both of these owned identities itself.
-    if not dependencies_ready(pending.source_instance, pending.operation, required):
+    if not address_review and not dependencies_ready(pending.source_instance, pending.operation, required):
         if pending.operation == 'HeroProjectMatches' and dependency and dependency[0] == 'User':
             _resolve_available_project_assignee(pending, dependency[1])
         return
@@ -715,6 +748,26 @@ def _resolve_admitted(pending, run, name, dependency):
             _verify_origin_binding(pending, proof)
             from hero_integration.services.employee_migration import historical_user_scope
             def realize_native():
+                if address_review:
+                    from hero_integration.services.binding_registry import FrappeBindingStorage
+                    from hero_integration.services.query_mapping import address_values
+                    owner = FrappeBindingStorage().lock_source_object(frappe.local.site, pending.source_instance,
+                        plan.binding_contract.object_type, "Customer", pending.source_id)
+                    address = address_values(plan, record)
+                    if (not owner or not address or address_review != {
+                            "object": owner.identity_key, "address_id": str(address["id"])}):
+                        raise ValueError("The reviewed address relationship has changed.")
+                    customer = frappe.get_doc("Customer", owner.target_name, for_update=True)
+                    status = m._realize_primary_address(customer, address, pending.source_instance,
+                                                        plan.mapping_version, plan, record, run.name)
+                    # Other relationship adapters require their own authorized replay.
+                    remaining = bool(plan.customer_contact_fields() or plan.has_home_phone()
+                        or plan.adapter_options.get("native_relations") or any(
+                            rule.target_doctype == "Customer" and rule.target_field in
+                            {"first_name", "last_name", "email_id", "mobile_no"} for rule in plan.definitions))
+                    return m.Result("CONFLICT" if status == "conflict" else "UPDATED",
+                                    "Primary address fields await review." if status == "conflict" else "",
+                                    "Customer", owner.target_name, pending_relation=remaining)
                 if (pending.operation in {'HeroTasks','HeroProjectMatches','HeroCalendarEvents'} and
                         (getattr(plan,'adapter_options',None) or {}).get('version')==2):
                     if pending.operation=='HeroTasks':

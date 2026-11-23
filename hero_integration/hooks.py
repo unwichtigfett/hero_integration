@@ -87,6 +87,8 @@ ignore_links_on_delete = ["HERO Integration Link"]
 
 # Observe only targets identified by Integration Links; no queueing or HERO I/O.
 doc_events["*"] = {
+    "after_delete": "hero_integration.services.binding_registry.native_target_lifecycle",
+    "before_rename": "hero_integration.services.binding_registry.native_target_lifecycle",
     "on_update": "hero_integration.services.change_detection.observe_frappe_target_change",
 }
 doc_events["ToDo"] = {

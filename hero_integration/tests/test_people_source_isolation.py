@@ -118,6 +118,7 @@ class TestEmployeeSourcePropagation(unittest.TestCase):
         fixture = employee_fixtures.TestEmployeeWrites()
         fixture.setUp()
         self.addCleanup(fixture.doCleanups)
+        fixture.row["user"]["email"] = "unclaimed@example.invalid"
         fixture.run_import()
         self.assertEqual(fixture.find_user.call_args.kwargs, {'source_instance': 'source-a'})
 

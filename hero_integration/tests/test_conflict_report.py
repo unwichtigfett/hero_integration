@@ -45,6 +45,8 @@ class _Frappe:
         return SimpleNamespace(get_field=lambda field: SimpleNamespace(label=labels[field]) if field in labels else None)
 
     def get_all(self, doctype, filters, fields, order_by=None, limit_page_length=0):
+        if doctype == "HERO Integration Link":
+            return [_Row(link) for link in self.links.values() if all(link.get(key) == value for key, value in filters.items())]
         return [_Row(rule) for rule in self.rules
                 if all(rule.get(key) == value for key, value in filters.items() if key in rule)]
 
@@ -172,6 +174,21 @@ class TestConflictReport(unittest.TestCase):
         self.assertEqual((report["status"], report["doctype"]), ("Not imported", "Customer"))
         self.assertEqual([(f["hero_variable"], f["label"], f["value"]) for f in report["fields"]],
                          [("type", "Customer Type", None)])
+
+    def test_import_conflict_report_links_the_existing_record_without_decision_actions(self):
+        fake = _Frappe(
+            links={"LINK-1": _link(source_system="HERO", source_type="customer", source_id="301",
+                                   target_doctype="Customer", target_name="CUST-1", sync_status="Synchronized")},
+            records={"REC-1": {"name": "REC-1", "source_type": "customer", "source_id": "301",
+                               "run": "RUN-1", "result": "CONFLICT", "detail": "Deferred relationship reconciliation"}},
+            docs={("Customer", "CUST-1"): {}},
+        )
+        with patch.object(cr, "frappe", fake), patch.object(cr, "_run_rules", return_value=None):
+            report = cr.record_report("REC-1", "default")
+        self.assertEqual((report["status"], report["record"]), ("Import conflict", "CUST-1"))
+        self.assertTrue(report["record_exists"])
+        self.assertFalse(report["decidable"])
+        self.assertEqual(report["decline_effect"], "")
 
 
 class TestHeroVariableComesFromTheProcessingRun(unittest.TestCase):

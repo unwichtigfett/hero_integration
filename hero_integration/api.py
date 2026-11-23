@@ -149,7 +149,37 @@ def sync_hero_execute(
     return {"status": "SUCCEEDED", "correlation_id": audit.correlation_id, "binding_revision": updated.revision}
 
 
-def _sync_hero_context(binding_identity_key: str, mapping_name: str, expected_plan_generation: int | str) -> dict[str, object]:
+def _field_choice_value(value_json):
+    if not value_json:
+        return None
+    try:
+        return json.loads(value_json)
+    except (TypeError, ValueError):
+        frappe.throw(frappe._("Enter a valid JSON scalar for the selected field."))
+
+
+@frappe.whitelist(methods=["POST"])
+def preview_sync_field(event: str, expected_modified: str, choice: str, value_json: str = "", mutation_mapping: str = ""):
+    from hero_integration.services.conflict_report import preview_field
+
+    frappe.only_for("System Manager")
+    return preview_field(event, expected_modified, choice, value=_field_choice_value(value_json),
+                         mutation_mapping=mutation_mapping)
+
+
+@frappe.whitelist(methods=["POST"])
+def resolve_sync_field(event: str, expected_modified: str, choice: str, value_json: str = "", mutation_mapping: str = "",
+                       confirmation_fingerprint: str = "", confirmed: int | bool = 0):
+    from hero_integration.services.conflict_report import resolve_field
+
+    frappe.only_for("System Manager")
+    return resolve_field(event, expected_modified, choice, value=_field_choice_value(value_json),
+                         mutation_mapping=mutation_mapping, confirmation_fingerprint=confirmation_fingerprint,
+                         confirmed=confirmed)
+
+
+def _sync_hero_context(binding_identity_key: str, mapping_name: str, expected_plan_generation: int | str,
+                       *, review_event=None, reviewed_value=None) -> dict[str, object]:
     """Rebuild all outbound inputs from current B6, plan, schema, and document state."""
     from hero_integration.services.binding_registry import BindingRegistryService, FrappeBindingStorage
     from hero_integration.services.frappe_writeback import (
@@ -178,7 +208,7 @@ def _sync_hero_context(binding_identity_key: str, mapping_name: str, expected_pl
     executable = _runtime_plan_service(frappe).resolve_executable_plan(
         site_scope, binding.source_instance, generation, False, actor
     )
-    if binding.mapping_revision != executable.selection.mapping_revision:
+    if binding.mapping_revision != executable.selection.mapping_revision or parent.mapping_revision != binding.mapping_revision:
         frappe.throw(frappe._("Sync Hero binding mapping revision is stale."))
     row = frappe.get_doc("HERO GraphQL Mapping", mapping_name)
     if row.status != "Active" or row.direction != "FRAPPE_TO_MUTATION" or row.source_instance != binding.source_instance:
@@ -204,7 +234,16 @@ def _sync_hero_context(binding_identity_key: str, mapping_name: str, expected_pl
     contract = _require_writeback_contract(contracts, snapshot)
     document = frappe.get_doc(binding.target_doctype, binding.target_name)
     frappe.has_permission(binding.target_doctype, "write", document, throw=True)
+    from hero_integration.services.binding_registry import verify_incarnation
+    verify_incarnation(parent, document)
+    open_review = frappe.db.exists("HERO Sync Change Event", {"open_field": ["in", [f.identity_key for f in
+            storage.fields_for_object(parent.site_scope, parent.identity_key) if f.target_field == binding.target_field]],
+            "object_binding": parent.identity_key, "outcome": "FIELD_CONFLICT"})
+    if (review_event and open_review != review_event) or (open_review and not review_event):
+        frappe.throw(frappe._("Resolve the bound field conflict before sending."))
     value = _writeback_source_value(document, binding.target_field)
+    if review_event:
+        value = reviewed_value
     outbound_document, variables = build_request_checked(mapping, schema, parent.external_object_id, value)
     from hero_integration.services.binding_registry import state_fingerprint
     local_fingerprint = state_fingerprint(value, present=True)
@@ -231,6 +270,8 @@ def _sync_hero_context(binding_identity_key: str, mapping_name: str, expected_pl
     context["fingerprint"] = hashlib.sha256(
         (context["fingerprint"] + "|" + context["source_context"].fingerprint).encode()
     ).hexdigest()
+    context["recheck"] = lambda: _sync_hero_context(binding_identity_key, mapping_name, generation,
+        review_event=review_event, reviewed_value=reviewed_value)["fingerprint"]
     return context
 
 
@@ -256,16 +297,26 @@ class _SyncHeroTransport:
         reader = HeroGraphQLClient(configuration.endpoint, lambda: configuration.api_token,
                                    configuration.timeout_seconds, max_retries=0)
         before = read_bound_value(self._context, reader)
-        baseline = self._context["binding"].acknowledged_source_fingerprint
+        baseline = self._context.get("review_source_fingerprint", self._context["binding"].acknowledged_source_fingerprint)
         if baseline is not None and state_fingerprint(before, present=True) != baseline:
             raise RuntimeError("The remote field changed since acknowledgment; reconcile before sending.")
         configuration = validate_source(self._context["source_context"])
         from hero_integration.services.mapping_contract_v1 import materialize_saved_mutation
+        recheck = self._context.get("recheck")
+        if recheck:
+            # The public sender has already committed its audit reservation. Read the current
+            # incarnation, permissions and revisions after the HERO preflight, then release locks.
+            frappe.db.rollback()
+            if recheck() != self._context["fingerprint"]:
+                raise RuntimeError("The bound field or its authority changed before sending.")
+            frappe.db.rollback()
         request = materialize_saved_mutation(self._context['snapshot'], document, variables,
                                              request_scope=self._audit.correlation_id)
-        result = HeroMutationClient(
-            configuration.endpoint, lambda: configuration.api_token, configuration.timeout_seconds
-        ).execute_once(request.document, request.variables)
+        client = HeroMutationClient(configuration.endpoint, lambda: configuration.api_token, configuration.timeout_seconds)
+        before_mutation = self._context.get("before_mutation")
+        if before_mutation:
+            before_mutation()
+        result = client.execute_once(request.document, request.variables)
         mapping, parent, intent = self._context["mapping"], self._context["parent"], self._context["intent"]
         payload = result.get("data") if isinstance(result, dict) and isinstance(result.get("data"), dict) else result
         returned = payload.get(mapping["target"]["operation"]) if isinstance(payload, dict) else None
@@ -439,7 +490,9 @@ def task_assignment_policy_revoke(name: str, expected_revision: int):
 @frappe.whitelist(methods=["POST"])
 def cancel_run(run_name: str) -> dict[str, str]:
     frappe.only_for("System Manager")
-    run = frappe.get_doc("HERO Integration Run", run_name)
+    # Read under the same lock used by checkpoints so a concurrent save cannot
+    # invalidate the cancellation's document version.
+    run = frappe.get_doc("HERO Integration Run", run_name, for_update=True)
     if run.state not in TERMINAL_STATES:
         run.state = "Cancelled"
         run.save()
@@ -788,18 +841,15 @@ def sync_page_pending_relationships(start: int | str = 0, page_size: int | str =
 
 @frappe.whitelist(methods=["GET"])
 def sync_page_conflicts(start: int | str = 0, page_size: int | str = 8) -> dict[str, object]:
-    """Open conflicts and held records, then records the latest run of each area could not import.
-
-    A record that failed before an Integration Link existed has nothing to approve
-    or decline; it is listed (read-only) until a later run imports it.
-    """
+    """Open link conflicts and read-only findings from each area's latest import."""
     frappe.only_for("System Manager")
     from hero_integration.services.sync_page import AREAS
 
     start = _mapping_int(start, "start", 0, 2147483647)
     page_size = _mapping_int(page_size, "page_size", 1, 50)
     instance = _configured_source_instance()
-    filters = {"sync_status": ["in", ["Conflict", "Pending Review"]], "source_instance": instance}
+    filters = {"sync_status": ["in", ["Conflict", "Pending Review"]], "source_instance": instance,
+               "source_system": "HERO"}
     labels = {item.source_type: item.label for item in AREAS}
     link_count = frappe.db.count("HERO Integration Link", filters)
     links = frappe.get_all("HERO Integration Link", filters=filters,
@@ -809,16 +859,20 @@ def sync_page_conflicts(start: int | str = 0, page_size: int | str = 8) -> dict[
     for row in links:
         row["area"] = labels.get(row["source_type"], row["source_type"])
         row["kind"] = "link"
-    failures, failure_count = _unlinked_import_failures(AREAS, instance,
+    failures, failure_count = _import_conflicts(AREAS, instance,
         start=max(0, start - link_count), page_size=page_size - len(links))
     return {"start": start, "page_size": page_size, "total": link_count + failure_count, "rows": links + failures}
 
 
-def _unlinked_import_failures(areas, instance, *, start=0, page_size=8) -> tuple[list[dict[str, object]], int]:
-    """Count each area's latest source-bound failures; load only the requested slice."""
+def _import_conflicts(areas, instance, *, start=0, page_size=8) -> tuple[list[dict[str, object]], int]:
+    """List unimported records and unresolved relationship conflicts without duplicating open links."""
     from hero_integration.services.conflict_notifications import NOT_IMPORTED_RESULTS
+    from hero_integration.services.sync_page import CONFLICT_RESULTS
 
     result, total, offset = [], 0, start
+    matching_link = """SELECT 1 FROM `tabHERO Integration Link` l
+        WHERE l.source_system='HERO' AND l.source_type=x.source_type AND l.source_id=x.source_id
+          AND l.source_instance=%s"""
     for item in areas:
         runs = frappe.db.sql("""SELECT r.name FROM `tabHERO Integration Run` r
             WHERE r.action=%s AND r.mode='Execute' AND r.source_instance=%s AND r.state NOT IN ('Queued', 'Running')
@@ -826,11 +880,15 @@ def _unlinked_import_failures(areas, instance, *, start=0, page_size=8) -> tuple
             ORDER BY r.creation DESC, r.name DESC LIMIT 1""", (item.run_action, instance, item.source_type))
         if not runs:
             continue
-        where = """FROM `tabHERO Integration Record` x
+        where = f"""FROM `tabHERO Integration Record` x
             WHERE x.run=%s AND x.source_type=%s AND x.result IN %s
-              AND NOT EXISTS (SELECT 1 FROM `tabHERO Integration Link` l
-                              WHERE l.source_type=x.source_type AND l.source_id=x.source_id AND l.source_instance=%s)"""
-        args = (runs[0][0], item.source_type, tuple(NOT_IMPORTED_RESULTS), instance)
+              AND NOT EXISTS ({matching_link} AND l.sync_status IN ('Conflict', 'Pending Review'))
+              AND (NOT EXISTS ({matching_link}) OR (x.result IN %s AND EXISTS (
+                    SELECT 1 FROM `tabHERO Pending Reference` p
+                    WHERE p.origin_run=x.run AND p.source_id=x.source_id AND p.source_instance=%s
+                      AND p.operation=%s AND p.status='Conflict')))"""
+        args = (runs[0][0], item.source_type, NOT_IMPORTED_RESULTS, instance, instance,
+                CONFLICT_RESULTS, instance, item.operation)
         count = frappe.db.sql("SELECT COUNT(*) " + where, args)[0][0]
         total += count
         if offset >= count:
@@ -839,13 +897,19 @@ def _unlinked_import_failures(areas, instance, *, start=0, page_size=8) -> tuple
         remaining = page_size - len(result)
         if remaining <= 0:
             continue
-        records = frappe.db.sql("SELECT x.name, x.source_type, x.source_id, x.result, x.detail, x.creation, x.run " + where +
-            " ORDER BY x.creation DESC, x.name DESC LIMIT %s OFFSET %s", (*args, remaining, offset), as_dict=True)
+        records = frappe.db.sql(
+            "SELECT x.name, x.source_type, x.source_id, x.result, x.detail, x.creation, x.run, "
+            f"x.target_doctype, x.target_name, EXISTS ({matching_link}) AS has_link " + where +
+            " ORDER BY x.creation DESC, x.name DESC LIMIT %s OFFSET %s",
+            (instance, *args, remaining, offset), as_dict=True)
         offset = 0
         for record in records:
             result.append({"name": record.name, "source_type": record.source_type, "source_id": record.source_id,
-                           "target_doctype": "", "target_name": "", "conflict_detail": record.detail or record.result,
-                           "sync_status": "Not imported", "modified": record.creation, "area": item.label,
+                           "target_doctype": record.target_doctype if record.has_link else "",
+                           "target_name": record.target_name if record.has_link else "",
+                           "conflict_detail": record.detail or record.result,
+                           "sync_status": "Import conflict" if record.has_link else "Not imported",
+                           "modified": record.creation, "area": item.label,
                            "kind": "record", "run": record.run})
     return result, total
 
@@ -3324,10 +3388,11 @@ def _form_sync_context(mapping_name, document, link, field):
     return _sync_hero_context(matches[0].identity_key, mapping_name, plan.generation)
 
 
-def _reserve_mutation(*, operation_name: str, schema_fingerprint: str, mapping_revision: int, request_fingerprint: str):
+def _reserve_mutation(*, operation_name: str, schema_fingerprint: str, mapping_revision: int, request_fingerprint: str,
+                      correlation_id=None, commit=None):
     """Commit a unique mutation reservation before external I/O.
     MariaDB serializes confirmations; the visible audit supports recovery."""
-    correlation_id = uuid4().hex
+    correlation_id = correlation_id or uuid4().hex
     audit = frappe.get_doc({
         "doctype": "HERO Mutation Audit", "correlation_id": correlation_id, "user": frappe.session.user,
         "site": frappe.local.site, "operation_name": operation_name, "schema_fingerprint": schema_fingerprint,
@@ -3339,17 +3404,17 @@ def _reserve_mutation(*, operation_name: str, schema_fingerprint: str, mapping_r
         audit.insert(ignore_permissions=True)
     except frappe.DuplicateEntryError:
         frappe.throw(frappe._("Another HERO mutation is currently in progress."))
-    frappe.db.commit()
+    (commit or frappe.db.commit)()
     return audit
 
 
-def _finalize_mutation(audit, status: str, detail: str) -> None:
+def _finalize_mutation(audit, status: str, detail: str, *, commit=None) -> None:
     """Release a completed reservation without erasing its audit provenance."""
     audit.status = status
     audit.detail = detail
     audit.reservation_key = audit.correlation_id
     audit.save(ignore_permissions=True)
-    frappe.db.commit()
+    (commit or frappe.db.commit)()
 
 
 def _validated_mutation_request(contract_name: str, variables_json: str):

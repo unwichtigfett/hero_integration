@@ -67,7 +67,8 @@ def native_fingerprint(value, fieldtype):
             if getattr(parsed, "tzinfo", None) is not None:
                 raise BindingRegistryError("Native temporal values must use the approved local time conversion.")
             value = str(parsed)
-        elif fieldtype in {"Float", "Currency", "Int"} and type(value) in (float, int, Decimal):
+        elif fieldtype in {"Float", "Currency", "Int"} and (type(value) in (float, int, Decimal) or
+                isinstance(value, str) and len(value) <= 128 and re.fullmatch(r"[+-]?[0-9]+(?:\.[0-9]+)?", value)):
             number = Decimal(str(value))
             if not number.is_finite() or (fieldtype == "Int" and number != number.to_integral_value()):
                 raise BindingRegistryError("Invalid value for the native numeric field.")
@@ -87,6 +88,7 @@ def native_fingerprint(value, fieldtype):
 @dataclass(frozen=True, slots=True)
 class ObjectBinding:
     identity_key: str; site_scope: str; source_instance: str; object_type: str; external_object_id: str; target_app: str; target_doctype: str; target_name: str; mapping_definition_id: str; mapping_revision: int; revision: int = 1; lifecycle: str = "VALID"; reconciliation: str = ""
+    target_incarnation: str = ""
     @classmethod
     def create(cls, *, site_scope: str, source_instance: str, object_type: str, external_object_id: str, target_app: str, target_doctype: str, target_name: str, mapping_definition_id: str, mapping_revision: int) -> "ObjectBinding":
         return cls(_key("hero-object-binding-v1", site=site_scope, source=source_instance, object_type=object_type, external=external_object_id, app=target_app, doctype=target_doctype, name=target_name, definition=mapping_definition_id, mapping_revision=mapping_revision), site_scope, source_instance, object_type, external_object_id, target_app, target_doctype, target_name, mapping_definition_id, mapping_revision)
@@ -100,6 +102,7 @@ class ObjectBinding:
 @dataclass(frozen=True, slots=True)
 class FieldBinding:
     identity_key: str; object_binding_key: str; site_scope: str; source_instance: str; source_field: str; target_app: str; target_doctype: str; target_name: str; target_field: str; mapping_definition_id: str; mapping_revision: int; direction: MappingDirection; revision: int = 1; state: BindingState = BindingState.UNACKNOWLEDGED; acknowledged_source_fingerprint: str | None = None; acknowledged_target_fingerprint: str | None = None; acknowledged_version: int = 0; reconciliation: str = ""
+    acknowledged_value_json: str = ""
     @classmethod
     def create(cls, parent: ObjectBinding, *, source_field: str, target_field: str, mapping_definition_id: str, mapping_revision: int, direction: MappingDirection) -> "FieldBinding":
         return cls(_key("hero-field-binding-v1", parent=parent.identity_key, source_field=source_field, target_field=target_field, definition=mapping_definition_id, mapping_revision=mapping_revision, direction=direction.value), parent.identity_key, parent.site_scope, parent.source_instance, source_field, parent.target_app, parent.target_doctype, parent.target_name, target_field, mapping_definition_id, mapping_revision, direction)
@@ -130,9 +133,11 @@ class InMemoryBindingStorage:
     def put_object(self, value):
         with self._lock:
             for prior in self._objects.values():
-                if ((prior.site_scope, prior.source_instance, prior.object_type, prior.target_doctype)
-                        == (value.site_scope, value.source_instance, value.object_type, value.target_doctype)
-                        and (prior.external_object_id == value.external_object_id or prior.target_name == value.target_name)):
+                if prior.site_scope != value.site_scope or prior.target_doctype != value.target_doctype:
+                    continue
+                same_source = (prior.source_instance, prior.object_type, prior.external_object_id) == (
+                    value.source_instance, value.object_type, value.external_object_id)
+                if same_source or (prior.lifecycle != "LEGACY" and prior.target_name == value.target_name):
                     return compatible_binding(prior, value)
             self._objects[(value.site_scope, value.identity_key)] = value
             return value
@@ -155,7 +160,8 @@ class BindingRegistryService:
     def __init__(self, storage: BindingStorage) -> None: self._storage = storage
     def create_or_resolve_object_binding(self, **kwargs) -> ObjectBinding:
         candidate = ObjectBinding.create(**kwargs)
-        return self._compatible(self._storage.put_object(candidate), candidate)
+        persisted = self._storage.put_object(candidate)
+        return self._compatible(persisted, replace(candidate, target_incarnation=persisted.target_incarnation))
     def create_or_resolve_field_binding(self, parent: ObjectBinding, **kwargs) -> FieldBinding:
         if self._storage.object(parent.site_scope, parent.identity_key, for_update=True) != parent: raise BindingRegistryError("Field binding requires its canonical persisted parent.")
         candidate = FieldBinding.create(parent, **kwargs)
@@ -170,18 +176,22 @@ class BindingRegistryService:
     def get_field_bindings(self, site_scope: str, object_binding_key: str): return self._storage.fields_for_object(site_scope, object_binding_key)
     def get_field_bindings_for_source(self, site_scope: str, source_instance: str): return self._storage.fields_for_source(site_scope, source_instance)
     def get_inbound_field_bindings_for_source(self, site_scope: str, source_instance: str): return tuple(binding for binding in self._storage.fields_for_source(site_scope, source_instance) if binding.direction is MappingDirection.HERO_TO_FRAPPE)
-    def record_verified_acknowledgment(self, binding: FieldBinding, *, expected_revision: int, mapping_definition_id: str, mapping_revision: int, source_fingerprint: str, target_fingerprint: str, evidence_id: str, version: int) -> FieldBinding:
+    def record_verified_acknowledgment(self, binding: FieldBinding, *, expected_revision: int, mapping_definition_id: str, mapping_revision: int, source_fingerprint: str, target_fingerprint: str, evidence_id: str, version: int, value_json: str = "") -> FieldBinding:
         _id(evidence_id, "acknowledgment evidence")
         if mapping_definition_id != binding.mapping_definition_id or mapping_revision != binding.mapping_revision: raise BindingRegistryError("Acknowledgment does not bind the current mapping.")
         _hash(source_fingerprint, "source acknowledgment"); _hash(target_fingerprint, "target acknowledgment")
         if expected_revision != binding.revision or version < binding.acknowledged_version: raise BindingConflict("Acknowledgment is stale.")
         if version == binding.acknowledged_version and (binding.acknowledged_source_fingerprint, binding.acknowledged_target_fingerprint) not in {(None, None), (source_fingerprint, target_fingerprint)}: raise BindingConflict("Acknowledgment conflicts with recorded evidence.")
+        parent = self._storage.object(binding.site_scope, binding.object_binding_key, for_update=True)
+        if (not parent or parent.lifecycle != "VALID" or parent.reconciliation
+                or binding.direction == MappingDirection.HERO_TO_FRAPPE and parent.mapping_revision != mapping_revision):
+            raise BindingConflict("The parent binding cannot acknowledge a field.")
         if version == binding.acknowledged_version and binding.state == BindingState.SYNCHRONIZED:
             current = self._storage.field(binding.site_scope, binding.identity_key, for_update=True)
             if current != binding:
                 raise BindingConflict("Acknowledgment was superseded.")
             return current
-        return self._storage.update_field(replace(binding, revision=binding.revision + 1, state=BindingState.SYNCHRONIZED, acknowledged_source_fingerprint=source_fingerprint, acknowledged_target_fingerprint=target_fingerprint, acknowledged_version=version, reconciliation=""), expected_revision)
+        return self._storage.update_field(replace(binding, revision=binding.revision + 1, state=BindingState.SYNCHRONIZED, acknowledged_source_fingerprint=source_fingerprint, acknowledged_target_fingerprint=target_fingerprint, acknowledged_version=version, acknowledged_value_json=value_json, reconciliation=""), expected_revision)
     @staticmethod
     def change_state(binding: FieldBinding, *, active_mapping_revision: int | None, mapping_available: bool, source_fingerprint: str | None, target_fingerprint: str | None) -> BindingState:
         if not mapping_available: return BindingState.RECONCILIATION_REQUIRED
@@ -214,7 +224,7 @@ class BindingRegistryService:
         if source_fingerprint == target_fingerprint:
             return "CONFIRM_EQUAL"
         if source_fingerprint == source_base:
-            return "KEEP_LOCAL"
+            return "UNCHANGED" if target_fingerprint == target_base else "KEEP_LOCAL"
         if target_fingerprint == target_base:
             return "APPLY_SOURCE"
         return "CONFLICT"
@@ -270,7 +280,7 @@ class FrappeBindingStorage:
         _lock_active_target("object-binding", "source", _key("source", scope=scope, identifier=identity))
         rows = frappe.db.sql("""SELECT * FROM `tabHERO Object Binding`
             WHERE site_scope=%s AND source_instance=%s AND object_type=%s AND target_doctype=%s
-            AND external_object_id=%s LIMIT 2 FOR UPDATE""", (*scope, identity), as_dict=True)
+            AND BINARY external_object_id=BINARY %s LIMIT 2 FOR UPDATE""", (*scope, identity), as_dict=True)
         if len(rows) > 1:
             raise BindingConflict("Multiple object bindings claim this source identity.")
         return self._object(rows[0]) if rows else None
@@ -280,18 +290,24 @@ class FrappeBindingStorage:
         self._write(frappe, self.OBJECT, "create")
         from hero_integration.hero_integration.doctype.hero_frappe_mapping.hero_frappe_mapping import _lock_active_target
         scope = [value.site_scope, value.source_instance, value.object_type, value.target_doctype]
-        for kind, identifier in (("source", value.external_object_id), ("target", value.target_name)):
-            _lock_active_target("object-binding", kind, _key(kind, scope=scope, identifier=identifier))
+        _lock_active_target("object-binding", "source", _key("source", scope=scope, identifier=value.external_object_id))
+        _lock_native_target(value.site_scope, value.target_doctype, value.target_name)
+        native = frappe.db.get_value(value.target_doctype, value.target_name, ["name", "creation"], as_dict=True, for_update=True)
+        if not native or native.name != value.target_name:
+            raise BindingConflict("Binding requires the exact current native document identity.")
+        value = replace(value, target_incarnation=incarnation(native.creation))
         rows = frappe.db.sql("""SELECT * FROM `tabHERO Object Binding`
-            WHERE site_scope=%s AND source_instance=%s AND object_type=%s AND target_doctype=%s
-            AND (external_object_id=%s OR target_name=%s) LIMIT 2 FOR UPDATE""",
-            (*scope, value.external_object_id, value.target_name), as_dict=True)
+            WHERE site_scope=%s AND target_doctype=%s AND
+            ((target_name=%s AND lifecycle != 'LEGACY') OR
+             (source_instance=%s AND object_type=%s AND BINARY external_object_id=BINARY %s))
+            LIMIT 2 FOR UPDATE""", (value.site_scope, value.target_doctype, value.target_name,
+                value.source_instance, value.object_type, value.external_object_id), as_dict=True)
         if len(rows) > 1:
             raise BindingConflict("Multiple object bindings claim this identity or destination.")
         if rows:
             return compatible_binding(self._object(rows[0]), value)
         try:
-            frappe.get_doc({"doctype": self.OBJECT, "identity_key": value.identity_key, "site_scope": value.site_scope, "source_instance": value.source_instance, "object_type": value.object_type, "external_object_id": value.external_object_id, "target_app": value.target_app, "target_doctype": value.target_doctype, "target_name": value.target_name, "mapping_definition_id": value.mapping_definition_id, "mapping_revision": value.mapping_revision, "binding_revision": value.revision, "lifecycle": value.lifecycle, "reconciliation": value.reconciliation}).insert()
+            frappe.get_doc({"doctype": self.OBJECT, "identity_key": value.identity_key, "site_scope": value.site_scope, "source_instance": value.source_instance, "object_type": value.object_type, "external_object_id": value.external_object_id, "target_app": value.target_app, "target_doctype": value.target_doctype, "target_name": value.target_name, "target_incarnation": value.target_incarnation, "mapping_definition_id": value.mapping_definition_id, "mapping_revision": value.mapping_revision, "binding_revision": value.revision, "lifecycle": value.lifecycle, "reconciliation": value.reconciliation}).insert()
             return value
         except Exception as error:
             return self._after_duplicate(error, lambda: self.object(value.site_scope, value.identity_key), value)
@@ -314,15 +330,18 @@ class FrappeBindingStorage:
             return self._after_duplicate(error, lambda: self.field(value.site_scope, value.identity_key), value)
     def update_field(self, value, expected_revision):
         frappe = self._scope(value.site_scope); self._write(frappe, self.FIELD)
+        parent = self.object(value.site_scope, value.object_binding_key, for_update=True)
+        if not parent or parent.lifecycle != "VALID" or parent.reconciliation:
+            raise BindingConflict("The parent binding cannot acknowledge a field.")
         doc = frappe.get_doc(self.FIELD, value.identity_key, for_update=True)
         if doc.site_scope != value.site_scope or int(doc.binding_revision) != expected_revision:
             raise BindingConflict("Field binding revision is stale.")
-        for key, item in {"binding_revision": value.revision, "sync_state": value.state.value, "acknowledged_source_fingerprint": value.acknowledged_source_fingerprint, "acknowledged_target_fingerprint": value.acknowledged_target_fingerprint, "acknowledged_version": value.acknowledged_version, "reconciliation": value.reconciliation}.items(): setattr(doc, key, item)
+        for key, item in {"binding_revision": value.revision, "sync_state": value.state.value, "acknowledged_source_fingerprint": value.acknowledged_source_fingerprint, "acknowledged_target_fingerprint": value.acknowledged_target_fingerprint, "acknowledged_version": value.acknowledged_version, "acknowledged_value_json": value.acknowledged_value_json, "reconciliation": value.reconciliation}.items(): setattr(doc, key, item)
         doc.save(); return value
     @staticmethod
-    def _object(doc): return ObjectBinding(doc.identity_key, doc.site_scope, doc.source_instance, doc.object_type, doc.external_object_id, doc.target_app, doc.target_doctype, doc.target_name, doc.mapping_definition_id, int(doc.mapping_revision), int(doc.binding_revision), doc.lifecycle or "VALID", doc.reconciliation or "")
+    def _object(doc): return ObjectBinding(doc.identity_key, doc.site_scope, doc.source_instance, doc.object_type, doc.external_object_id, doc.target_app, doc.target_doctype, doc.target_name, doc.mapping_definition_id, int(doc.mapping_revision), int(doc.binding_revision), doc.lifecycle or "VALID", doc.reconciliation or "", getattr(doc,"target_incarnation","") or "")
     @staticmethod
-    def _field(doc): return FieldBinding(doc.identity_key, doc.object_binding, doc.site_scope, doc.source_instance, doc.source_field, doc.target_app, doc.target_doctype, doc.target_name, doc.target_field, doc.mapping_definition_id, int(doc.mapping_revision), MappingDirection(doc.direction), int(doc.binding_revision), BindingState(doc.sync_state or BindingState.UNACKNOWLEDGED), doc.acknowledged_source_fingerprint or None, doc.acknowledged_target_fingerprint or None, int(doc.acknowledged_version or 0), doc.reconciliation or "")
+    def _field(doc): return FieldBinding(doc.identity_key, doc.object_binding, doc.site_scope, doc.source_instance, doc.source_field, doc.target_app, doc.target_doctype, doc.target_name, doc.target_field, doc.mapping_definition_id, int(doc.mapping_revision), MappingDirection(doc.direction), int(doc.binding_revision), BindingState(doc.sync_state or BindingState.UNACKNOWLEDGED), doc.acknowledged_source_fingerprint or None, doc.acknowledged_target_fingerprint or None, int(doc.acknowledged_version or 0), doc.reconciliation or "", getattr(doc,"acknowledged_value_json","") or "")
     @staticmethod
     def _after_duplicate(error, reread, candidate):
         """Only Frappe's explicit duplicate exception is safe to retry by reread."""
@@ -340,7 +359,7 @@ def compatible_binding(existing, candidate):
         raise BindingConflict("Object binding requires explicit lifecycle reconciliation.")
     mutable = ("revision",) if isinstance(candidate, ObjectBinding) else (
         "revision", "state", "acknowledged_source_fingerprint", "acknowledged_target_fingerprint",
-        "acknowledged_version", "reconciliation",
+        "acknowledged_version", "reconciliation", "acknowledged_value_json",
     )
     identity_only = replace(existing, **{name: getattr(candidate, name) for name in mutable})
     if identity_only != candidate:
@@ -349,3 +368,63 @@ def compatible_binding(existing, candidate):
                      if getattr(identity_only, field.name) != getattr(candidate, field.name)]
         raise BindingConflict("Canonical binding identity has incompatible fields: " + ", ".join(differing))
     return existing
+
+
+def incarnation(creation):
+    from frappe.utils import get_datetime
+
+    if not creation:
+        raise BindingConflict("Native document incarnation is missing.")
+    return get_datetime(creation).isoformat(timespec="microseconds")
+
+
+def matches_incarnation(stored, creation):
+    return bool(stored and creation and stored == incarnation(creation))
+
+
+def verify_incarnation(parent, doc):
+    if (parent.lifecycle != "VALID" or parent.target_doctype != doc.doctype or parent.target_name != doc.name
+            or not matches_incarnation(parent.target_incarnation, doc.creation)):
+        raise BindingConflict("Binding does not prove the current native document incarnation.")
+
+
+def _lock_native_target(site, doctype, name):
+    from hero_integration.hero_integration.doctype.hero_frappe_mapping.hero_frappe_mapping import _lock_active_target
+    _lock_active_target("object-binding", "target", _key("target", site=site, doctype=doctype, name=name))
+
+
+def hold_object(parent, reason, *, deleted=False):
+    """Record a proven lifecycle transition within the caller's transaction."""
+    import frappe
+    current = frappe.get_doc("HERO Object Binding", parent.identity_key, for_update=True)
+    if current.lifecycle == "LEGACY":
+        return
+    if current.site_scope != frappe.local.site or int(current.binding_revision) != parent.revision:
+        raise BindingConflict("Object binding changed during its lifecycle transition.")
+    frappe.db.set_value("HERO Object Binding", current.name, {
+        "lifecycle": "LEGACY" if deleted else "REVIEW", "reconciliation": reason,
+        "binding_revision": parent.revision + 1})
+
+
+def native_target_lifecycle(doc, method=None, old=None, new=None, merge=False):
+    """A native delete retires claims atomically. A bound rename needs explicit reconciliation."""
+    import frappe
+    if not frappe.db.table_exists("HERO Object Binding"):
+        return
+    name = old or doc.name
+    # Native deletion/rename already owns the target row. Query the same current
+    # claims as admission; absent registrations must not affect other Frappe apps.
+    claims = frappe.db.get_values("HERO Object Binding", {
+        "site_scope": frappe.local.site, "target_doctype": doc.doctype, "target_name": name,
+        "lifecycle": ["!=", "LEGACY"]}, "*", as_dict=True, for_update=True)
+    if method == "before_rename":
+        if claims:
+            raise BindingConflict("Renaming or merging this bound document requires identity reconciliation.")
+        return
+    for row in claims:
+        hold_object(FrappeBindingStorage._object(row), "ERPNext document deleted.", deleted=True)
+    if frappe.db.table_exists("HERO Integration Link"):
+        frappe.db.sql("""UPDATE `tabHERO Integration Link` SET sync_status='Source Deleted',
+            conflict_detail='ERPNext document deleted; historical link.'
+            WHERE source_system='HERO' AND target_doctype=%s AND target_name=%s
+              AND sync_status != 'Source Deleted'""", (doc.doctype, name))

@@ -129,8 +129,11 @@ def _link(instance, source_type, source_id, target_doctype):
     link = frappe.get_doc("HERO Integration Link", names[0], for_update=True)
     if link.target_doctype != target_doctype or not frappe.db.exists(target_doctype, link.target_name):
         raise EmployeeMigrationBlocked("The HERO employee binding target is unavailable.")
-    if link.sync_status in {"Rejected", "Pending Review", "Source Deleted"}:
+    if link.sync_status in {"Conflict", "Rejected", "Pending Review", "Source Deleted"}:
         raise EmployeeMigrationBlocked("The HERO employee binding requires review.")
+    from hero_integration.services.binding_registry import incarnation
+    if incarnation(frappe.db.get_value(target_doctype, link.target_name, "creation", for_update=True)) > incarnation(link.creation):
+        raise EmployeeMigrationBlocked("The employee link belongs to an earlier document incarnation.")
     return link
 
 
@@ -160,7 +163,7 @@ def _assert_new_fields(link, doc, values):
             raise EmployeeMigrationBlocked("Newly mapped employee or user fields contain different local values; review before importing.")
 
 
-def _write_link(link, instance, source_type, source_id, doc, values, record, mapping_version):
+def _write_link(link, instance, source_type, source_id, doc, values, record, mapping_version, *, created_user=False):
     previous = json.loads(link.target_field_hashes or "{}") if link else {}
     from hero_integration.services.execution_runtime import adapter_baseline
     baseline = adapter_baseline(doc, _values(doc, set(values) | set(previous)), previous)
@@ -168,6 +171,9 @@ def _write_link(link, instance, source_type, source_id, doc, values, record, map
                "source_payload_hash": _digest(record), "target_payload_hash": _digest(baseline),
                "target_field_hashes": json.dumps(baseline, sort_keys=True), "mapping_version": mapping_version,
                "last_synced_on": frappe.utils.now_datetime(), "conflict_detail": ""}
+    if created_user:
+        from hero_integration.services.binding_registry import incarnation
+        changes['target_incarnation'] = incarnation(doc.creation)
     if link:
         link.update(changes)
         link.save(ignore_permissions=True)
@@ -194,6 +200,25 @@ def _ensure_user_object_binding(read, instance, source_id, user_name):
     return existing is None
 
 
+def _verify_user_identity(read, instance, user_id, link, user):
+    from hero_integration.services.binding_registry import FrappeBindingStorage, matches_incarnation, verify_incarnation
+    claim = FrappeBindingStorage(frappe).lock_source_object(frappe.local.site, instance, "User", "User", str(user_id))
+    if user is None:
+        if claim or link:
+            raise EmployeeMigrationBlocked("The historical User identity requires review.")
+        return
+    if not link:
+        raise EmployeeMigrationBlocked("The existing User has no verified source binding.")
+    if claim:
+        verify_incarnation(claim, user)
+        if (claim.reconciliation or claim.mapping_revision != read.plan.binding_contract.revision
+                or claim.mapping_definition_id != read.plan.binding_contract.definition_id):
+            raise EmployeeMigrationBlocked("The bound User mapping changed.")
+    elif (link.mapping_version != read.mapping_version
+          or not matches_incarnation(link.get("target_incarnation"), user.creation)):
+        raise EmployeeMigrationBlocked("The existing User has no verified native incarnation.")
+
+
 def upsert(record, instance, company, languages, read=None):
     """All checks precede writes. Caller rolls back the entire record on failure."""
     read = read or runtime.resolve_read(OPERATION, instance)
@@ -210,8 +235,7 @@ def upsert(record, instance, company, languages, read=None):
     user_link = _link(instance, "User", user_id, "User")
     mapped = {(field["target_doctype"], field["target_field"]): field["value"] for field in proposed["fields"]}
     login_email = (mapped.get(("User", "email")) or "").strip().lower()
-    # Exact login email identifies an existing account on first adoption only.
-    # Future runs use the source link, never an edited email as a rename request.
+    # Email supplies a proposed login for creation. A source-scoped UID must authorize reuse.
     user_name = user_link.target_name if user_link else (_existing_user(login_email, str(record["id"]), source_instance=instance) or login_email)
     if not user_name or user_name.casefold() in {"administrator", "guest"}:
         raise EmployeeMigrationBlocked("A valid employee login email is required.")
@@ -225,6 +249,8 @@ def upsert(record, instance, company, languages, read=None):
                                "roles": [{"role": "Employee"}]})
     else:
         user = frappe.get_doc("User", user_name, for_update=True)
+    if read.mapping:
+        _verify_user_identity(read, instance, user_id, user_link, None if new_user else user)
     ids = {PARTNER_FIELD: str(record["id"]), USER_ID_FIELD: str(user_id)}
     if any(user.get(field) and str(user.get(field)) != value for field, value in ids.items()):
         raise EmployeeMigrationBlocked("Stored person identities differ from HERO.")
@@ -262,6 +288,7 @@ def upsert(record, instance, company, languages, read=None):
     _assert_new_fields(user_link, user, user_values)
     if not user_link and not new_user:
         _assert_adoptable(user, user_values)
+        raise EmployeeMigrationBlocked("An existing login requires its verified source User identity.")
     if employee:
         from hero_integration.services.execution_runtime import preserve_local_fields
         preserve_local_fields(employee, employee_values)
@@ -306,7 +333,8 @@ def upsert(record, instance, company, languages, read=None):
             employee.insert(ignore_permissions=True)
         elif employee_changed:
             employee.save(ignore_permissions=True)
-    _write_link(user_link, instance, "User", user_id, user, user_values, record, read.mapping_version)
+    _write_link(user_link, instance, "User", user_id, user, user_values, record, read.mapping_version,
+                created_user=bool(read.mapping and new_user))
     _write_link(employee_link, instance, "partner", record["id"], employee, employee_values, record, read.mapping_version)
     if realizing():
         _ensure_user_object_binding(read, instance, user_id, user_name)
@@ -351,6 +379,7 @@ def realize_relationships(pending, *, read=None):
         raise EmployeeMigrationBlocked('The imported employee observation changed before relationship realization.')
     employee_doc = frappe.get_doc('Employee',employee.target_name,for_update=True)
     user_doc = frappe.get_doc('User',user.target_name,for_update=True)
+    _verify_user_identity(read, pending.source_instance, user_id, user, user_doc)
     _assert_unchanged(employee,employee_doc)
     _assert_unchanged(user,user_doc)
     if (employee_doc.user_id not in (None,'',user_doc.name) or

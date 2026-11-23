@@ -112,6 +112,11 @@
       "hero_integration.tests.test_b8_runtime_bridge_contract.TestB8RuntimeBridgeContract.test_preflight_revalidates_the_current_plan_before_any_runtime_execution",
       "hero_integration.tests.test_auto_sync_areas.TestAutoSyncRouting.test_each_approved_area_reaches_scheduled_runtime_when_multiple_areas_enabled",
       "hero_integration.tests.test_sync_run_reservation.TestSyncRunReservation.test_full_parent_only_admits_recovery_of_its_stopped_child"
+    ],
+    "project writeback lifecycle and cursor replay": [
+      "hero_integration.tests.test_verified_writeback.TestVerifiedWriteback.test_project_requires_approved_lifecycle_projection",
+      "hero_integration.tests.test_verified_writeback.TestVerifiedWriteback.test_project_preflight_blocks_unverified_lifecycle_or_uid_before_transport",
+      "hero_integration.tests.test_sync_engine.TestSync.test_cursor_replay_reports_open_review_after_watermark_failure"
     ]
   },
   "pytest": {
@@ -189,6 +194,21 @@
     ],
     "native contact primary switch": [
       "hero_integration.tests.test_contact_primary_frappe.TestContactPrimary.test_existing_secondary_children_pass_native_validation"
+    ],
+    "field conflict decisions and replay": [
+      "hero_integration.tests.test_address_field_conflict_frappe.TestAddressFieldConflict.test_city_conflict_preserves_baseline_and_allows_independent_postcode_and_next_address",
+      "hero_integration.tests.test_sync_reservation_recovery.TestSyncReservationRecovery.test_native_ack_failure_releases_global_slot_and_recovers_without_dispatch",
+      "hero_integration.tests.test_sync_reservation_recovery.TestSyncReservationRecovery.test_stale_after_reservation_cancels_only_unsent_decision",
+      "hero_integration.tests.test_sync_reservation_recovery.TestSyncReservationRecovery.test_interrupted_dispatch_uses_readback_only_and_releases_its_abandoned_slot",
+      "hero_integration.tests.test_sync_native_events.TestNativeSyncEvents.test_field_preview_is_read_only_and_confirmation_binds_actor_values_and_revision",
+      "hero_integration.tests.test_sync_native_events.TestNativeSyncEvents.test_watermark_failure_replays_open_field_review_without_a_second_native_write",
+      "hero_integration.tests.test_sync_reservation_recovery.TestSyncReservationRecovery.test_unconfirmed_recovery_preserves_the_review_and_its_audit",
+      "hero_integration.tests.test_sync_reservation_recovery.TestSyncReservationRecovery.test_abandoned_slot_can_be_released_with_unavailable_reader_without_confirming_business_data",
+      "hero_integration.tests.test_sync_reservation_recovery.TestSyncReservationRecovery.test_late_readback_keeps_a_more_recent_local_edit_for_a_new_review",
+      "hero_integration.tests.test_sync_native_events.TestNativeSyncEvents.test_replayed_review_converging_on_next_page_finishes_without_open_conflict",
+      "hero_integration.tests.test_address_field_conflict_frappe.TestAddressFieldConflict.test_customer_import_and_completed_relationship_pass_preserve_partial_field_ack",
+      "hero_integration.tests.test_address_field_conflict_frappe.TestAddressFieldConflict.test_historical_or_unwitnessed_child_cannot_write_a_same_named_address",
+      "hero_integration.tests.test_address_field_conflict_frappe.TestAddressFieldConflict.test_persisted_parent_field_review_admits_address_through_deferred_queue"
     ]
   },
   "native": {
