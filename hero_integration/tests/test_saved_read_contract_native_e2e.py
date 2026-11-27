@@ -225,9 +225,10 @@ class TestSavedReadContractNativeE2E(IntegrationTestCase):
         )
         self.assertEqual((run.graphql_service, run.service_revision), (service.name, service.service_revision))
         self.assertEqual((run.graphql_mapping, run.mapping_revision), (mapping.name, mapping.mapping_revision))
+        self.assertFalse(run.migrate_archived_records)
         self.assertEqual(_Client.calls, [
-            (print_ast(parse(service.query_document)), {"first": 10, "offset": 0, "orderBy": "id", "showDeleted": True}),
-            (print_ast(parse(service.query_document)), {"first": 10, "offset": 1, "orderBy": "id", "showDeleted": True}),
+            (print_ast(parse(service.query_document)), {"first": 10, "offset": 0, "orderBy": "id", "showDeleted": False}),
+            (print_ast(parse(service.query_document)), {"first": 10, "offset": 1, "orderBy": "id", "showDeleted": False}),
         ])
         self.assertEqual(customer.customer_name, record["full_name"])
         self.assertNotEqual(customer.customer_name, record["nr"])

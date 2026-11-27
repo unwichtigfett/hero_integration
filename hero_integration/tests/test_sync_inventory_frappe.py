@@ -22,8 +22,14 @@ class TestScheduledInventory(NativeCustomerSyncFixture, IntegrationTestCase):
             type Contact { id:ID category:String is_contact_person:Boolean is_deleted:Boolean }
         """))
 
+    @staticmethod
+    def reader_ledger(plan):
+        selection = plan.selection
+        return FrappeSyncLedger(reader=f"{selection.source_instance}|{selection.graphql_service}")
+
     def test_budgeted_inventory_restarts_after_failure_and_keeps_unbound_evidence(self):
         _, approved, _, config = self.install_runtime_plan("AUTO_SYNC")
+        reader_ledger = self.reader_ledger(approved)
         dt = "HERO Integration Settings"
         options = {"polling_full_inventory": 1, "polling_page_size": 2, "polling_page_overlap": 0,
                    "polling_allow_backfill": 0, "allow_graphql_mutation_execution": 0}
@@ -53,14 +59,14 @@ class TestScheduledInventory(NativeCustomerSyncFixture, IntegrationTestCase):
                 return original(ledger, state, expected)
             with patch.object(FrappeSyncLedger, "save_state", interrupted):
                 self.assertEqual(run_scheduled_auto_sync().status, "FAILED")
-            self.assertIsNone(self.ledger.state(self.site).inventory_checkpoint)
+            self.assertIsNone(reader_ledger.state(self.site).inventory_checkpoint)
             self.assertEqual(self.doc.reload().customer_details, self.identity)
             self.assertEqual(run_scheduled_auto_sync().status, "PARTIAL")
             self.assertEqual(self.doc.reload().customer_details, "revised")
-            self.assertEqual(FrappeSyncLedger().state(self.site).inventory_checkpoint["next_offset"], 2)
+            self.assertEqual(reader_ledger.state(self.site).inventory_checkpoint["next_offset"], 2)
             self.assertEqual(run_scheduled_auto_sync().status, "PARTIAL")
             self.assertEqual(run_scheduled_auto_sync().status, "PARTIAL")  # End of a pass with unbound rows.
-        state = self.ledger.state(self.site)
+        state = reader_ledger.state(self.site)
         self.assertEqual(pages, [0, 0, 2, 3])
         self.assertIsNone(state.inventory_checkpoint)
         self.assertIsNone(state.cursor)
@@ -69,7 +75,8 @@ class TestScheduledInventory(NativeCustomerSyncFixture, IntegrationTestCase):
         self.assertEqual(frappe.db.count("HERO Sync Run Ledger", {"plan_key": approved.plan_key, "execution_scope": "INVENTORY"}), 4)
 
     def test_absence_from_partial_and_finished_inventory_does_not_retire_bound_customer(self):
-        _, _, _, config = self.install_runtime_plan("AUTO_SYNC")
+        _, approved, _, config = self.install_runtime_plan("AUTO_SYNC")
+        reader_ledger = self.reader_ledger(approved)
         settings = "HERO Integration Settings"
         options = {"polling_full_inventory": 1, "polling_page_size": 2, "polling_page_overlap": 0,
                    "polling_allow_backfill": 0, "allow_graphql_mutation_execution": 0}
@@ -92,14 +99,15 @@ class TestScheduledInventory(NativeCustomerSyncFixture, IntegrationTestCase):
                 patch.object(HeroGraphQLClient, "query", side_effect=remote):
             for more in (True, False):
                 self.assertEqual(run_scheduled_auto_sync().status, "PARTIAL")
-                self.assertEqual(bool(self.ledger.state(self.site).inventory_checkpoint), more)
+                self.assertEqual(bool(reader_ledger.state(self.site).inventory_checkpoint), more)
                 self.assertEqual(self.doc.reload().customer_details, absent)
                 self.assertEqual(frappe.db.get_value("HERO Object Binding", bound_name,
                                  ["lifecycle", "binding_revision", "target_name"]), before)
 
     def test_multiple_small_reader_pages_share_a_tick_budget_and_resume_after_network_failure(self):
         from graphql import parse
-        _, _, _, config = self.install_runtime_plan("AUTO_SYNC")
+        _, approved, _, config = self.install_runtime_plan("AUTO_SYNC")
+        reader_ledger = self.reader_ledger(approved)
         settings = "HERO Integration Settings"
         options = {"polling_full_inventory":1, "polling_page_size":6, "polling_page_overlap":0,
                    "polling_allow_backfill":0, "allow_graphql_mutation_execution":0}
@@ -124,18 +132,19 @@ class TestScheduledInventory(NativeCustomerSyncFixture, IntegrationTestCase):
             return {"contacts":[{**self.payload,"id":key} for key in ids[start:start+args["first"]]]}
         with patch("hero_integration.client.settings.get_configuration",return_value=config), patch.object(HeroGraphQLClient,"query",side_effect=transport):
             self.assertEqual(run_scheduled_auto_sync().status, "FAILED")
-            self.assertEqual(self.ledger.state(self.site).inventory_checkpoint["next_offset"], 2)
+            self.assertEqual(reader_ledger.state(self.site).inventory_checkpoint["next_offset"], 2)
             self.assertEqual(self.doc.reload().customer_details, "revised")
             self.assertEqual(run_scheduled_auto_sync().status, "PARTIAL")
         self.assertEqual(offsets, [0,2,2,4,5])
-        self.assertIsNone(self.ledger.state(self.site).inventory_checkpoint)
-        self.assertIsNone(self.ledger.state(self.site).cursor)
+        self.assertIsNone(reader_ledger.state(self.site).inventory_checkpoint)
+        self.assertIsNone(reader_ledger.state(self.site).cursor)
 
     def test_stale_field_revision_defers_only_its_own_record_in_the_inventory_page(self):
         from hero_integration.services.mapping_registry_model import MappingDirection
         from graphql import parse
 
-        _, _, _, config = self.install_runtime_plan("AUTO_SYNC")
+        _, approved, _, config = self.install_runtime_plan("AUTO_SYNC")
+        reader_ledger = self.reader_ledger(approved)
         identity = str(int(self.identity) + 1)
         customer = frappe.get_doc({"doctype":"Customer", "customer_name":identity, "customer_type":"Company",
                                    "customer_details":"unchanged"}).insert()
@@ -171,7 +180,7 @@ class TestScheduledInventory(NativeCustomerSyncFixture, IntegrationTestCase):
         self.assertEqual(frappe.db.get_value("HERO Field Binding",field.identity_key,"mapping_revision"), 2)
         self.assertEqual(frappe.db.count("HERO Sync Change Event", {"mapping_name":self.mapping.name,
                          "external_id":identity, "outcome":"DEFERRED"}), 1)
-        self.assertIsNone(self.ledger.state(self.site).inventory_checkpoint)
+        self.assertIsNone(reader_ledger.state(self.site).inventory_checkpoint)
 
     def test_primary_address_save_records_only_the_owners_mapped_field_fingerprint(self):
         import json
