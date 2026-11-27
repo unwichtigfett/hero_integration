@@ -4279,3 +4279,7 @@ Reader Checkpoints,Reader-Checkpoints
 Of which: partial inventory,Davon mit Teilabgleich
 Migrate archived records,Archivierte Datensätze migrieren
 Applies to new test and full migrations. Archived records excluded by the HERO query are not counted as read.,Gilt für neue Test- und Vollmigrationen. Bereits durch die HERO-Abfrage ausgeschlossene Datensätze werden nicht als gelesen gezählt.
+Migrate archived records requires a checkbox value.,Für „Archivierte Datensätze migrieren“ ist ein gültiger Kontrollkästchenwert erforderlich.
+Task hierarchies require the bound task update mapping.,Aufgabenhierarchien erfordern das an die Aufgabe gebundene Aktualisierungsmapping.
+Restore the confirmed generated section and reconcile the Task again.,Stellen Sie den bestätigten generierten Abschnitt wieder her und gleichen Sie die Aufgabe erneut ab.
+Archived source record excluded by migration settings.,Archivierter Quelldatensatz gemäß den Migrationseinstellungen übersprungen.
