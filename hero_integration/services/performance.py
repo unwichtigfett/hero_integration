@@ -3,6 +3,7 @@ from contextlib import contextmanager
 from contextvars import ContextVar
 from functools import wraps
 import json
+import logging
 import time
 
 
@@ -77,7 +78,10 @@ def profiled(phase):
                 finally:
                     try:
                         import frappe
-                        frappe.logger('hero_performance', allow_site=True).info(
+                        logger = frappe.logger('hero_performance', allow_site=True)
+                        if not logger.isEnabledFor(logging.INFO):
+                            logger.setLevel(logging.INFO)
+                        logger.info(
                             json.dumps({'operation': phase, 'phases': stats}, sort_keys=True))
                     except Exception:
                         # Instrumentation must not alter transaction outcomes.

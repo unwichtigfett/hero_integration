@@ -1003,7 +1003,7 @@ class FrappeMappingDraftStorage:
                     else:
                         validate_spec(spec, _FrappeMetadata())
                 except (TypeError, ValueError) as error:
-                    raise MappingDraftError('New query field rule is incompatible with target metadata.') from error
+                    raise MappingDraftError(f"{rules[identity].get('target_doctype')}.{rules[identity].get('target_field')} ({identity}): {error}") from error
         else:
             if value.get('usage') in {'SEND_TO_HERO', 'MAPPED_UPDATE_V2', 'PROJECT_LOGBOOK_V1'}:
                 candidate = dict(value)

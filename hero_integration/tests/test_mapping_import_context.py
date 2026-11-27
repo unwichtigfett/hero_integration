@@ -82,6 +82,22 @@ class TestCompatibleImportContext(TestCase):
     def test_export_resolves_the_same_approved_context(self):
         self.assertEqual(context.resolve('new','source')['snapshot_name'],'old')
 
+    def test_file_export_uses_the_same_approved_snapshot_as_desk(self):
+        from pathlib import Path
+        from tempfile import TemporaryDirectory
+        from hero_integration import api
+
+        with TemporaryDirectory() as directory, patch.object(api, '_config_snapshot', return_value='new'), \
+                patch.object(api, '_configured_source_instance', return_value='source'), \
+                patch.object(api, 'frappe', NS(set_user=Mock(), only_for=Mock())), \
+                patch('hero_integration.services.config_exchange.export_config', return_value='{}') as export:
+            path = Path(directory) / 'config.json'
+            desk = api.config_export()
+            file_export = api.config_export_file(str(path))
+            self.assertEqual(file_export['snapshot'], 'old')
+            self.assertEqual(path.read_text(), desk['content'])
+            self.assertEqual([call.args for call in export.call_args_list], [('old', 'source')] * 2)
+
     def test_non_manager_cannot_probe_schema_context(self):
         self.fake.only_for.side_effect=PermissionError('denied')
         with patch.object(context,'_snapshot') as snapshot,self.assertRaises(PermissionError):

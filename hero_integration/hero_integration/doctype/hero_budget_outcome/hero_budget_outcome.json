@@ -1,0 +1,54 @@
+{
+  "doctype": "DocType",
+  "name": "HERO Budget Outcome",
+  "module": "HERO Integration",
+  "engine": "InnoDB",
+  "autoname": "hash",
+  "fields": [
+    {
+      "fieldname": "budget",
+      "label": "Execution Budget",
+      "fieldtype": "Link",
+      "read_only": 1,
+      "options": "HERO Execution Budget",
+      "search_index": 1
+    },
+    {
+      "fieldname": "object_type",
+      "label": "Object Type",
+      "fieldtype": "Data",
+      "read_only": 1
+    },
+    {
+      "fieldname": "external_id",
+      "label": "Source Identity",
+      "fieldtype": "Data",
+      "read_only": 1
+    },
+    {
+      "fieldname": "outcome",
+      "label": "Checkpoint Outcome",
+      "fieldtype": "Data",
+      "read_only": 1
+    },
+    {
+      "fieldname": "phase",
+      "label": "Outcome Phase",
+      "fieldtype": "Data",
+      "read_only": 1
+    }
+  ],
+  "field_order": [
+    "budget",
+    "object_type",
+    "external_id",
+    "outcome",
+    "phase"
+  ],
+  "permissions": [
+    {
+      "role": "System Manager",
+      "read": 1
+    }
+  ]
+}

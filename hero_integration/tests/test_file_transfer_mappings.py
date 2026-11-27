@@ -11,7 +11,7 @@ from unittest.mock import patch
 from hero_integration.services import direct_runtime as rt
 from hero_integration.services import file_transfer as ft
 from hero_integration.services.mapping_runtime import plan_from_definitions
-from hero_integration.tests.test_file_transfer import URL, _FileFixture, _NoDownload
+from hero_integration.tests.test_file_transfer import URL, _FileFixture, _NoDownload, _Opener, _Response, _jpeg
 
 
 class _Client:
@@ -71,7 +71,12 @@ class TestFileMappingImport(_FileFixture):
         row = _row(type="application/pdf")
         if phase == "images":
             row.update(filename="Bild.jpg", category="images", type="image/jpeg")
-        self.run_slice([row], read=read, phase=phase, downloader=_Download())
+        downloader = _Download()
+        if phase == "images":
+            body = _jpeg()
+            row["size"] = len(body)
+            downloader = ft.Downloader("login.hero-software.de", lambda: "token", opener=_Opener(_Response(body)))
+        self.run_slice([row], read=read, phase=phase, downloader=downloader)
         name, link = next((name, link) for name, link in self.db.data["HERO Integration Link"].items()
                           if link["source_id"] == "7")
         file = self.db.data["File"][link["target_name"]]
@@ -202,17 +207,72 @@ class TestFileMappingImport(_FileFixture):
         link = next(row for row in self.db.committed["HERO Integration Link"].values() if row["source_id"] == "7")
         return self.db.committed["File"][link["target_name"]], link
 
+    def test_verified_details_follow_the_regular_writer_and_retry_reuses_the_blob(self):
+        read = rt.builtin_read(ft.OPERATION['documents'])
+        read = replace(read, plan=replace(read.plan, adapter_options={**(read.plan.adapter_options or {}),
+            'source_history': 'file_details'}))
+        download = _Download()
+        row = _row()
+        self.assertEqual(self.run_slice([row], read=read, downloader=download)['counts']['added'], 1)
+        file, _ = self.imported()
+        detail = json.loads(file['custom_hero_file_detail'])
+        self.assertEqual((detail['uuid'], detail['file_upload_matches'][0]['project_match_id']), ('u7', 42))
+        self.assertEqual(file['file_size'], 3)
+        self.assertEqual(self.run_slice([row], read=read, downloader=download)['counts']['unchanged'], 1)
+        self.assertEqual(download.calls, 1)
+
     def test_builtin_filename_and_category_split_in_both_phases(self):
         rows = [_row(), _row(8, filename="Bild.jpg", category="images")]
         for phase, uuid, filename in (("documents", "u7", "Angebot.pdf"), ("images", "u8", "Bild.jpg")):
             with self.subTest(phase=phase):
-                state = self.run_slice(rows, phase=phase, downloader=_Download())
+                downloader = _Download()
+                if phase == "images":
+                    downloader = ft.Downloader("login.hero-software.de", lambda: "token", opener=_Opener(_Response(_jpeg())))
+                state = self.run_slice(rows, phase=phase, downloader=downloader)
                 self.assertEqual(state["counts"]["added"], 1)
                 self.assertEqual(self.client.details, [uuid])
                 files = list(self.db.committed["File"].values())
                 self.assertIn(filename, [file.get("file_name") for file in files])
                 self.assertEqual(state["offset"], 2)
                 self.assertTrue(state["done"])
+
+    def test_invalid_image_creates_no_link_and_next_image_is_imported(self):
+        rows = [_row(i, filename=f"{i}.jpg", category="images") for i in (7, 8)]
+        body = _jpeg()
+        rows[1]["size"] = len(body)
+        opener = _Opener(_Response(b"bad"), _Response(body))
+        downloader = ft.Downloader("login.hero-software.de", lambda: "token", opener=opener)
+        state = self.run_slice(rows, phase="images", downloader=downloader)
+        self.assertEqual((state["counts"]["failed"], state["counts"]["added"]), (1, 1))
+        identities = [link["source_id"] for link in self.db.committed["HERO Integration Link"].values()]
+        self.assertNotIn("7", identities)
+        self.assertEqual(identities.count("8"), 1)
+        self.assertEqual(self.observations.call_count, 1)
+        self.assertEqual(self.observations.call_args.args[4]["id"], 8)
+
+    def test_image_renditions_store_received_size_and_skip_rerun(self):
+        body = _jpeg()
+        for identity, declared in ((7, len(body) + 900), (8, len(body) - 100)):
+            with self.subTest(declared=declared):
+                row = _row(identity, filename="image.jpg", category="images", size=declared)
+                opener = _Opener(_Response(body))
+                downloader = ft.Downloader("login.hero-software.de", lambda: "token", opener=opener,
+                                           max_bytes=len(body))
+                with self.assertLogs(ft.__name__, level="WARNING") as logs:
+                    first = self.run_slice([row], phase="images", downloader=downloader)
+                self.assertIn(f"image {identity}: received {len(body)} bytes", logs.output[0])
+                self.assertEqual(first["counts"]["added"], 1)
+                links = [v for v in self.db.committed["HERO Integration Link"].values()
+                         if v["source_id"] == str(identity)]
+                link, = links
+                file = self.db.committed["File"][link["target_name"]]
+                self.assertEqual((file["file_size"], file["content_hash"]), (len(body), hashlib.md5(body).hexdigest()))
+                self.assertEqual(link["source_payload_hash"], ft.source_hash(row))
+                prior = set(self.db.committed["File"])
+                second = self.run_slice([row], phase="images", downloader=downloader)
+                self.assertEqual(second["counts"]["unchanged"], 1)
+                self.assertEqual(prior, set(self.db.committed["File"]))
+                self.assertEqual(len(opener.requests), 1)
 
     def test_own_fields_on_insert_values_only_change_and_unchanged_rerun(self):
         read, downloader = _own_read(), _Download()
@@ -507,6 +567,32 @@ class TestFileMappingImport(_FileFixture):
             self.db.commit()
             with self.assertRaises(ft.FileConflict): deferred._resolve_file(pending)
         self.assertEqual(downloader.calls, 1)
+
+    def test_historical_file_project_keeps_the_blob_and_uses_only_an_exact_customer(self):
+        from hero_integration.services import deferred_references as deferred
+        self.db.data['HERO Integration Link'].pop('PA')
+        self.db.commit()
+        row, downloader = _row(), _Download()
+        self.run_slice([row], downloader=downloader)
+        file, link = self.imported()
+        url = file['file_url']
+        read = rt.builtin_read('HeroDocuments')
+        detail = {'file_upload_matches': [{'project_match_id':42}]}
+        pending = SimpleNamespace(origin_run='synthetic-run', operation='HeroDocuments', source_instance='source-a',
+            source_id='7', mapping_version=read.mapping_version, dependencies=[SimpleNamespace(source_type='project',
+            source_id='42')], record_json=json.dumps({'row':row, 'detail':detail}))
+        with patch.object(deferred, 'frappe', ft.frappe), patch.object(ft, '_folder', return_value='Home/HERO/Dokumente'):
+            self.assertEqual(deferred._resolve_file(pending,read=read,historical={'42':'DELETED'}), 'SKIPPED')
+            self.assertFalse(self.db.data['File'][link['target_name']].get('attached_to_name'))
+            self.db.data['HERO Integration Link']['EXACT'] = {'source_type':'customer', 'source_id':'50',
+                'source_instance':'source-a', 'target_doctype':'Customer', 'target_name':'CUSTOMER-A'}
+            detail['customer_document'] = {'project_match_id':42,'contact_id':50}
+            pending.dependencies.append(SimpleNamespace(source_type='customer',source_id='50'))
+            pending.record_json = json.dumps({'row':row,'detail':detail})
+            self.assertEqual(deferred._resolve_file(pending,read=read,historical={'42':'LEAD'}), 'UPDATED')
+            self.assertEqual(deferred._resolve_file(pending,read=read,historical={'42':'LEAD'}), 'SKIPPED')
+        current = self.db.data['File'][link['target_name']]
+        self.assertEqual((current['attached_to_name'], current['file_url'], downloader.calls), ('CUSTOMER-A', url, 1))
 
     def test_file_stays_unattached_until_its_project_arrives(self):
         from hero_integration.services import deferred_references as deferred

@@ -23,14 +23,14 @@ function setup({saved = 'light', theme = saved, stored = null, systemDark = fals
     const storage = new Map([...(stored ? [['hero-theme', stored]] : []), ...(saved ? [['theme', saved]] : [])]);
     const timers = [];
     const observers = [];
-    const root = {getAttribute: name => attributes.has(name) ? attributes.get(name) : null,
+    const root = Object.assign(new EventTarget(), {getAttribute: name => attributes.has(name) ? attributes.get(name) : null,
         hasAttribute: name => attributes.has(name), removeAttribute: name => attributes.delete(name),
-        setAttribute(name, value) { attributes.set(name, value); if (name === 'data-theme') observers[0](); }};
+        setAttribute(name, value) { attributes.set(name, value); if (name === 'data-theme') observers[0](); }});
     class MutationObserver { constructor(callback) { observers.push(callback); } observe() {} }
     const row = node();
     for (const label of ['Light', 'Dark', 'System']) row.children.push(node(label));
     const page = {open: settingsOpen};
-    const context = vm.createContext({MutationObserver,
+    const context = vm.createContext({MutationObserver, CustomEvent,
         document: {documentElement: root, body: {}, querySelectorAll: () => page.open ? [row] : []},
         window: {setTimeout: callback => timers.push(callback), matchMedia: () => ({matches: systemDark}),
             localStorage: {getItem: key => storage.has(key) ? storage.get(key) : null,
@@ -106,4 +106,16 @@ test('a saved Navy choice survives the page restoring its saved theme on load', 
         root.setAttribute('data-theme', saved); settle();
         assert.deepEqual(state(), ['dark', 'navy']);
     }
+});
+
+test('Helpdesk can handle the Navy choice and apply the account preference', () => {
+    const {root, state, storage, navyCard} = setup();
+    root.addEventListener('hero:choose-navy', event => event.preventDefault());
+    navyCard().click();
+    assert.deepEqual(state(), ['light', null]);
+    root.dispatchEvent(new CustomEvent('hero:apply-desk-theme', {detail: 'navy'}));
+    assert.deepEqual(state(), ['dark', 'navy']);
+    root.dispatchEvent(new CustomEvent('hero:apply-desk-theme', {detail: 'standard'}));
+    assert.deepEqual(state(), ['light', null]);
+    assert.equal(storage.has('hero-theme'), false);
 });

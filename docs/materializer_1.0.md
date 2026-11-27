@@ -202,11 +202,12 @@ already imported by then. Each stage has its own cursor and is checkpointed.
 
 Both ordinary and bounded test full imports reconcile only their recorded child
 runs, never an unrelated source-wide backlog. After the dependency stages, a
-bounded final assessment marks still-Waiting observations as conflicts while
-preserving their frozen source records. Existing conflicts are also counted. A
-full import with unresolved relationships ends as Completed With Conflicts and
-reports the count instead of appearing successfully complete with indefinite
-Waiting entries. Failed/cancelled origins never acquire write authority.
+final assessment counts outstanding dependencies and conflicts separately. Missing
+targets retain the saved observation for a later dependency notification.
+A mixed-outcome child can reconcile individual waiting observations while its
+parent is blocked. Native observations use their own writer receipt and binding
+proof. Direct imports use their saved read contract and the corresponding
+relationship writer. Cancelled children have no replay authority.
 
 `file_migration.retry_full_relationships(run_name)` restarts only this final pass
 for an already finished full import. It requires System Manager and write access,
@@ -215,6 +216,22 @@ frozen child/source associations. It preserves the child scope and test cohort;
 no scalar import or fresh source enumeration restarts. It does not reset genuine
 conflicts or reconstruct cleared observations. The operations project provides
 `reconcile-opt-full.sh` for invoking it on the opt site after deployment.
+
+For a regular parallel full import blocked at its final wave, a System Manager
+can call `file_migration.retry_full_relationships(run_name, omit_cancelled_picture=picture_run_name)`.
+The service verifies the original nine children, the cancelled picture run and
+the eight finished areas. It checkpoints the omission and queues the parent's
+existing relationship pass for the eight finished children. At the end the
+parent reports `Completed With Conflicts` with the omitted child and outstanding
+relationship counts. The picture run retains its cancellation and checkpoints.
+
+Set the site configuration value `hero_exclude_picture_migration` to `1`
+to exclude pictures from newly created full migrations and block picture
+transfers on that site. The default includes all nine areas. Existing run
+checkpoints keep their recorded area selection. Deployments whose site configuration
+is restored by a test reset may also set the environment variable
+`HERO_PICTURE_EXCLUDED_SITES` to a JSON list of site names. This selection
+is applied only to the named sites.
 
 ## Runtime measurement
 

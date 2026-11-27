@@ -13,6 +13,7 @@ import tempfile
 import time
 
 import frappe
+from hero_integration.services import migration_archive
 from hero_integration.services.binding_registry import BindingConflict
 from hero_integration.services.file_migration import DirectContractChanged
 
@@ -111,14 +112,20 @@ def preflight(instance, read=None):
 
 
 def scoped_link(instance, kind, identity, target):
-    names = frappe.get_all("HERO Integration Link", filters={"source_system": "HERO", "source_instance": instance,
-                           "source_type": kind, "source_id": str(identity)}, pluck="name", limit_page_length=2)
+    # A locking read sees bindings committed after this transaction's snapshot.
+    names = frappe.db.sql("""SELECT name FROM `tabHERO Integration Link`
+        WHERE source_system='HERO' AND source_instance=%s AND source_type=%s AND source_id=%s
+        LIMIT 2 FOR UPDATE""", (instance, kind, str(identity)), pluck=True)
     if len(names) > 1:
         raise ServiceBlocked("Service source identity has several bindings.")
     if not names:
         return None
+    if not frappe.db.get_value('HERO Integration Link', names[0], 'name'):
+        # Native Link validation uses consistent reads too. Refresh the whole
+        # record before attaching a target absent from that older snapshot.
+        raise frappe.QueryDeadlockError('Service binding was committed after the snapshot. Retry the record.')
     link = frappe.get_doc("HERO Integration Link", names[0], for_update=True)
-    if link.target_doctype != target or not frappe.db.exists(target, link.target_name):
+    if link.target_doctype != target or not frappe.db.get_value(target, link.target_name, 'name', for_update=True):
         raise ServiceBlocked("The service binding target is missing or has another type.")
     return link
 
@@ -127,12 +134,16 @@ def write_link(link, instance, kind, identity, doc, source, baseline, *, extra=N
     values = {"target_doctype": doc.doctype, "target_name": doc.name, "sync_status": "Synchronized",
               "source_payload_hash": source, "target_payload_hash": products.digest(baseline),
               "target_field_hashes": json.dumps({"values": baseline, **(extra or {})}, sort_keys=True),
-              "mapping_version": VERSION, "conflict_detail": "", "last_synced_on": frappe.utils.now_datetime()}
+              "mapping_version": VERSION, "conflict_detail": ""}
+    if link and all((link.get(field) or "") == value for field, value in values.items()):
+        return False
+    values["last_synced_on"] = frappe.utils.now_datetime()
     if link:
         frappe.db.set_value("HERO Integration Link", link.name, values)
     else:
         frappe.get_doc({"doctype": "HERO Integration Link", "source_system": "HERO", "source_instance": instance,
                         "source_type": kind, "source_id": str(identity), **values}).insert(ignore_permissions=True)
+    return True
 
 
 def normalized(doc, fields):
@@ -191,19 +202,47 @@ def activity(component, instance):
         if rate is not None and doc.billing_rate != rate:
             raise ServiceBlocked("Labor group billing rates differ between service calculations; review the mapping.")
     else:
-        if frappe.db.exists("Activity Type", name):
+        if frappe.db.get_value("Activity Type", name, 'name', for_update=True):
+            if scoped_link(instance, "WageGroup", identity, "Activity Type"):
+                raise frappe.QueryDeadlockError('Labor group binding arrived during creation. Retry the record.')
             raise ServiceBlocked("An existing activity type requires an explicit labor group binding.")
         doc = frappe.get_doc({"doctype": "Activity Type", **values})
     # Cost unit is unproven; costing_rate is intentionally not derived from wage_cost_price.
-    if not link or any(doc.get(key) != value for key, value in values.items()):
-        doc.update(values)
-        doc.save(ignore_permissions=True) if link else doc.insert(ignore_permissions=True)
-    doc.reload()
-    write_link(link, instance, "WageGroup", identity, doc, products.digest(values), normalized(doc, values))
+    try:
+        if not link or any(doc.get(key) != value for key, value in values.items()):
+            doc.update(values)
+            doc.save(ignore_permissions=True) if link else doc.insert(ignore_permissions=True)
+        doc.reload()
+        write_link(link, instance, "WageGroup", identity, doc, products.digest(values), normalized(doc, values))
+    except (frappe.DuplicateEntryError, frappe.UniqueValidationError) as error:
+        if link:
+            raise
+        # Reuse the record worker's rollback/retry, including READ COMMITTED
+        # where an absent source key has no gap lock. Recheck identity on retry.
+        raise frappe.QueryDeadlockError('Labor group was created concurrently. Retry the record.') from error
     return doc.name
 
 
-def composition(positions, instance, *, realize=True):
+def historical_materials(observation):
+    """Validate the deletion evidence against the immutable service composition."""
+    historical = observation.get('historical_materials', {})
+    for key, proof in historical.items():
+        rows = [row for row in observation['detail']['positions']
+                if row['__typename'] == 'Documents_SupplyProduct' and str(row['id']) == key]
+        if (not rows or proof.get('product_id') != key or proof.get('is_deleted') is not True
+                or not proof.get('reader_version') or proof.get('service_hash') != observation['source_hash']
+                or proof.get('positions_hash') != products.digest(rows)
+                or any(row.get('nr') != proof.get('nr') for row in rows)):
+            raise ServiceBlocked("Historical product proof differs from the saved service composition.")
+    return historical
+
+
+def active_service_dependencies(pending, dependencies):
+    historical = historical_materials(json.loads(pending.record_json))
+    return [(kind, key) for kind, key in dependencies if kind != 'supply_product' or str(key) not in historical]
+
+
+def composition(positions, instance, *, realize=True, historical=None):
     if not isinstance(positions, list) or len(positions) > 1000:
         raise ServiceBlocked("Service composition is missing or exceeds its bound.")
     result = []
@@ -216,8 +255,11 @@ def composition(positions, instance, *, realize=True):
                   "quantity": number(row.get("quantity")), "unit_price": number(row.get("net_price_per_unit")),
                   "time_minutes": number(row.get("time_minutes")), "resolution": "Linked"}
         if kind == "Documents_SupplyProduct":
-            link = scoped_link(instance, "supply_product", row["id"], "Item") if realize else None
-            if link and link.sync_status == "Synchronized":
+            proof = (historical or {}).get(str(row['id']))
+            link = scoped_link(instance, "supply_product", row["id"], "Item") if realize and not proof else None
+            if proof:
+                values["resolution"] = "Historical"
+            elif link and link.sync_status == "Synchronized":
                 values["item_code"] = link.target_name
             else:
                 values["resolution"] = "Unresolved"
@@ -231,14 +273,18 @@ def composition(positions, instance, *, realize=True):
         consumed = {"__typename", "id", "name", "unit_type", "quantity", "net_price_per_unit", "time_minutes"}
         if kind == "WageGroup":
             consumed |= {"wage_cost_price", "wage_per_hour", "profit_markup"}
-        values["metadata"] = json.dumps({k: v for k, v in row.items() if k not in consumed}, sort_keys=True)
+        metadata = {k: v for k, v in row.items() if k not in consumed}
+        if values['resolution'] == 'Historical':
+            metadata['historical_material'] = proof
+            metadata['source_values'] = {k: v for k, v in row.items() if k in consumed}
+        values["metadata"] = json.dumps(metadata, sort_keys=True)
         result.append(values)
     return result
 
 
 def attach_file(detail, item, instance, downloader, prior):
     """Use guarded streaming and Frappe's transactional private-file lifecycle."""
-    if not detail or detail.get("is_deleted"):
+    if not detail or detail.get("is_deleted") and not migration_archive.includes_archived():
         return prior  # deletion never removes an existing local attachment
     fingerprint = products.digest({k:v for k,v in detail.items() if k != "url_download"})
     if prior and prior.get("source") == fingerprint:
@@ -261,7 +307,11 @@ def attach_file(detail, item, instance, downloader, prior):
     return {"name": file.name, "hash": file.content_hash, "source": fingerprint}
 
 
-def upsert(row, detail, read, instance, company, downloader):
+def _separate_item_code(code, identity, instance):
+    return products._collision_code(code, instance, f"{SOURCE_TYPE}:{identity}")
+
+
+def upsert(row, detail, read, instance, company, downloader, *, separate_product_code=False):
     code, fields, barcode, selling = service_values(row, read)
     identity = runtime.identity(read, row)
     link = scoped_link(instance, SOURCE_TYPE, identity, "Item")
@@ -270,9 +320,28 @@ def upsert(row, detail, read, instance, company, downloader):
     if link and link.sync_status in {"Pending Review", "Source Deleted"}:
         raise ServiceBlocked("The service binding requires review.")
     item = frappe.get_doc("Item", link.target_name, for_update=True) if link else None
-    if item is None and frappe.db.exists("Item", code):
-        raise ServiceBlocked("Service article number is already used; bind the existing article explicitly.")
     baseline = baseline_check(link, item) if item else {}
+    original_field = "custom_hero_original_article_number"
+    separate_number = baseline.get("separate_number", False)
+    if item is not None and separate_number:
+        if item.get(original_field) != code or item.name != _separate_item_code(code, identity, instance):
+            raise ServiceBlocked("A changed service article number requires an explicit rename.")
+        fields[original_field], code = code, item.name
+    elif item is None and frappe.db.exists("Item", code):
+        if not separate_product_code:
+            raise ServiceBlocked("Service article number is already used; bind the existing article explicitly.")
+        owners = frappe.get_all("HERO Integration Link", filters={
+            "source_system": ["!=", products.RETIRED_LINK_SYSTEM], "target_doctype": "Item", "target_name": code,
+        }, fields=["source_system", "source_instance", "source_type", "sync_status"], limit_page_length=2)
+        if (len(owners) != 1 or owners[0].source_system != "HERO" or owners[0].source_instance != instance
+                or owners[0].source_type != products.SOURCE_TYPE or owners[0].sync_status != "Synchronized"):
+            raise ServiceBlocked("A separate service number requires a verified product owner of the original number.")
+        if not frappe.get_meta("Item").has_field(original_field):
+            raise ServiceBlocked("The original article number field is missing.")
+        separate_number = True
+        fields[original_field], code = code, _separate_item_code(code, identity, instance)
+        if frappe.db.exists("Item", code):
+            raise ServiceBlocked("The separate service article number is already used.")
     if item:
         from hero_integration.services.change_detection import new_mapped_field_conflicts
         if new_mapped_field_conflicts(item, fields, baseline.get('values', {})):
@@ -325,7 +394,8 @@ def upsert(row, detail, read, instance, company, downloader):
     owned = set(fields) | {"barcodes"} | set(baseline.get("values", {}))
     values = adapter_baseline(item, normalized(item, owned), baseline.get("values", {}))
     write_link(link, instance, SOURCE_TYPE, identity, item, source, values,
-               extra={"price": price_state, "attachment": attachment})
+               extra={"price": price_state, "attachment": attachment, "separate_number": separate_number,
+                      "historical_materials": baseline.get("historical_materials", {})})
     return "added" if is_new else "updated"
 
 
@@ -334,7 +404,86 @@ def _stable_detail(detail):
                                    if key != 'url_download'}}
 
 
-def remember_relationships(run_name, instance, company, read, row, detail, result):
+def confirm_historical_material(product, positions, service_hash, reader_version):
+    """Keep the original line only when the exact product reader proves its deletion."""
+    identity = str(product['product_id'])
+    base = product.get('base_data') or {}
+    if (product.get('is_deleted') is not True or not positions or not reader_version
+            or any(str(row.get('id')) != identity or row.get('__typename') != 'Documents_SupplyProduct'
+                   or row.get('nr') != product.get('nr') or row.get('name') != base.get('name')
+                   or row.get('unit_type') != base.get('unit_type')
+                   or row.get('ean') and row['ean'] != base.get('ean') for row in positions)):
+        raise ServiceBlocked("The deleted product does not match the observed service position.")
+    return {'product_id': identity, 'nr': product['nr'], 'is_deleted': True, 'reader_version': reader_version,
+            'service_hash': service_hash, 'positions_hash': products.digest(positions)}
+
+
+def _historical_groups(link, detail):
+    previous = json.loads(link.target_field_hashes or '{}').get('historical_materials', {}) if link else {}
+    grouped = {}
+    for row in detail['positions']:
+        key = str(row['id'])
+        if row['__typename'] == 'Documents_SupplyProduct' and key in previous:
+            grouped.setdefault(key, []).append(row)
+    return grouped
+
+
+def historical_inventory_evidence(client, instance, details):
+    """Reread previously historical products without holding any native target locks."""
+    from hero_integration.services.scoped_test_reads import exact_rows
+    links = runtime.page_links(frappe, instance, SOURCE_TYPE, [str(key) for key in details], ["target_field_hashes"])
+    keys = {key: sorted(_historical_groups(links.get(str(key)), detail)) for key, detail in details.items()}
+    wanted = sorted({identity for selected in keys.values() for identity in selected})
+    if not wanted:
+        return {}
+    read = runtime.approved_read("HeroProducts", instance)
+    if not read:
+        return {key: {"requested": values, "reader": None, "rows": []} for key, values in keys.items() if values}
+    proof = _historical_reader_proof(read)
+    by_key = {}
+    for start in range(0, len(wanted), 48):
+        rows = exact_rows(client, read, wanted[start:start + 48], allow_absent=True)
+        for row in rows:
+            if row.get("is_deleted") is True:
+                fields = ("name", "unit_type", "ean")
+                by_key[str(row["product_id"])] = {"product_id":row["product_id"], "nr":row.get("nr"),
+                    "is_deleted":True, "base_data":{field:(row.get("base_data") or {}).get(field) for field in fields}}
+    return {key: {"requested": values, "reader": proof, "rows":[by_key[k] for k in values if k in by_key]}
+            for key, values in keys.items() if values}
+
+
+def _historical_reader_proof(read):
+    return products.digest([read.origin, read.service_revision, read.mapping, read.mapping_version,
+                            read.snapshot.fingerprint, read.document, read.variables])
+
+
+def _refresh_historical_materials(run_name, instance, link, detail, inventory_evidence=None):
+    grouped = _historical_groups(link, detail)
+    if not grouped:
+        return {}
+    if inventory_evidence is not None:
+        from hero_integration.services.file_migration import DirectContractChanged
+        read = runtime.approved_read("HeroProducts", instance)
+        if (not read or inventory_evidence.get("reader") != _historical_reader_proof(read)
+                or sorted(grouped) != inventory_evidence.get("requested")):
+            raise DirectContractChanged("The approved product reader or historical service positions changed.")
+        return {str(row["product_id"]): confirm_historical_material(row, grouped[str(row["product_id"])],
+                    link.source_payload_hash, read.mapping_version) for row in inventory_evidence["rows"]}
+    from hero_integration.services.file_migration import bound_configuration
+    from hero_integration.services.file_transfer import _client_and_downloader
+    from hero_integration.services.scoped_test_reads import exact_rows
+    run = frappe.get_doc('HERO Integration Run', run_name)
+    client, _, source = _client_and_downloader(bound_configuration(run))
+    read = runtime.approved_read('HeroProducts', instance)
+    if source != instance or read is None:
+        raise ServiceBlocked("Historical position verification needs the approved product reader for this source.")
+    rows = exact_rows(client, read, sorted(grouped), allow_absent=True)
+    return {str(row['product_id']): confirm_historical_material(
+                row, grouped[str(row['product_id'])], link.source_payload_hash, read.mapping_version)
+            for row in rows if row.get('is_deleted') is True}
+
+
+def remember_relationships(run_name, instance, company, read, row, detail, result, *, inventory_evidence=None):
     from hero_integration.services.deferred_references import save, invalidate
     identity = runtime.identity(read, row)
     if result == 'skipped_rejected':
@@ -344,9 +493,11 @@ def remember_relationships(run_name, instance, company, read, row, detail, resul
     if not link:
         raise ServiceBlocked('Service relationship observations require their imported source identity.')
     dependencies = _composition_dependencies(detail)
+    history = (_refresh_historical_materials(run_name, instance, link, detail, inventory_evidence)
+               if inventory_evidence is not None else _refresh_historical_materials(run_name, instance, link, detail))
     save(run_name, instance, OPERATION, identity, read.mapping_version,
         {'row':row, 'detail':detail, 'company':company, 'target_name':link.target_name,
-         'source_hash':link.source_payload_hash}, sorted(dependencies), defer_empty=True)
+         'source_hash':link.source_payload_hash, 'historical_materials':history}, sorted(dependencies), defer_empty=True)
 
 
 def _composition_details(client, snapshot, ids):
@@ -363,7 +514,7 @@ def _composition_dependencies(detail):
         kind = 'supply_product' if component['__typename'] == 'Documents_SupplyProduct' else 'WageGroup'
         dependencies.add((kind, str(component['id'])))
     file = detail.get('file_upload') or {}
-    if file.get('id') is not None and not file.get('is_deleted'):
+    if file.get('id') is not None and (not file.get('is_deleted') or migration_archive.includes_archived()):
         dependencies.add(('service_file', str(file['id'])))
     return dependencies
 
@@ -388,7 +539,7 @@ def realize_relationships(pending, config, *, read=None):
     baseline = baseline_check(link, item)
     file = detail.get('file_upload')
     downloader = None
-    if file and not file.get('is_deleted') and (not baseline.get('attachment') or
+    if file and (not file.get('is_deleted') or migration_archive.includes_archived()) and (not baseline.get('attachment') or
             baseline['attachment'].get('source') != products.digest(file)):
         # Signed URLs are never persisted. Refresh only this service and require
         # its file identity/metadata and owning service to match the frozen import.
@@ -406,17 +557,30 @@ def realize_relationships(pending, config, *, read=None):
             raise ServiceBlocked('The service changed before its attachment could be realized.')
         file = current[0].get('file_upload')
     def link_components():
-        calculation = composition(detail.get('positions'), pending.source_instance)
+        calculation = composition(detail.get('positions'), pending.source_instance, historical=historical_materials(observation))
         from hero_integration.services.change_detection import managed_target_update
-        with managed_target_update('Item', item.name, link.name):
-            item.set(CALCULATION, calculation)
-            item.save(ignore_permissions=True)
+        child_type = item.meta.get_field(CALCULATION).options
+        keys = [field.fieldname for field in frappe.get_meta(child_type).fields if field.fieldname]
+        def stored_lines():
+            result = []
+            for line in item.get(CALCULATION) or []:
+                values = line.get_valid_dict(ignore_virtual=True)
+                result.append({key: values.get(key) for key in keys})
+            return result
+
+        before = stored_lines()
+        item.set(CALCULATION, calculation)
+        lines_changed = before != stored_lines()
+        if lines_changed:
+            with managed_target_update('Item', item.name, link.name):
+                item.save(ignore_permissions=True)
         attachment = attach_file(file, item, pending.source_instance, downloader, baseline.get('attachment'))
         item.reload()
         values = normalized(item, set(baseline['values']) | {CALCULATION})
-        write_link(link, pending.source_instance, SOURCE_TYPE, pending.source_id, item, link.source_payload_hash, values,
-                   extra={'price':baseline.get('price'), 'attachment':attachment})
-        return 'UPDATED'
+        link_changed = write_link(link, pending.source_instance, SOURCE_TYPE, pending.source_id, item, link.source_payload_hash, values,
+                   extra={'price':baseline.get('price'), 'attachment':attachment, 'separate_number':baseline.get('separate_number',False),
+                          'historical_materials':historical_materials(observation)})
+        return 'UPDATED' if lines_changed or link_changed else 'SKIPPED'
 
     return runtime.realize_record(read, row, pending, SOURCE_TYPE, link_components)
 
@@ -428,7 +592,7 @@ def sync_services(client, *, source_instance, run_name, downloader, should_stop=
     read = read or runtime.resolve_read(OPERATION, source_instance)
     from hero_integration.services.offset_pagination import advance, fingerprint, validate_overlap
     if page_overlap:
-        validate_overlap(page_overlap, read.page_size)
+        validate_overlap(page_overlap, read.page_size, migration=True)
     company, schema = preflight(source_instance, read)
     key = "hero_service_migration:" + run_name
     raw = frappe.db.get_value('DefaultValue', {'parent': '__default', 'defkey': key}, 'defvalue')
@@ -455,7 +619,7 @@ def sync_services(client, *, source_instance, run_name, downloader, should_stop=
         start_index = 0
         rows = received
         if page_overlap:
-            window = advance(received, offset=state["offset"], size=read.page_size, overlap=page_overlap,
+            window = advance(received, offset=state["offset"], size=read.page_size, overlap=page_overlap, migration=True,
                              previous=state.get("offset_window"))
             page_hash = fingerprint(received)
             if state.get("pending_page_hash", page_hash) != page_hash:
@@ -482,7 +646,11 @@ def sync_services(client, *, source_instance, run_name, downloader, should_stop=
             raise ServiceBlocked('The service schema changed; start a new run.')
         from hero_integration.services.execution_budget import current_budget
         budget = current_budget()
-        details = {} if budget else _composition_details(client, snapshot, ids)
+        frozen_batch = bool(budget and budget.version == 3 and read.testing_rows is not None)
+        if frozen_batch and not all(budget.allows_record(SOURCE_TYPE,identity) for identity in ids):
+            raise ServiceBlocked('Service composition batch is outside the frozen cohort.')
+        eligible_ids = [row["id"] for row in rows if not migration_archive.excluded(OPERATION, row)]
+        details = _composition_details(client,snapshot,eligible_ids) if eligible_ids and (frozen_batch or not budget) else {}
         blocked = False
         for index, row in enumerate(rows, start_index):
             if time.monotonic() >= deadline:
@@ -492,36 +660,44 @@ def sync_services(client, *, source_instance, run_name, downloader, should_stop=
                 break
             if verify_source:
                 verify_source()
-            if budget:
-                budget.reserve(SOURCE_TYPE, row['id'])
-                details = _composition_details(client, snapshot, [row['id']])
-            detail = details[row["id"]]
-            if detail.get("modified") != row.get("modified") or detail.get("company_id") != row.get("company_id"):
-                raise ServiceBlocked("Service changed between its record and composition reads; retry the slice.")
-            if budget:
-                budget.reserve_many(_composition_dependencies(detail))
-            try:
-                result = runtime.process_record(read, row, source_instance, SOURCE_TYPE, run_name,
-                    lambda: upsert(row, detail, read, source_instance, company, downloader))
-                remember_relationships(run_name, source_instance, company, read, row, detail, result)
-            except DirectContractChanged:
-                raise
-            except Exception as error:
-                frappe.db.rollback()
-                result = "conflict" if isinstance(error, (ServiceBlocked, products.PriceConflict, BindingConflict)) else "failed"
-                state["last_error"] = str(error) if result == "conflict" else "Service validation failed; check the error log."
-                state["blocked_source_id"] = str(row["id"])
-                if result == "failed":
-                    frappe.log_error(title="Service migration failed")
-                previous = state.setdefault("outcomes", {}).get(str(row["id"]))
-                if previous:
-                    state["counts"][previous] -= 1
-                state["outcomes"][str(row["id"])] = result
-                state["counts"][result] = state["counts"].get(result, 0) + 1
-                state.setdefault('errors', {})[str(row['id'])] = state['last_error']
-                if not continue_on_conflict:
-                    blocked = True
-                    break  # retry exactly this identity on explicit legacy resume
+            if migration_archive.excluded(OPERATION, row):
+                result = "skipped_archived"
+            else:
+                if budget:
+                    budget.reserve_record(SOURCE_TYPE, row['id'])
+                    if not frozen_batch:
+                        details = _composition_details(client, snapshot, [row['id']])
+                detail = details[row["id"]]
+                if any(detail.get(key) != row.get(key) for key in ("modified", "company_id", "is_deleted")):
+                    raise ServiceBlocked("Service changed between its record and composition reads; retry the slice.")
+                if budget:
+                    budget.reserve_many(_composition_dependencies(detail), relation='service_composition')
+                try:
+                    result = runtime.process_record(read, row, source_instance, SOURCE_TYPE, run_name,
+                        lambda: upsert(row, detail, read, source_instance, company, downloader))
+                    remember_relationships(run_name, source_instance, company, read, row, detail, result)
+                except DirectContractChanged:
+                    raise
+                except Exception as error:
+                    frappe.db.rollback()
+                    result = "conflict" if isinstance(error, (ServiceBlocked, products.PriceConflict, BindingConflict)) else "failed"
+                    state["last_error"] = str(error) if result == "conflict" else "Service validation failed; check the error log."
+                    state["blocked_source_id"] = str(row["id"])
+                    if result == "failed":
+                        frappe.log_error(title="Service migration failed")
+                    previous = state.setdefault("outcomes", {}).get(str(row["id"]))
+                    if previous:
+                        state["counts"][previous] -= 1
+                    state["outcomes"][str(row["id"])] = result
+                    state["counts"][result] = state["counts"].get(result, 0) + 1
+                    state.setdefault('errors', {})[str(row['id'])] = state['last_error']
+                    if not continue_on_conflict:
+                        if budget:
+                            budget.outcome(SOURCE_TYPE, row['id'], result)
+                        blocked = True
+                        break  # retry exactly this identity on explicit legacy resume
+            if budget and result != 'skipped_archived':
+                budget.outcome(SOURCE_TYPE, row['id'], result if result in ('failed', 'conflict') else 'processed')
             if window:
                 if index + 1 == len(window.rows):
                     state.update(offset=window.next_offset, offset_window=window.checkpoint)

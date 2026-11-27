@@ -22,11 +22,19 @@ def validate_readback(context, plan):
         'Project': ('project_matches', {'Project', 'ProjectMatch'}),
     }.get(binding.target_doctype)
     field = mapping['target']['field']
+    from graphql import parse
+    from hero_integration.services.graphql_schema_cache import compiled_schema
+    from hero_integration.services.read_contract import record_object_type
+
+    schema = compiled_schema(context["snapshot"].snapshot_json).core
+    query = parse(plan.request.document).definitions[0]
+    root = query.selection_set.selections[0].name.value
+    name = record_object_type(schema, plan.request.document, plan.sealed.contract.records_path)
     paths = {item.selection_path for item in plan.request.result_bindings}
     lifecycle_paths = {("is_deleted",)}
     if binding.target_doctype == "Customer":
         lifecycle_paths.add(("is_contact_person",))
-    if (not lifecycle_paths <= paths or expected is None or plan.request.protocol_field_name != expected[0]
+    if (not lifecycle_paths <= paths or expected is None or root != expected[0] or name != parent.object_type
             or parent.object_type not in expected[1]
             or plan.source_instance != parent.source_instance
             or binding.source_field != field
@@ -73,12 +81,66 @@ def read_bound_value(context, client):
     return matches[0][field]
 
 
+def read_bound_record(context, client):
+    from hero_integration.graphql_protocol.graphql_result_decoder import GraphQLResultDecodeError
+    from hero_integration.services.b8_runtime import ApprovedBoundReader
+
+    plan = context["readback_plan"]
+    reader = ApprovedBoundReader(plan, context["snapshot"].snapshot_json, context["source_context"].binding_revision, 60)
+    try:
+        row = reader.read_with_client(context["parent"].external_object_id, client)
+        if (context["parent"].target_doctype == "Project" and not active_bound_project(row, context["parent"].external_object_id)
+                or context["read_plan"].source_deleted(row)) or (context["parent"].target_doctype == "Customer"
+                and row.get("is_contact_person") is True):
+            raise WritebackContractError("The approved reader marks the bound source as deleted.")
+        return row
+    except (ValueError, GraphQLResultDecodeError) as error:
+        raise WritebackContractError("HERO readback did not prove the unique bound record and field.") from error
+
+
+def observed_field(context, client):
+    """Return wire and native projections from one identity-verified observation."""
+    from hero_integration.services.binding_registry import native_fingerprint
+    from hero_integration.services.sync_engine import FrappeBoundProcessor
+
+    record = read_bound_record(context, client)
+    raw = value_at(record, context["mapping"]["target"]["field"])
+    projected = FrappeBoundProcessor.project_scalar(context["read_plan"], context["rule"], record,
+                                                   context["parent"].source_instance)
+    if projected is None:
+        raise WritebackContractError("The approved readback did not establish a field baseline.")
+    return state_fingerprint(raw, present=True), native_fingerprint(projected, context["fieldtype"])
+
+
+def expected_wire(context, variables):
+    target = context["mapping"]["target"]
+    expected = variables[context["variable"]][target["field"]]
+    return state_fingerprint(expected, present=True)
+
+
 def verify_readback(context, client, variables):
-    mapping = context['mapping']
-    observed = read_bound_value(context, client)
-    expected = variables[mapping['target']['argument']][mapping['target']['field']]
-    # Input transforms have already run in build_request_checked. Preserve the
-    # stored type and value, including NULL, empty strings, False and zero.
-    if state_fingerprint(observed, present=True) != state_fingerprint(expected, present=True):
-        raise WritebackContractError('HERO did not store the expected field value; the binding remains unconfirmed.')
-    return state_fingerprint(observed, present=True)
+    wire, canonical = observed_field(context, client)
+    if wire != expected_wire(context, variables):
+        raise WritebackContractError("HERO did not store the expected field value; the binding remains unconfirmed.")
+    return canonical
+
+
+
+def intent_evidence(context):
+    """Persist only identifiers, contract revisions and fingerprints needed for recovery."""
+    from hero_integration.services.frappe_writeback import object_write_scope
+    binding, parent, executable = context["binding"], context["parent"], context["executable"]
+    return {
+        "native_target": object_write_scope(binding.site_scope, "", binding.target_doctype, binding.target_name),
+        "version": 1, "site": binding.site_scope, "object": context["object_scope"],
+        "source": context["source_context"].fingerprint, "parent": parent.identity_key,
+        "parent_revision": parent.revision, "binding": binding.identity_key, "revision": binding.revision,
+        "definition": binding.mapping_definition_id, "mapping_revision": binding.mapping_revision,
+        "ack_version": binding.acknowledged_version, "prior_source": binding.acknowledged_source_fingerprint,
+        "prior_target": binding.acknowledged_target_fingerprint, "plan": executable.plan_key,
+        "generation": executable.generation, "snapshot": executable.selection.schema_fingerprint,
+        "rules": context["rules_fingerprint"], "mutation_mapping": context["mapping_name"],
+        "mutation_revision": context["mutation_revision"], "contract": context["mutation_contract"],
+        "fieldtype": context["fieldtype"], "authority": context.get("field_authority"), "local": context["intent"].local_fingerprint,
+        "wire": expected_wire(context, context["intent"].variables),
+    }

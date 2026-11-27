@@ -1,0 +1,13 @@
+# Apply alongside the existing Dev Compose files only for an approved exclusive test series.
+x-test-mounts: &test-mounts
+  - ${HERO_TEST_STATE:?absolute controller directory required}/public:/run/hero-test-state:ro
+  - inbox:/run/hero-test-requests
+services:
+  backend:
+    volumes: *test-mounts
+  queue-short:
+    volumes: *test-mounts
+  queue-long:
+    volumes: *test-mounts
+volumes:
+  inbox: {}

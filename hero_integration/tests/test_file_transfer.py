@@ -5,13 +5,14 @@ from __future__ import annotations
 import copy
 import hashlib
 import io
+import json
 import os
 import shutil
 import tempfile
 import unittest
 import urllib.error
 from types import SimpleNamespace
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 from hero_integration.services import file_transfer as ft
 from hero_integration.tests.saved_reader_fixture import isolate_direct_materialization
@@ -20,6 +21,7 @@ from hero_integration.tests.saved_reader_fixture import isolate_direct_materiali
 class _Response(io.BytesIO):
     def __init__(self, body, length=None):
         super().__init__(body)
+        self.status = 200
         self.headers = {"Content-Length": str(len(body) if length is None else length)}
 
     def __enter__(self):
@@ -27,6 +29,14 @@ class _Response(io.BytesIO):
 
     def __exit__(self, *exc):
         self.close()
+
+
+def _jpeg():
+    from PIL import Image
+
+    with io.BytesIO() as body:
+        Image.new("RGB", (8, 8), "red").save(body, "JPEG")
+        return body.getvalue()
 
 
 class _Opener:
@@ -142,6 +152,27 @@ class TestDownloader(unittest.TestCase):
         self.assertEqual(len(opener.requests), 3)
         self.assertFalse(os.path.exists(self.target))
 
+    def test_image_checks_content_even_when_metadata_size_matches(self):
+        for body in (b"not an image", _jpeg()[:-12]):
+            with self.subTest(length=len(body)):
+                downloader, _ = self.make(_Response(body))
+                with self.assertRaisesRegex(ft.TransferError, "invalid or incomplete"):
+                    downloader.fetch(URL, self.target, len(body), image_id="7")
+                self.assertFalse(os.path.exists(self.target))
+
+    def test_image_rejects_incomplete_http_even_with_decodable_body(self):
+        body = _jpeg()
+        responses = [_Response(body), _Response(body), _Response(body, length=len(body) + 10)]
+        responses[0].status = 206
+        responses[1].headers["Content-Range"] = f"bytes 0-{len(body)-1}/{len(body)+10}"
+        for response in responses:
+            with self.subTest(headers=response.headers):
+                downloader, _ = self.make(response)
+                downloader.retries = 0
+                with self.assertRaises(ft.TransferError):
+                    downloader.fetch(URL, self.target, len(body), image_id="7")
+                self.assertFalse(os.path.exists(self.target))
+
     def test_hero_size_retry_success_and_empty_files(self):
         downloader, _ = self.make(_Response(b"abc"), _Response(b"abcdefghij"))
         self.assertEqual(downloader.fetch(URL, self.target, expected_size=10)[0], 10)
@@ -195,8 +226,16 @@ class _TxDB:
         self.counter = 0
 
     def _match(self, row, filters):
-        return all(row.get(key) in value[1] if isinstance(value, list) and value[0] == "in"
-                   else row.get(key, "HERO" if key == "source_system" else None) == value for key, value in filters.items())
+        for key, value in filters.items():
+            actual = row.get(key, "HERO" if key == "source_system" else None)
+            if isinstance(value, list):
+                operator, expected = value
+                if operator == "in" and actual in expected or operator == "!=" and actual != expected:
+                    continue
+                return False
+            if actual != value:
+                return False
+        return True
 
     def exists(self, doctype, name):
         rows = self.data.get(doctype, {})
@@ -216,11 +255,18 @@ class _TxDB:
         self.data[doctype][name].update(values)
 
     def sql(self, query, params):
-        source_type, instance = params
-        return [(row["source_id"], row["target_doctype"], row.get("target_name"), row.get("sync_status", "Synchronized"))
+        source_type, instance, *scope = params
+        rows = [(row["source_id"], row["target_doctype"], row.get("target_name"), row.get("sync_status", "Synchronized"))
                 for row in self.data["HERO Integration Link"].values()
                 if row["source_type"] == source_type and row["source_instance"] == instance
                 and row.get("source_system", "HERO") == "HERO"]
+
+        if not scope:
+            return rows
+        identities, doctype = scope
+        return [(identity, target) for identity, target_type, target, status in rows
+                if identity in identities and target_type == doctype and target
+                and status in ("Synchronized", "Conflict") and sum(row[0] == identity for row in rows) == 1]
 
     def insert(self, values):
         self.counter += 1
@@ -316,7 +362,7 @@ class _FileFixture(unittest.TestCase):
         read_patch = patch.object(ft.direct_runtime, "resolve_read", side_effect=lambda op, source: ft.direct_runtime.builtin_read(op))
         read_patch.start()
         self.addCleanup(read_patch.stop)
-        detail_patch = patch.object(ft, '_detail_request', side_effect=lambda read, source, uuids:
+        detail_patch = patch.object(ft, '_detail_request', side_effect=lambda read, source, uuids, *, paths=ft.DETAIL_PATHS:
             SimpleNamespace(document='materialized file detail', variables={'uuids': uuids, 'first': len(uuids)}))
         detail_patch.start()
         self.addCleanup(detail_patch.stop)
@@ -491,6 +537,100 @@ class TestSourceAndTargetBinding(_FileFixture):
         link = next(link for link in self.db.committed["HERO Integration Link"].values() if link["source_id"] == "7")
         self.assertEqual(link["source_payload_hash"], ft.source_hash(row))
         self.assertEqual(link["sync_status"], "Synchronized")
+
+    def test_completed_image_retry_uses_failed_receipts_and_keeps_checkpoint(self):
+        from dataclasses import replace
+        from hero_integration.services import execution_budget, scoped_test_reads
+
+        detail = {"uuid": "u8", "id": 8, "is_deleted": False, "file_upload_links": [],
+                  "file_upload_matches": [{"project_match_id": 42}], "customer_document": None}
+        cohort = {"version": 2, "scoped_project_reads": True, "project_ids": ["42"], "customer_ids": []}
+        proof = ft.project_file_proof(detail, cohort)
+        cohort["files"] = {"HeroPictures": {"7": {**proof, "uuid": "u7"}, "8": proof}}
+        read = replace(ft.direct_runtime.builtin_read("HeroPictures"), validate_write=Mock())
+        checkpoint = {"done": True, "offset": 2, "testing_record_limit": 1, "source_instance": "source-a",
+                      "mapping": read.mapping_version, "testing_cohort_fingerprint":
+                          hashlib.sha256(json.dumps(cohort, sort_keys=True, separators=(",", ":")).encode()).hexdigest()}
+        row = {"id": 8, "uuid": "u8", "filename": "img.jpg", "category": "images",
+               "size": 12, "modified": "1", "downloadUrl": URL}
+        opener = _Opener(_Response(_jpeg()))
+        downloader = ft.Downloader("login.hero-software.de", lambda: "token", opener=opener)
+        writer_outcomes = {"7": "processed", "8": "failed"}
+        native_get_all = ft.frappe.get_all
+
+        def get_all(dt, **kwargs):
+            if dt == "HERO Budget Outcome":
+                self.assertEqual(kwargs["filters"], {"budget": "B", "phase": "writer", "object_type": "file_upload",
+                                                     "outcome": "failed", "external_id": ["in", ["7", "8"]]})
+                return [i for i, result in writer_outcomes.items() if result == "failed"]
+            return native_get_all(dt, **kwargs)
+
+        budget = Mock(version=3, budget_id="B")
+        budget.outcome.side_effect = lambda kind, identity, outcome: writer_outcomes.update({str(identity): outcome})
+        save_checkpoint = Mock()
+        def transfer(ids):
+            return ft.transfer("images", client=_ListClient([row], {"u8": detail}), downloader=downloader, read=read,
+                               source_instance="source-a", run_name="completed", cohort=cohort, record_limit=1,
+                               min_free=0, retry_image_ids=ids)
+        with patch.object(scoped_test_reads, "exact_rows", return_value=[row]) as metadata, \
+                patch.object(execution_budget, "current_budget", return_value=budget), \
+                patch.object(ft.frappe, "get_all", side_effect=get_all), \
+                patch.object(ft, "scoped_file_target", return_value=("Project", "PROJECT-A")), \
+                patch.object(ft, "_folder", side_effect=lambda *parts: "/".join(parts)), \
+                patch.object(ft.direct_runtime, "run_progress", return_value=(checkpoint, save_checkpoint)):
+            with self.assertRaisesRegex(ft.TransferError, "original image cohort"):
+                transfer(["9"])
+            self.assertEqual(transfer(["7", "8"])["counts"]["added"], 1)
+            self.assertTrue(transfer(["7", "8"])["done"])
+        self.assertEqual(writer_outcomes, {"7": "processed", "8": "processed"})
+        self.assertEqual(len(opener.requests), 1)
+        self.assertEqual(metadata.call_count, 1)
+        self.assertEqual(metadata.call_args.args[2], ["8"])
+        self.assertEqual(metadata.call_args.kwargs["uuids"], {"8": "u8"})
+        self.assertEqual(self.observations.call_args.kwargs["cohort"], {"project_ids": ["42"], "customer_ids": []})
+        save_checkpoint.assert_not_called()
+        self.assertTrue(checkpoint["done"])
+        self.assertEqual(checkpoint["offset"], 2)
+
+    def test_scoped_missing_upload_keeps_offset_and_later_file_receipt(self):
+        from hero_integration.services import execution_budget, scoped_test_reads
+        detail = {'uuid':'u8', 'id':8, 'is_deleted':False, 'file_upload_links':[],
+                  'file_upload_matches':[{'project_match_id':42}], 'customer_document':None}
+        cohort = {'version':2, 'scoped_project_reads':True, 'project_ids':['42'], 'customer_ids':[]}
+        proof = ft.project_file_proof(detail, cohort)
+        cohort['files'] = {'HeroDocuments':{'7':{**proof,'uuid':'u7'}, '8':proof}}
+        # A missing download URL records a separate receipt for the second, present file.
+        row = {'id':8,'uuid':'u8','filename':'demo.pdf','category':'offer','size':3,'modified':'1'}
+        budget = Mock(version=3)
+        with patch.object(scoped_test_reads, 'exact_rows', return_value=[row]) as metadata, \
+                patch.object(execution_budget, 'current_budget', return_value=budget), \
+                patch.object(ft.direct_runtime, 'run_progress', return_value=({},Mock())):
+            state = ft.transfer('documents', client=_ListClient([row],{'u8':detail}), downloader=_NoDownload(),
+                                source_instance='source-a', run_name='synthetic-full', cohort=cohort, record_limit=1)
+        self.assertTrue(state['done'])
+        self.assertEqual(state['offset'],2)
+        self.assertEqual(state['testing_missing_file_ids'],['7'])
+        self.assertEqual(state['testing_file_ids_found'],['8'])
+        self.assertEqual(state['counts']['rows_read'],1)
+        self.assertEqual(state['testing_records_received'],1)
+        self.assertEqual(metadata.call_args.args[2],['7','8'])
+        self.assertEqual(metadata.call_args.kwargs['uuids'],{'7':'u7','8':'u8'})
+        self.assertCountEqual([call.args for call in budget.outcome.call_args_list],
+                              [('file_upload','7','missing'),('file_upload','8','missing')])
+
+    def test_invalid_file_is_reported_and_next_customer_only_file_is_imported(self):
+        rows = [{'id':i,'uuid':str(i),'filename':'synthetic.pdf','size':3,'modified':'1',
+                 'downloadUrl':URL,'category':'invoice'} for i in (7,8)]
+        details = {str(i):{'uuid':str(i),'customer_document':{'project_match_id':p,'contact_id':22}}
+                   for i,p in [(7,False),(8,0)]}
+        downloader = ft.Downloader("login.hero-software.de", lambda:"fixture", retries=0,
+                                   opener=_Opener(_Response(b'pdf')))
+        with patch('hero_integration.services.integration_events.record_output') as event:
+            state = self.run_transfer(rows,details,downloader=downloader)
+        self.assertEqual((state['counts']['failed'],state['counts']['added']),(1,1))
+        self.assertEqual(event.call_args.kwargs['source_id'],'7')
+        self.assertEqual(self.observations.call_args.args[4]['id'],8)
+        self.assertTrue(state['done'])
 
     def test_new_file_link_records_the_run_source(self):
         row = {"id": 7, "uuid": "u7", "filename": "Rechnung.pdf", "modified": "1", "size": 3,

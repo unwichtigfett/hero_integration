@@ -45,7 +45,7 @@ class TestB8RuntimeBridgeContract(unittest.TestCase):
             schema_snapshot="latest", schema_fingerprint="fp"
         )
         executable = SimpleNamespace(plan_key="a" * 64, generation=7, selection=selection)
-        approved = SimpleNamespace(generation=7)
+        approved = SimpleNamespace(generation=7, additional_readers=())
         calls = []
 
         class Service:
@@ -79,7 +79,7 @@ class TestB8RuntimeBridgeContract(unittest.TestCase):
     def test_automatic_sync_uses_latest_validated_snapshot_without_reusing_old_approval(self):
         selection = SimpleNamespace(source_instance="hero-one", execution_mode="AUTO_SYNC", schema_snapshot="old", schema_fingerprint="old-fp")
         executable = SimpleNamespace(selection=selection)
-        service = SimpleNamespace(current_approved=lambda *a: SimpleNamespace(generation=1),
+        service = SimpleNamespace(current_approved=lambda *a: SimpleNamespace(generation=1, additional_readers=()),
                                   resolve_executable_plan=lambda *a: executable)
         calls = []
         def get_all(doctype, **kwargs):
@@ -103,7 +103,7 @@ class TestB8RuntimeBridgeContract(unittest.TestCase):
                                get_single=lambda *a: SimpleNamespace(polling_mode="AUTO_SYNC", hero_source_instance="hero-one",
                                    hero_api_url="https://hero.example/graphql", allowed_hero_hosts="hero.example"),
                                get_all=lambda *args, **kwargs: [])
-        service = SimpleNamespace(current_approved=lambda *a: SimpleNamespace(generation=1),
+        service = SimpleNamespace(current_approved=lambda *a: SimpleNamespace(generation=1, additional_readers=()),
                                   resolve_executable_plan=lambda *a: SimpleNamespace(selection=SimpleNamespace(execution_mode="AUTO_SYNC")))
         with patch.object(sync_runtime_adapter, "_runtime_plan_service", return_value=service), patch.object(sync_runtime_adapter, "_run") as run:
             with self.assertRaisesRegex(sync_runtime_adapter.RuntimeBridgeError, "validated snapshot"):

@@ -13,6 +13,7 @@ from dataclasses import dataclass
 from email.utils import parsedate_to_datetime
 from urllib.parse import urlsplit
 
+from hero_integration.services import concurrency
 from hero_integration.graphql_protocol.graphql_response import strict_json_loads
 from hero_integration.services.performance import measure, measured
 
@@ -111,6 +112,8 @@ class HeroGraphQLClient:
         self.min_interval_seconds = 60 / requests_per_minute if requests_per_minute else 0.0
 
     def query(self, document: str, variables: Mapping[str, object]) -> dict[str, object]:
+        from hero_integration.services.schema_adoption import validate_read_document
+        validate_read_document(document)
         assert_read_only(document)
         return self._post(document, variables)
 
@@ -135,16 +138,26 @@ class HeroGraphQLClient:
         variables: Mapping[str, object] | None,
         *,
         operation_name: str = "",
+        mutation: bool = False,
     ) -> dict[str, object]:
-        token = self.token_provider()
-        if not isinstance(token, str) or not token.strip() or any(ord(char) < 32 for char in token):
-            raise HeroClientError("HERO API token is missing or invalid.")
         body_payload: dict[str, object] = {"query": document}
         if variables is not None:
             body_payload["variables"] = dict(variables)
         if operation_name:
             body_payload["operationName"] = operation_name
         body = json.dumps(body_payload, allow_nan=False).encode()
+        if mutation:
+            from .mutation_guard import authorize
+            if self.max_retries or operation_name:
+                raise HeroClientError("A test mutation permits only one transport attempt.", code="MUTATION_DENIED")
+            # Validate the values serialized for this exact request, independently of mutable caller inputs.
+            wire = json.loads(body)
+            token = authorize(wire["query"], wire.get("variables"), self.endpoint)
+        else:
+            assert_read_only(document)
+            token = self.token_provider()
+        if not isinstance(token, str) or not token.strip() or any(ord(char) < 32 for char in token):
+            raise HeroClientError("HERO API token is missing or invalid.")
         request = urllib.request.Request(
             self.endpoint.url,
             data=body,
@@ -188,7 +201,7 @@ class HeroGraphQLClient:
                 self._await_rate_budget()
             try:
                 with measure('hero.http_attempt'):
-                    with opener.open(request, timeout=self.timeout) as response:
+                    with concurrency.graphql_slot(), opener.open(request, timeout=self.timeout) as response:
                         # Read at most one byte past the bound, so an oversized body never fills memory.
                         body = response.read(self.max_response_bytes + 1)
                 if len(body) > self.max_response_bytes:

@@ -192,6 +192,9 @@
 @container hero-sync (min-width: 720px) {
     .hero-integration-ui .hero-sync {
         grid-template-columns: minmax(0, 1.6fr) minmax(300px, 1fr);
+        grid-template-areas: "head sub" "manual manual" "service service" "states states" "work work";
+    }
+    .hero-integration-ui .hero-sync:where(:has(> .hero-sync-live:not([hidden]))) {
         grid-template-areas: "head sub" "manual manual" "service service" "states states" "live live" "work work";
     }
     .hero-integration-ui .hero-sync-head { grid-area: head; }
@@ -211,6 +214,9 @@
 @container hero-sync (min-width: 1180px) {
     .hero-integration-ui .hero-sync {
         grid-template-columns: minmax(0, 2.3fr) minmax(340px, 1fr);
+        grid-template-areas: "head sub" "manual service" "states states" "work work";
+    }
+    .hero-integration-ui .hero-sync:where(:has(> .hero-sync-live:not([hidden]))) {
         grid-template-areas: "head sub" "manual service" "states states" "live live" "work work";
     }
 }

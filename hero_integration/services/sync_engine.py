@@ -21,8 +21,29 @@ from hero_integration.services.localized_error import LocalizedError
 
 class SyncError(LocalizedError): pass
 class SyncConflict(SyncError): pass
+class NativeTaskWriteDenied(SyncError):
+    """A mapped Task save was rejected by a native permission validator."""
+
+    def __init__(self, target_name, fields):
+        self.target_name = target_name
+        self.fields = tuple(sorted(fields))
+        super().__init__("Native Task write denied for fields {0}.", ", ".join(self.fields))
+
+
 class SyncStatus(StrEnum): IDLE="IDLE"; RUNNING="RUNNING"; SUCCEEDED="SUCCEEDED"; PARTIAL="PARTIAL"; INCOMPLETE="INCOMPLETE"; RECONCILIATION_REQUIRED="RECONCILIATION_REQUIRED"; FAILED="FAILED"; CONFLICT="CONFLICT"; BUDGET_REACHED="BUDGET_REACHED"; BOUNDED_COMPLETE="BOUNDED_COMPLETE"; DISABLED="DISABLED"
 class Eligibility(StrEnum): NOT_ELIGIBLE="NOT_ELIGIBLE"; UNBOUND_ELIGIBLE="UNBOUND_ELIGIBLE"; LOCAL_CHANGED="LOCAL_CHANGED"; MAPPING_CHANGED="MAPPING_CHANGED"; RECONCILIATION_REQUIRED="RECONCILIATION_REQUIRED"
+
+
+INVENTORY_PAGE_PROCESSED = "Inventory page processed; the next tick resumes the approved collection."
+INVENTORY_PASS_ENDED = "Inventory pass ended; absent records are not deletion evidence."
+
+
+def inventory_slice_completed(diagnostic, checkpoint):
+    """The reader committed its next page or terminated the inventory round."""
+    if diagnostic == INVENTORY_PASS_ENDED:
+        return checkpoint is None
+    return (diagnostic == INVENTORY_PAGE_PROCESSED and isinstance(checkpoint, dict)
+            and type(checkpoint.get("next_offset")) is int and checkpoint["next_offset"] > 0)
 
 
 def _text(value, label):
@@ -77,13 +98,14 @@ class ChangePage:
 @dataclass(frozen=True, slots=True)
 class SyncState:
     configuration:PollingConfiguration; cursor:str|None=None; coverage:tuple[str,...]=(); status:SyncStatus=SyncStatus.IDLE; generation:int=0; diagnostic:str=""; bounded_after:str|None=None
+    inventory_checkpoint:dict|None=None
     def __post_init__(self):
         if self.cursor is not None: _text(self.cursor,"cursor")
         if not isinstance(self.status,SyncStatus) or not isinstance(self.generation,int) or self.generation<0 or len(set(self.coverage))!=len(self.coverage): raise SyncError("Sync state is invalid.")
 @dataclass(frozen=True, slots=True)
 class SyncRun:
     run_id:str; site_scope:str; actor:str; expected_generation:int; automatic:bool; request_fingerprint:str=""
-    source_instance:str=""; plan_key:str=""; plan_generation:int=0; source_revision:int=0; execution_scope:str=""
+    source_instance:str=""; plan_key:str=""; plan_generation:int=0; source_revision:int=0; execution_scope:str=""; testing_max_actions:int=0; budget_contract_version:int=0
     def __post_init__(self): _text(self.run_id,"run id"); _text(self.site_scope,"site scope"); _text(self.actor,"actor");
 
 class ChangeProvider(Protocol):
@@ -117,7 +139,29 @@ class InMemorySyncLedger:
 class FrappeSyncLedger:
     """Site-scoped intake, durable progress and transaction boundaries for synchronization."""
     STATE="HERO Sync State Ledger"; RUN="HERO Sync Run Ledger"
-    def __init__(self,frappe_module=None): self._frappe_module=frappe_module
+    def __init__(self, frappe_module=None, *, reader=None, cycle="", allocation=0, testing=False):
+        self._frappe_module = frappe_module
+        self.reader = reader
+        self.cycle = cycle
+        self.allocation = allocation
+        self.testing = testing
+
+    def _read_state(self, doc):
+        if not self.reader:
+            return _state_from_doc(doc)
+        from types import SimpleNamespace
+        stored = json.loads(getattr(doc, "reader_states_json", None) or "{}").get(self.reader)
+        return _state_from_doc(SimpleNamespace(**stored)) if stored else None
+
+    def adopt_single_reader_state(self, configuration, compatible):
+        """Carry a legacy position only when its complete historical read fingerprint matches."""
+        site = configuration.site_scope
+        if self.state(site) is not None:
+            return
+        previous = FrappeSyncLedger(self._frappe()).state(site)
+        if previous and compatible(previous.configuration):
+            self.save_state(replace(previous, configuration=configuration), None)
+
     def _frappe(self):
         if self._frappe_module is not None: return self._frappe_module
         import frappe
@@ -129,12 +173,45 @@ class FrappeSyncLedger:
         roles=getattr(frappe,"get_roles",lambda: ())()
         if user!="Administrator" and "System Manager" not in roles: raise PermissionError("System Manager or Administrator authority is required.")
         return frappe
+    @contextmanager
+    def inventory_record(self, is_record_error):
+        """Rollback one invalid row, including its pending filesystem and worker callbacks."""
+        from hero_integration.services.change_detection import record_transaction_callbacks
+        db = self._frappe().db
+        db.savepoint("hero_inventory_record")
+        with record_transaction_callbacks(db) as rollback:
+            try:
+                yield
+                db.release_savepoint("hero_inventory_record")
+            except Exception as error:
+                if is_record_error(error):
+                    rollback(save_point="hero_inventory_record")
+                raise
+
     def state(self,site):
         frappe=self._frappe(); rows=frappe.get_all(self.STATE,filters={"site_scope":site},fields=["name"])
         if len(rows)>1: raise SyncConflict("Sync state scope is not unique.")
-        return None if not rows else _state_from_doc(frappe.get_doc(self.STATE,rows[0].name))
+        return None if not rows else self._read_state(frappe.get_doc(self.STATE,rows[0].name))
     def save_state(self,state,expected):
-        frappe=self._scope(state.configuration.site_scope); frappe.has_permission(self.STATE,"write",throw=True); old=self.state(state.configuration.site_scope)
+        frappe=self._scope(state.configuration.site_scope); frappe.has_permission(self.STATE,"write",throw=True); site = state.configuration.site_scope
+        if self.reader:
+            rows = frappe.db.sql("SELECT name FROM `tabHERO Sync State Ledger` WHERE name=%s FOR UPDATE", (site,))
+            doc = frappe.get_doc(self.STATE, site, for_update=True) if rows else frappe.get_doc(_state_payload(state))
+            prior = self._read_state(doc)
+            if (prior.generation if prior else None) != expected:
+                raise SyncConflict("Stale reader checkpoint.")
+            values = _state_payload(state, doctype=False)
+            readers = json.loads(doc.reader_states_json or "{}")
+            readers[self.reader] = values
+            doc.reader_states_json = json.dumps(readers, separators=(",", ":"))
+            # Keep the original singleton position available to manual callers and to
+            # another approved reader which has yet to claim its historical position.
+            if rows:
+                doc.save()
+            else:
+                doc.insert()
+            return state
+        old=self.state(site)
         if old is None:
             if expected is not None: raise SyncConflict("Stale sync state.")
             frappe.has_permission(self.STATE,"create",throw=True); frappe.get_doc(_state_payload(state)).insert(); return state
@@ -162,26 +239,42 @@ class FrappeSyncLedger:
             if run_reservation.locked_b8_runs(frappe, run.site_scope):
                 raise SyncConflict("A synchronization run is already active.")
             state_doc = frappe.get_doc(self.STATE, run.site_scope, for_update=True)
-            if int(state_doc.generation or 0) != run.expected_generation:
+            reader_state = self._read_state(state_doc)
+            if reader_state is None or reader_state.generation != run.expected_generation:
                 raise SyncConflict("The approved sync generation changed before intake.")
             frappe.get_doc({
                 "doctype": self.RUN, "sync_run_id": run.run_id, "site_scope": run.site_scope,
+                "read_service": self.reader and self.reader.split("|", 1)[1],
+                "scheduler_cycle": self.cycle, "cycle_allocation": self.allocation,
                 "actor": run.actor, "automatic": int(run.automatic), "state": "RUNNING",
                 "request_fingerprint": run.request_fingerprint, "source_instance": run.source_instance,
                 "plan_key": run.plan_key, "plan_generation": run.plan_generation,
                 "source_revision": run.source_revision, "execution_scope": run.execution_scope,
-                "confirmed_position": sha256(state_doc.cursor.encode()).hexdigest()[:16] if state_doc.cursor else "",
+                "testing_max_actions": run.testing_max_actions, "budget_contract_version": run.budget_contract_version,
+                "confirmed_position": sha256(reader_state.cursor.encode()).hexdigest()[:16] if reader_state.cursor else "",
             }).insert()
+            if self.testing and not run.automatic and run.request_fingerprint:
+                from hero_integration.services.integration_events import record_output
+                from hero_integration.services.selective_test_reset import SYNC_PROOF
+                record_output(source_type=self.RUN, source_id=run.run_id, source_instance=run.source_instance,
+                              action=SYNC_PROOF, result="CREATED")
         except frappe.QueryDeadlockError as error:
             # The caller owns rollback; this attempt must neither retry nor
             # start provider work after a deadlock or stale snapshot conflict.
             raise SyncConflict("The HERO run reservation changed concurrently; no synchronization run was started.") from error
         finally:
             run_reservation.release(frappe)
+    def execution_lock_name(self, run_id):
+        return sha256(f"HERO:sync:{self._frappe().local.site}:{run_id}".encode()).hexdigest()
+
+    def lease_active(self, run_id):
+        return bool(self._frappe().db.sql("SELECT IS_USED_LOCK(%s) IS NOT NULL",
+                                          (self.execution_lock_name(run_id),))[0][0])
+
     @contextmanager
     def execution_lease(self,run_id):
         db = self._frappe().db
-        lock = sha256(f"HERO:sync:{self._frappe().local.site}:{run_id}".encode()).hexdigest()
+        lock = self.execution_lock_name(run_id)
         # GET_LOCK alone succeeds recursively on the same MariaDB connection. An
         # overlapping caller must never qualify as the owner of an abandoned receipt.
         if db.sql("SELECT IF(IS_FREE_LOCK(%s), GET_LOCK(%s, 0), 0)", (lock, lock))[0][0] != 1:
@@ -206,6 +299,27 @@ class FrappeSyncLedger:
             doc.save()
             self.commit()
             return doc.state
+
+    def recover_scheduled_run(self, site):
+        """Close only a committed scheduler receipt whose owning session is gone."""
+        frappe = self._scope(site)
+        rows = frappe.get_all(self.RUN, filters={"site_scope": site, "state": "RUNNING",
+                              "automatic": 1}, pluck="name", limit_page_length=2)
+        if len(rows) != 1:
+            return False
+        run_id = rows[0]
+        try:
+            with self.execution_lease(run_id):
+                doc = frappe.get_doc(self.RUN, run_id, for_update=True)
+                if (doc.state != "RUNNING" or not doc.automatic or doc.site_scope != site
+                        or doc.sync_run_id != run_id):
+                    return False
+                doc.state = "ABORTED"
+                doc.save()
+                self.commit()
+                return True
+        except SyncConflict:
+            return False  # Another worker owns this database session lease.
 
     def commit(self):
         db = self._frappe().db
@@ -303,7 +417,12 @@ class FrappeBoundIndex:
                              parent.site_scope.as_("parent_site"), parent.source_instance.as_("parent_source"))
         if identities is not None:
             from pypika.terms import Function
-            query = query.where(Function("HEX", parent.external_object_id).isin([i.encode().hex().upper() for i in identities]))
+            # Use the source ID index for candidates and keep the exact byte comparison
+            # for databases with case- or accent-insensitive collations.
+            ids = tuple(identities)
+            query = query.where(parent.external_object_id.isin(ids)).where(
+                Function("HEX", parent.external_object_id).isin([i.encode().hex().upper() for i in ids])
+            )
         result = []
         for row in query.orderby(field.identity_key).run(as_dict=True):
             if row.parent_site != site_scope or row.parent_source != source_instance or not row.external_object_id:
@@ -357,6 +476,47 @@ class FrappeBoundProcessor:
                                             "outcome": "FIELD_CONFLICT"})
         return SyncStatus.CONFLICT if open_review else True
 
+    def record_inventory_gap(self, run, identity, reason, row):
+        """Keep a redacted receipt for an identity that the current plan cannot apply."""
+        key = sha256(json.dumps(["inventory-review", run.site_scope, run.source_instance,
+            self.contract_fingerprint, identity, reason]).encode()).hexdigest()
+        frappe = self._frappe()
+        from hero_integration.services.offset_pagination import fingerprint, inventory_evidence
+        version = fingerprint(inventory_evidence(row))
+        previous = frappe.db.get_value(self.EVENT, key, ["name", "source_version"], as_dict=True, for_update=True)
+        if previous:
+            if previous.source_version != version:
+                frappe.db.set_value(self.EVENT, key, {"source_version": version, "run_id": run.run_id})
+        else:
+            frappe.get_doc({"doctype": self.EVENT, "event_id": key, "source_version": version, "site_scope": run.site_scope,
+                "source_instance": run.source_instance, "object_type": self.object_type, "external_id": identity,
+                "mapping_name": self.mapping_name, "mapping_revision": self.mapping_revision,
+                "run_id": run.run_id, "outcome": "DEFERRED",
+                "field_changes": json.dumps({"reason": reason})}).insert(ignore_permissions=True)
+
+    def record_deferred(self, identity, fields, event_key, error):
+        """Expose an isolated native validation failure on the existing run history."""
+        frappe = self._frappe()
+        first = fields[0].binding
+        event_id = self._event_id(identity, event_key, fields)
+        if not frappe.db.exists(self.EVENT, event_id):
+            frappe.get_doc({"doctype": self.EVENT, "event_id": event_id, "site_scope": first.site_scope,
+                "source_instance": first.source_instance, "object_type": self.object_type, "external_id": identity,
+                "object_binding": first.object_binding_key, "mapping_name": self.mapping_name,
+                "mapping_revision": self.mapping_revision, "run_id": self.run_id, "outcome": "DEFERRED",
+                "field_changes": json.dumps({"reason": type(error).__name__})}).insert(ignore_permissions=True)
+
+    def is_record_error(self, error):
+        frappe = self._frappe()
+        transient = tuple(exc for name in ("QueueOverloaded", "TimestampMismatchError", "QueryDeadlockError",
+            "QueryTimeoutError") if isinstance(exc := getattr(frappe, name, None), type))
+        return not isinstance(error, transient) and isinstance(error, (SyncConflict, frappe.ValidationError, frappe.DoesNotExistError))
+
+    def is_inventory_record_error(self, error):
+        from hero_integration.services.binding_registry import BindingConflict
+        from hero_integration.services.file_transfer import FileConflict, FileRelationshipError
+        return self.is_record_error(error) or isinstance(error, (NativeTaskWriteDenied, BindingConflict, FileConflict, FileRelationshipError))
+
     def durable_conflict(self, identity, event_key, fields):
         return self._frappe().db.get_value(self.EVENT, self._event_id(identity, event_key, fields), "outcome") == "CONFLICT"
 
@@ -377,28 +537,65 @@ class FrappeBoundProcessor:
         from hero_integration.services.direct_mapping import SYSTEM_FIELDS
 
         field = target.meta.get_field(spec.target_field)
-        return (spec.target_doctype == target.doctype and spec.purpose == "Field" and not spec.relation
-                and spec.transformation in {"Trim", "Identity", "Scalar Text", "Positive Int To Text", "Local Date",
-                                            "Local Datetime", "Number", "Integer", "Value Map"}
+        display_name = ((target.doctype, spec.target_field, spec.source_path) in {
+            ("Customer", "customer_name", "full_name"), ("Task", "subject", "title")}
+            and spec.purpose == "Record Name" and spec.transformation in {"Trim", "Identity"})
+        from hero_integration.services.native_projections import is_native_event_title
+        event_subject = is_native_event_title(spec)
+        file_label = (target.doctype == "File" and spec.operation in {"HeroDocuments", "HeroPictures"}
+                      and (spec.source_path, spec.target_field, spec.purpose, spec.transformation)
+                      == ("filename", "file_name", "Record Name", "Trim") and field and field.fieldtype == "Data")
+        notes = (target.doctype == "Project" and spec.target_field == "notes" and spec.source_path == "partner_notes"
+                 and spec.transformation in {"Plain Text To HTML", "Safe HTML"} and field and field.fieldtype == "Text Editor")
+        editor = (spec.purpose == "Native Binding" and spec.transformation == "Safe HTML"
+                  and field and field.fieldtype == "Text Editor")
+        return (spec.target_doctype == target.doctype and (spec.purpose == "Field" or display_name or event_subject or editor or file_label) and not spec.relation
+                and (notes or editor or event_subject or spec.transformation in {"Trim", "Identity", "Scalar Text", "Positive Int To Text", "Local Date",
+                                            "Local Datetime", "Number", "Integer", "Value Map"})
                 and spec.target_field not in SYSTEM_FIELDS
+                and (spec.target_field != "file_name" or file_label)
                 and spec.target_field not in {"custom_hero_source_id", "custom_hero_customer_number",
-                    "custom_hero_project_number", "custom_hero_due_date", "item_code", "file_name", "user_id"}
+                    "custom_hero_project_number", "custom_hero_due_date", "item_code", "user_id"}
                 and target.doctype != "User" and field and not field.is_virtual and not field.fetch_from
-                and (not field.read_only or spec.target_field.startswith("custom_hero_"))
-                and field.fieldtype in {"Data", "Small Text", "Text", "Long Text", "Select", "Int", "Float",
-                                        "Currency", "Check", "Date", "Datetime", "Time"}
+                and (not field.read_only or file_label or spec.target_field.startswith("custom_hero_"))
+                and (notes or editor or field.fieldtype in {"Data", "Small Text", "Text", "Long Text", "Select", "Int", "Float",
+                                        "Currency", "Check", "Date", "Datetime", "Time"})
                 and int(field.permlevel or 0) in target.get_permlevel_access("write"))
 
     @staticmethod
     def project_scalar(plan, spec, record, source):
         from hero_integration.services.query_mapping import mapped_values
 
+        from hero_integration.services.native_projections import _event_subject, is_native_event_title
+        if is_native_event_title(spec):
+            return _event_subject(record, creating=False) or None
+        if (not plan.adapter_options and (plan.target_operation or plan.operation) == "HeroTasks"
+                and (spec.purpose, spec.source_path, spec.target_doctype, spec.target_field) == ("Record Name", "title", "Task", "subject")
+                and spec.transformation == "Trim"):
+            # Legacy native Task intake accepts a partial row. Its subject does
+            # not depend on unrelated display/projection members.
+            from hero_integration.services.native_projections import _text
+            value = record.get("title")
+            if value is None or isinstance(value, str) and not value.strip():
+                return None
+            return _text(value, "Task title", required=True, limit=140)
+        if spec.purpose == "Record Name" and sum(rule.target_doctype == spec.target_doctype
+                and rule.target_field == spec.target_field for rule in plan.definitions) != 1:
+            return None
         single = replace(plan, definitions=(spec,))
         scoped = dict(record, _hero_source_instance=source)
         values = (mapped_values(single, scoped, allow_partial=True, target_doctype=spec.target_doctype)
                   if plan.adapter_options else single.values(scoped, allow_partial=True))
         value = values.get(spec.target_field)
         return None if value is None or value == "" or isinstance(value, (dict, list)) else value
+
+    @staticmethod
+    def _nullable_source_observation(spec, record, native_value):
+        from hero_integration.services.direct_mapping import lookup
+
+        if spec.purpose != "Field" or "|null" not in spec.source_type or lookup(record, spec.source_path) is not None:
+            return None
+        return "UNCHANGED_EMPTY" if native_value in (None, "") else "SOURCE_EMPTY_RETAINED"
 
     def process(self, record, fields):
         # Compatibility with pre-release direct callers that have no run envelope.
@@ -425,6 +622,7 @@ class FrappeBoundProcessor:
         blocked = False
         incomplete = False
         owners = {}
+        parents = {}
         from hero_integration.services.execution_runtime import link_source_type, locked_provenance
         source_type = link_source_type(plan.target_operation or plan.operation)
         from hero_integration.services.binding_registry import verify_incarnation
@@ -439,9 +637,13 @@ class FrappeBoundProcessor:
         pending = {}
         protected = {}
         equal_reviews = []
+        local_transitions = {}
         destinations = set()
         for field in sorted(fields,key=lambda item:item.binding.identity_key):
-            parent = storage.object(first.site_scope, field.binding.object_binding_key, for_update=True)
+            parent_key = field.binding.object_binding_key
+            if parent_key not in parents:
+                parents[parent_key] = storage.object(first.site_scope, parent_key, for_update=True)
+            parent = parents[parent_key]
             bound = storage.field(first.site_scope, field.binding.identity_key, for_update=True)
             if (not parent or not bound or bound.object_binding_key != parent.identity_key or parent.lifecycle != "VALID" or parent.reconciliation
                     or parent.mapping_definition_id not in {plan.binding_contract.definition_id, *self.definition_ids}):
@@ -463,9 +665,13 @@ class FrappeBoundProcessor:
             if target_key not in targets:
                 if not source_type:
                     raise SyncConflict("Missing source identity contract for the native target.")
-                from hero_integration.services.binding_registry import BindingConflict
+                from hero_integration.services.binding_registry import BindingConflict, PendingOutbound
                 try:
+                    from hero_integration.services.execution_runtime import require_clear_outbound
+                    require_clear_outbound(frappe, first.site_scope, first.source_instance, *target_key)
                     link = locked_provenance(first.source_instance, source_type, identity, bound.target_doctype)
+                except PendingOutbound:
+                    return SyncStatus.PARTIAL
                 except BindingConflict as error:
                     raise SyncConflict(str(error)) from error
                 if link and (link.target_name != bound.target_name or link.sync_status != "Synchronized"):
@@ -489,11 +695,41 @@ class FrappeBoundProcessor:
                 targets[target_key] = (target,{})
             target,updates = targets[target_key]
             supported = self.supports_scalar(spec, target)
-            projected = self.project_scalar(plan, spec, record, bound.source_instance) if supported else None
+            from hero_integration.services import task_hierarchy
+            try:
+                business_record = task_hierarchy.clean_record(record, bound)
+            except task_hierarchy.ProjectionConflict as error:
+                record_field_conflict(parent, bound, target, record["comment"], record, run=self.run_id,
+                                      mapping=self.mapping_name, projection_issue=str(error))
+                protected[target_key, bound.target_field] = native_fingerprint(target.get(bound.target_field),
+                    target.meta.get_field(bound.target_field).fieldtype)
+                changes.append({"binding": bound.identity_key, "field": bound.target_field, "action": "FIELD_CONFLICT"})
+                blocked = True
+                continue
+            projected = self.project_scalar(plan, spec, business_record, bound.source_instance) if supported else None
+            if (supported and "comment" in record and task_hierarchy.is_description(bound) and not target.get("parent_task")
+                    and bound.state == BindingState.SYNCHRONIZED and bound.identity_key not in pending
+                    and plan.permits_manual_outbound(spec)):
+                section = task_hierarchy.section_for(frappe, target.name)
+                if ((task_hierarchy.section_proof(section) or {}).get("sha256")
+                        != (task_hierarchy.confirmed(bound) or {}).get("sha256")):
+                    local_transitions.setdefault(target_key, {})[bound.target_field] = (
+                        task_hierarchy.section_proof(section), native_fingerprint(target.get(bound.target_field), target.meta.get_field(bound.target_field).fieldtype),
+                        bound.acknowledged_version)
             if projected is None:
-                incomplete = True
-                changes.append({"binding": bound.identity_key, "field": bound.target_field,
-                                "action": "OMITTED" if supported else "UNSUPPORTED"})
+                action = "OMITTED" if supported else "UNSUPPORTED"
+                if (supported and bound.state == BindingState.SYNCHRONIZED and bound.identity_key not in pending
+                        and plan.permits_inbound(spec)):
+                    value = target.get(bound.target_field)
+                    empty_observation = self._nullable_source_observation(spec, business_record, value)
+                    if empty_observation:
+                        # The existing mapping comparison does not clear fields on
+                        # an empty response. Preserve both native value and baseline.
+                        action = empty_observation
+                        fieldtype = target.meta.get_field(bound.target_field).fieldtype
+                        protected[target_key, bound.target_field] = native_fingerprint(value, fieldtype)
+                incomplete |= action != "UNCHANGED_EMPTY"
+                changes.append({"binding": bound.identity_key, "field": bound.target_field, "action": action})
                 continue
             fieldtype = target.meta.get_field(bound.target_field).fieldtype
             source_fp = native_fingerprint(projected, fieldtype)
@@ -507,6 +743,10 @@ class FrappeBoundProcessor:
                 changes.append({"binding": bound.identity_key, "field": bound.target_field, "action": "REVIEW_MAPPING"})
                 continue
             review = pending.get(bound.identity_key)
+            if (review and not review.resolution_json and decision in {"UNCHANGED", "CONFIRM_EQUAL"}
+                    and task_hierarchy.confirmed(bound) and json.loads(review.field_changes).get("projection_issue")):
+                equal_reviews.append(pending.pop(bound.identity_key).name)
+                review = None
             if review and review.resolution_json:
                 blocked = True
                 protected[target_key, bound.target_field] = previous
@@ -521,7 +761,17 @@ class FrappeBoundProcessor:
                 continue
             if decision == "CONFIRM_EQUAL" and bound.identity_key in pending:
                 equal_reviews.append(pending.pop(bound.identity_key).name)
-            if decision in {"KEEP_LOCAL", "UNCHANGED"}:
+            if decision == "APPLY_SOURCE" and not plan.permits_inbound(spec):
+                protected[target_key, bound.target_field] = previous
+                continue
+            if decision == "KEEP_LOCAL":
+                # Bulk writes and db.set_value can bypass all native Document hooks.
+                if plan.permits_manual_outbound(spec):
+                    local_transitions.setdefault(target_key, {})[bound.target_field] = (
+                        bound.acknowledged_target_fingerprint, previous, bound.acknowledged_version)
+                protected[target_key, bound.target_field] = previous
+                continue
+            if decision == "UNCHANGED":
                 continue
             if decision == "CONFIRM_EQUAL" and source_fp == bound.acknowledged_source_fingerprint and previous == bound.acknowledged_target_fingerprint:
                 continue
@@ -534,6 +784,10 @@ class FrappeBoundProcessor:
             changes.append({"binding":bound.identity_key,"doctype":bound.target_doctype,"name":bound.target_name,
                             "field":bound.target_field,"previous_source":bound.acknowledged_source_fingerprint,
                             "previous_target":previous,"new_source":source_fp,"action":decision})
+        from hero_integration.services.change_detection import record_local_transition
+        for key, transitions in local_transitions.items():
+            record_local_transition(targets[key][0], owners[key][0], first.source_instance,
+                                    identity, self.object_type, transitions, recovered=True)
         updated_documents = sum(bool(updates) for _, updates in targets.values())
         for target_key in sorted(targets):
             target,updates = targets[target_key]
@@ -541,7 +795,12 @@ class FrappeBoundProcessor:
                 target.update(updates)
                 binding_owner, link_owner = owners[target_key]
                 with managed_target_update(*target_key, binding_owner), managed_target_update(*target_key, link_owner):
-                    target.save()
+                    try:
+                        target.save()
+                    except frappe.PermissionError as error:
+                        if event_key[0] != "inventory" or target.doctype != "Task" or plan.target_operation != "HeroTasks":
+                            raise
+                        raise NativeTaskWriteDenied(target.name, updates) from error
         verified_targets = {key: frappe.get_doc(*key, for_update=True) if updates else target
                             for key, (target, updates) in targets.items()}
         for (target_key, field), prior in protected.items():
@@ -581,9 +840,13 @@ def scheduler_due(configuration:PollingConfiguration, elapsed_seconds:object)->b
 
 class SyncEngine:
     def __init__(self, ledger:SyncLedger, plan:MaterializedReadPlan, provider:ChangeProvider,
-                 index:BoundIndex, processor:BoundProcessor, *, reserve_identity=None,
-                 revalidate=None, object_type=None):
+                 index:BoundIndex, processor:BoundProcessor, *, reserve_identity=None, select_bound=None,
+                 revalidate=None, object_type=None, bound_workers=1, inventory=None, inventory_pages=1):
+        self.inventory = inventory
+        self.inventory_pages = inventory_pages
+        self.bound_workers = bound_workers
         self.ledger,self.plan,self.provider,self.index,self.processor=ledger,plan,provider,index,processor
+        self.select_bound=select_bound
         self.reserve_identity=reserve_identity
         self.revalidate=revalidate
         self.object_type=object_type
@@ -599,7 +862,8 @@ class SyncEngine:
                                   interval_seconds=configuration.interval_seconds) == configuration
             return self.ledger.save_state(SyncState(configuration,prior.cursor if same_reader else None,
                 prior.coverage if same_reader else (),SyncStatus.RECONCILIATION_REQUIRED,
-                prior.generation+1,"configuration changed",prior.bounded_after if same_reader else None),prior.generation)
+                prior.generation+1,"configuration changed",prior.bounded_after if same_reader else None,
+                prior.inventory_checkpoint if same_reader else None),prior.generation)
         return self.ledger.save_state(SyncState(configuration),expected)
     def poll(self, run:SyncRun):
         state=self._state(run)
@@ -610,10 +874,13 @@ class SyncEngine:
         state=self._state(run)
         if run.automatic: raise SyncError("Pending Sync requires explicit initiation.")
         return self._execute(run,state)
-    def compare_bound(self,run):
-        if run.automatic or self.reserve_identity is None:
-            raise SyncError("Known-object comparison requires a budgeted manual run.")
-        return self._execute(run,self._state(run),bounded=True)
+    def compare_bound(self, run):
+        state = self._state(run)
+        if run.automatic and not state.configuration.enabled:
+            return replace(state, status=SyncStatus.DISABLED, diagnostic="polling disabled")
+        if not run.automatic and self.reserve_identity is None:
+            raise SyncError("Manual known-object comparison requires a budget.")
+        return self._execute(run, state, bounded=True)
 
     def _state(self,run):
         state=self.ledger.state(run.site_scope)
@@ -634,6 +901,7 @@ class SyncEngine:
         processed = skipped = rows_read = 0
         saw_conflict = False
         unresolved_input = False
+        partial_records = False
         outcome = SyncStatus.FAILED
 
         def checkpoint_record(bounded_id=None):
@@ -654,6 +922,27 @@ class SyncEngine:
             return self._incomplete(state, status, diagnostic)
 
         try:
+            if self.inventory and run.automatic and run.execution_scope == "INVENTORY":
+                for page_number in range(self.inventory_pages):
+                    if page_number and self.inventory[2]:
+                        self.inventory[2].begin_page()
+                    updated, accepted, deferred, received = self._inventory_slice(state, run)
+                    rows_read += received
+                    if not updated.inventory_checkpoint or page_number + 1 == self.inventory_pages:
+                        # finish() commits this last page and its counters together.
+                        processed += accepted
+                        skipped += deferred
+                        outcome = updated.status
+                        return updated
+                    # A lost worker resumes after the last committed page, together
+                    # with the local changes, deferred references and durable receipts.
+                    progress = getattr(self.ledger, "progress", None)
+                    if progress:
+                        progress(run, processed + accepted, skipped + deferred, rows_read)
+                    commit()
+                    state = updated
+                    processed += accepted
+                    skipped += deferred
             caps = self._provider_capabilities()
             if bounded and (not caps.bounded_comparison or not callable(getattr(self.provider, "read_bound", None))):
                 return stop(SyncStatus.INCOMPLETE, "provider lacks an approved identity reader")
@@ -679,6 +968,8 @@ class SyncEngine:
                 identities = (self.index.identities(run.site_scope, source, after=state.bounded_after) if page_fields and state.bounded_after else
                               self.index.identities(run.site_scope, source) if page_fields
                               else (key for key in sorted(by_object) if not state.bounded_after or key > state.bounded_after))
+                if self.select_bound:
+                    identities = self.select_bound(identities)
             commit()
             cursor = state.cursor
             seen_cursors = {cursor}
@@ -686,9 +977,13 @@ class SyncEngine:
             identity_path = self.plan.sealed.contract.identity_path.split(".")
             while True:
                 if bounded:
-                    bound_id = next(identities, None)
-                    if bound_id is None:
+                    from itertools import islice
+                    width = self.bound_workers
+                    batch = tuple(islice(identities, width))
+                    if not batch:
                         state = replace(state, bounded_after=None)
+                        if partial_records:
+                            return stop(SyncStatus.PARTIAL, "some bound identities need another comparison")
                         if reviews_remain():
                             return stop(SyncStatus.CONFLICT, "one or more bound objects require review")
                         if processed + skipped == 0:
@@ -696,14 +991,14 @@ class SyncEngine:
                         if self.revalidate:
                             self.revalidate()
                         return stop(SyncStatus.BOUNDED_COMPLETE, "reviewed existing identities compared; global cursor unchanged")
-                    page = ChangePage(({"id":bound_id},),None,False)
+                    page = ChangePage(tuple({"id": identity} for identity in batch),None,False)
                 else:
                     if self.revalidate:
                         self.revalidate()
                         commit()  # Never span a remote read with Frappe evidence/target locks.
                     page = self._changes(cursor)
                     rows_read += len(page.records)
-                if len(page.records) > self.plan.sealed.contract.page_size:
+                if not bounded and len(page.records) > self.plan.sealed.contract.page_size:
                     return stop(SyncStatus.INCOMPLETE, "provider exceeded approved page size")
                 if page.next_cursor is not None and (not page.next_cursor or page.next_cursor in seen_cursors):
                     return stop(SyncStatus.PARTIAL, "repeated cursor")
@@ -715,13 +1010,44 @@ class SyncEngine:
                         if field.binding.mapping_revision != state.configuration.mapping_revision:
                             return stop(SyncStatus.RECONCILIATION_REQUIRED, "bound field mapping revision changed")
                         by_object.setdefault(field.object_id, []).append(field)
+                fetched = {}
+                denied = None
+                batch_read = bounded and (width > 1 or run.automatic and hasattr(self.provider, "read_many"))
+                if batch_read:
+                    # Reserve only the admitted prefix; a budget lookahead must
+                    # never become a remote request. Existing receipts need no read.
+                    needed = []
+                    receipt = getattr(self.processor, "accepted", None)
+                    for identity in batch:
+                        if self.reserve_identity and not self.reserve_identity(self.object_type, identity):
+                            denied = identity
+                            break
+                        fields = tuple(by_object.get(identity, ()))
+                        if not fields:
+                            continue
+                        if not receipt or not receipt(identity, ("bound", run.run_id), fields):
+                            needed.append(identity)
+                    if self.revalidate:
+                        self.revalidate()
+                    commit()
+                    if needed:
+                        fetched = (self.provider.read_many(needed, allow_missing=True) if run.automatic
+                                   else self.provider.read_many(needed))
                 for position,record in enumerate(page.records):
                     fast = getattr(self.provider, "detail_for", None)
                     identity = _identity(record) if (bounded or fast) else _identity(record, identity_path)
-                    if self.reserve_identity and not self.reserve_identity(self.object_type, identity):
-                        return stop(SyncStatus.BUDGET_REACHED, "global test budget exhausted")
+                    if identity == denied or (self.reserve_identity and not batch_read
+                                              and not self.reserve_identity(self.object_type, identity)):
+                        if run.automatic and not run.testing_max_actions:
+                            return stop(SyncStatus.PARTIAL, "scheduled comparison continues from the last examined identity")
+                        return stop(SyncStatus.BUDGET_REACHED, "configured test budget exhausted")
                     selected = tuple(by_object.get(identity, ()))
                     if not selected:
+                        if bounded and run.automatic:
+                            skipped += 1
+                            partial_records = True
+                            checkpoint_record(identity)
+                            continue
                         if bounded:
                             return stop(SyncStatus.PARTIAL, "bound identity changed during comparison")
                         skipped += 1
@@ -745,7 +1071,13 @@ class SyncEngine:
                         self.revalidate()
                     commit()
                     if bounded:
-                        record = self.provider.read_bound(identity)
+                        record = fetched.get(identity) if batch_read else self.provider.read_bound(identity)
+                        if run.automatic and batch_read and record is None:
+                            # Absence from one approved read never authorizes deletion.
+                            partial_records = True
+                            skipped += 1
+                            checkpoint_record(identity)
+                            continue
                         rows_read += 1
                         if not isinstance(record, Mapping) or _identity(record, identity_path) != identity:
                             return stop(SyncStatus.INCOMPLETE, "identity reader returned unexpected identity")
@@ -757,8 +1089,21 @@ class SyncEngine:
                     if self.revalidate:
                         self.revalidate()
                     apply = getattr(self.processor, "process_event", None)
-                    result = (apply(record, selected, event_key, version) if apply else
-                              self.processor.process(record, selected))
+                    try:
+                        result = (apply(record, selected, event_key, version) if apply else
+                                  self.processor.process(record, selected))
+                    except Exception as error:
+                        if not (bounded and run.automatic and getattr(self.processor, "is_record_error",
+                                lambda exc: False)(error)):
+                            raise
+                        rollback()
+                        if self.revalidate:
+                            self.revalidate()
+                        self.processor.record_deferred(identity, selected, event_key, error)
+                        partial_records = True
+                        skipped += 1
+                        checkpoint_record(identity)
+                        continue
                     if result == SyncStatus.CONFLICT:
                         saw_conflict = True
                         confirmed = getattr(self.processor, "durable_conflict", None)
@@ -768,6 +1113,11 @@ class SyncEngine:
                         else:
                             unresolved_input = True
                             checkpoint_record()
+                        continue
+                    if result == SyncStatus.PARTIAL and bounded and run.automatic:
+                        partial_records = True
+                        skipped += 1
+                        checkpoint_record(identity)
                         continue
                     if result == SyncStatus.PARTIAL:
                         return stop(SyncStatus.PARTIAL, "bound record omitted a required or supported field")
@@ -800,15 +1150,124 @@ class SyncEngine:
             rollback()
             outcome = SyncStatus.INCOMPLETE
             raise
-        except Exception:
+        except Exception as error:
             rollback()  # Discard target changes and queued Frappe after_commit callbacks.
-            return stop(SyncStatus.FAILED, "redacted provider or local failure")
+            # Persist the failure class and innermost application frame without record values.
+            frame = error.__traceback__
+            origin = ""
+            while frame:
+                if frame.tb_frame.f_globals.get("__name__", "").startswith("hero_integration."):
+                    origin = f" in {frame.tb_frame.f_code.co_name}:{frame.tb_lineno}"
+                frame = frame.tb_next
+            return stop(SyncStatus.FAILED, f"{type(error).__name__}{origin}")
         finally:
             if finish:
                 finish(run, outcome, processed, skipped, rows_read)
                 commit()
             else:
                 self.ledger.release(run)
+    def _inventory_slice(self, state, run):
+        """A mutable collection has page positions, never a complete delta watermark."""
+        from contextlib import ExitStack
+        with ExitStack() as cleanup:
+            return self._apply_inventory_slice(state, run, cleanup)
+
+    def _apply_inventory_slice(self, state, run, cleanup):
+        size, overlap, onboard = self.inventory
+        previous = state.inventory_checkpoint or {}
+        self.revalidate()
+        self.ledger.commit()
+        from hero_integration.services.offset_pagination import InventoryWindowMoved
+        try:
+            page = self.provider.inventory_page(previous, size, overlap)
+            if onboard and getattr(onboard, "file_configuration", None):
+                onboard.prepare_file_blobs(page.rows, cleanup)
+        except InventoryWindowMoved:
+            self.ledger.rollback()
+            self.revalidate()
+            updated = self.ledger.save_state(replace(state, inventory_checkpoint=None,
+                status=SyncStatus.PARTIAL, diagnostic="Inventory overlap moved; restarting the collection.",
+                generation=state.generation + 1), state.generation)
+            return updated, 0, 0, 0
+        self.ledger.rollback()
+        self.revalidate()
+        contract = self.plan.sealed.contract
+        source = state.configuration.source_instance
+        ids = [_identity(row, contract.identity_path.split(".")) for row in page.rows]
+        by_object = {}
+        for field in self.index.fields_for_ids(run.site_scope, source, ids):
+            by_object.setdefault(field.object_id, []).append(field)
+        processed = skipped = 0
+        gaps = previous.get("gaps", False)
+        conflicts = previous.get("conflicts", False)
+        for identity, row in zip(ids, page.rows, strict=True):
+            if self.reserve_identity and not self.reserve_identity(self.object_type, identity):
+                raise SyncError("Inventory page exceeded its admitted budget.")
+            fields = tuple(by_object.get(identity, ()))
+            boundary = getattr(self.ledger, "inventory_record", None)
+            origin = onboard.origin if onboard and boundary else None
+            counters = {key: origin.get(key) for key in ("processed", "created_records", "skipped_records", "conflict_records")} if origin else {}
+            try:
+                with boundary(self.processor.is_inventory_record_error) if boundary else nullcontext():
+                    if any(field.binding.mapping_revision != state.configuration.mapping_revision for field in fields):
+                        if not onboard or not onboard.carry_employee_revision(row):
+                            raise SyncConflict("Bound field mapping revision changed.")
+                        fields = self.index.fields_for_ids(run.site_scope, source, [identity])
+                        if any(field.binding.mapping_revision != state.configuration.mapping_revision for field in fields):
+                            raise SyncConflict("Bound field mapping revision changed.")
+                    result = self.processor.process_event(row, fields, ("inventory", run.run_id), "") if fields else True
+                    if onboard and result in (True, SyncStatus.PARTIAL, SyncStatus.CONFLICT):
+                        if result == SyncStatus.CONFLICT:
+                            # A review protects its own fields; independently approved
+                            # child relations still use the normal migration write fence.
+                            onboard.reconcile(row, identity, fields, require_existing_owner=True)
+                            onboard.has_conflicts = True
+                        else:
+                            domain_result = onboard.reconcile(row, identity, fields)
+                            if domain_result is not True:
+                                result = domain_result
+                    elif not fields or (not onboard and contract.adapter_options and result is True):
+                        # Scalar receipts cannot certify an unprocessed domain adapter or its child relations.
+                        result = SyncStatus.PARTIAL
+            except Exception as error:
+                if not boundary or not self.processor.is_inventory_record_error(error):
+                    raise
+                if onboard:
+                    onboard.origin = origin
+                    if origin:
+                        origin.update(counters)
+                if isinstance(error, NativeTaskWriteDenied):
+                    if not onboard:
+                        raise
+                    onboard.defer_task_write(row, identity, error)
+                self.processor.record_inventory_gap(run, identity, type(error).__name__, row)
+                gaps = True
+                skipped += 1
+                continue
+            if result == SyncStatus.CONFLICT:
+                conflicts = True
+            elif result is not True:
+                gaps = True
+                self.processor.record_inventory_gap(run, identity, "pending_mapping_or_dependency" if fields or onboard
+                                                    else "no_admitted_binding_or_backfill", row)
+                skipped += 1
+                continue
+            processed += 1
+        if onboard:
+            onboard.finish()
+        if page.next_offset is None:
+            status = SyncStatus.CONFLICT if conflicts else SyncStatus.PARTIAL if gaps else SyncStatus.BOUNDED_COMPLETE
+            checkpoint = None
+            detail = INVENTORY_PASS_ENDED
+        else:
+            status = SyncStatus.PARTIAL
+            checkpoint = {**page.checkpoint, "gaps": gaps, "conflicts": conflicts}
+            detail = INVENTORY_PAGE_PROCESSED
+        # One transaction owns the entire page, native changes, receipts and position.
+        updated = self.ledger.save_state(replace(state, inventory_checkpoint=checkpoint,
+            status=status, diagnostic=detail, generation=state.generation + 1), state.generation)
+        return updated, processed, skipped, page.checkpoint.get("source_rows_read", page.checkpoint["count"])
+
     def _provider_capabilities(self): return self.provider.capabilities
     def _changes(self,cursor): return self.provider.changes(cursor)
     def _incomplete(self,state,status,diagnostic): return self.ledger.save_state(replace(state,status=status,diagnostic=diagnostic,generation=state.generation+1),state.generation)
@@ -831,7 +1290,10 @@ def sync_hero_eligibility(intent:OutboundIntent)->Eligibility:
     if binding.mapping_revision!=intent.mapping_revision: return Eligibility.MAPPING_CHANGED
     if binding.state is BindingState.MAPPING_CHANGED: return Eligibility.MAPPING_CHANGED
     if binding.state in {BindingState.RECONCILIATION_REQUIRED, BindingState.REMOTE_CHANGED}: return Eligibility.RECONCILIATION_REQUIRED
-    if not intent.local_fingerprint or binding.acknowledged_target_fingerprint!=intent.local_fingerprint: return Eligibility.LOCAL_CHANGED
+    if (not binding.acknowledged_source_fingerprint or not binding.acknowledged_target_fingerprint
+            or not intent.local_fingerprint or binding.state is BindingState.UNACKNOWLEDGED):
+        return Eligibility.RECONCILIATION_REQUIRED
+    if binding.acknowledged_target_fingerprint != intent.local_fingerprint: return Eligibility.LOCAL_CHANGED
     return Eligibility.NOT_ELIGIBLE
 
 def execute_sync_hero(intent:OutboundIntent, approval:OutboundApproval, transport:OneShotTransport, bindings:BindingRegistryService)->FieldBinding:
@@ -860,8 +1322,8 @@ def _assign(doc,values):
     for key,value in values.items(): setattr(doc,key,value)
 def _state_payload(state,*,doctype=True):
     config={key:getattr(state.configuration,key) for key in state.configuration.__dataclass_fields__}
-    fields={"site_scope":state.configuration.site_scope,"configuration_json":json.dumps(config,sort_keys=True,separators=(",",":")),"cursor":state.cursor or "","bounded_after":state.bounded_after,"coverage_json":json.dumps(state.coverage),"status":state.status.value,"generation":state.generation,"diagnostic":state.diagnostic}
+    fields={"site_scope":state.configuration.site_scope,"configuration_json":json.dumps(config,sort_keys=True,separators=(",",":")),"cursor":state.cursor or "","inventory_checkpoint_json":json.dumps(state.inventory_checkpoint) if state.inventory_checkpoint else None,"bounded_after":state.bounded_after,"coverage_json":json.dumps(state.coverage),"status":state.status.value,"generation":state.generation,"diagnostic":state.diagnostic}
     return ({"doctype":FrappeSyncLedger.STATE,"name":state.configuration.site_scope}|fields) if doctype else fields
 def _state_from_doc(doc):
-    try: return SyncState(PollingConfiguration(**json.loads(doc.configuration_json)),doc.cursor or None,tuple(json.loads(doc.coverage_json or "[]")),SyncStatus(doc.status),int(doc.generation or 0),doc.diagnostic or "",getattr(doc,"bounded_after",None) or None)
+    try: return SyncState(PollingConfiguration(**json.loads(doc.configuration_json)),doc.cursor or None,tuple(json.loads(doc.coverage_json or "[]")),SyncStatus(doc.status),int(doc.generation or 0),doc.diagnostic or "",getattr(doc,"bounded_after",None) or None,json.loads(getattr(doc,"inventory_checkpoint_json",None) or "null"))
     except (AttributeError,TypeError,ValueError,json.JSONDecodeError) as error: raise SyncError("Persistent sync state is malformed.") from error

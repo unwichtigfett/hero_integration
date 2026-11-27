@@ -55,6 +55,7 @@ class Frappe:
         self.documents, self.calls, self.reads, self.exposed = {}, [], [], []
         self.candidates = {}
         self.denied_lists = set()
+        self.event_has_hero_project = False
         self.add(Document("Project", "PROJECT-1", customer="CUSTOMER-1"))
 
     def add(self, document):
@@ -87,6 +88,10 @@ class Frappe:
         rows = self.candidates.get(doctype, [])
         start, size = kwargs.get("limit_start", 0), kwargs["limit_page_length"]
         return [{"name": name} for name in rows[start:start + size]]
+
+    def get_meta(self, doctype):
+        assert doctype == "Event"
+        return SimpleNamespace(has_field=lambda field: field == "custom_hero_project" and self.event_has_hero_project)
 
 
 def load(fake):
@@ -249,7 +254,23 @@ class ProjectWorkspaceTests(unittest.TestCase):
         self.assertEqual(self.fake.calls[-1][1]["or_filters"], [
             ["Event", "reference_docname", "=", "PROJECT-1"],
             ["Dynamic Link", "link_name", "=", "PROJECT-1"],
+            ["Event Participants", "reference_docname", "=", "PROJECT-1"],
         ])
+
+    def test_event_lookup_includes_native_participants_and_optional_hero_project_link(self):
+        self.fake.event_has_hero_project = True
+        self.candidate("Event", "PARTICIPANT",
+            event_participants=[{"reference_doctype": "Project", "reference_docname": "PROJECT-1"}],
+            repeat_this_event=1, repeat_on="Weekly", monday=1)
+        self.candidate("Event", "MIGRATED", custom_hero_project="PROJECT-1")
+        self.candidate("Event", "OTHER",
+            event_participants=[{"reference_doctype": "Customer", "reference_docname": "PROJECT-1"}])
+        self.candidate("Event", "PROTECTED", protected=("custom_hero_project",), custom_hero_project="PROJECT-1")
+        rows = self.panel("appointments")["rows"]
+        self.assertEqual([row["name"] for row in rows], ["PARTICIPANT", "MIGRATED"])
+        self.assertEqual((rows[0]["repeat_on"], rows[0]["monday"]), ("Weekly", 1))
+        self.assertEqual(rows[0]["participants"], [])
+        self.assertIn(["Event", "custom_hero_project", "=", "PROJECT-1"], self.fake.calls[-1][1]["or_filters"])
 
     def test_todo_assignments_are_not_project_membership_or_task_assignments(self):
         self.candidate("ToDo", "DIRECT", reference_type="Project", reference_name="PROJECT-1", allocated_to="reader")

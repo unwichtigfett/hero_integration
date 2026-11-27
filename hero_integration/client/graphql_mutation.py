@@ -1,5 +1,5 @@
 """Mutation transport with shared TLS, proxy and redirect guards.
-Callers must validate operations and authorize execution."""
+Each send also requires the final test mutation guard."""
 from __future__ import annotations
 
 from collections.abc import Callable, Mapping
@@ -14,4 +14,4 @@ class HeroMutationClient:
     def execute_once(self, document: str, variables: Mapping[str, object]) -> dict[str, object]:
         # Deliberately no retry: after an ambiguous timeout a caller must verify
         # idempotency before a human explicitly submits another request.
-        return self._transport._post(document, variables)
+        return self._transport._post(document, variables, mutation=True)

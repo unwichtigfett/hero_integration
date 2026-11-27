@@ -139,7 +139,7 @@ class TestWritebackSourceSnapshotMariaDB(IntegrationTestCase):
                 patch('hero_integration.client.graphql_mutation.HeroMutationClient') as mutation:
             reader.return_value.query.side_effect = read
             mutation.return_value.execute_once.return_value = {'update_contact': {'id': '42'}}
-            transport = api._SyncHeroTransport(verified, SimpleNamespace(correlation_id='snapshot-test'))
+            transport = api._SyncHeroTransport(verified, SimpleNamespace(correlation_id='snapshot-test'), before_dispatch=lambda: None)
             approval = OutboundApproval(True, True, True, True, True, 2)
             if succeeds:
                 updated = execute_sync_hero(verified['intent'], approval, transport, verified['bindings'])

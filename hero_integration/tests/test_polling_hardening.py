@@ -69,7 +69,10 @@ class _FakeDb:
         assert doctype == "HERO Integration Sync State", doctype
         return self.state.get(field)
 
-    def set_single_value(self, doctype, field, value):
+    def set_single_value(self, doctype, field, value=None):
+        if doctype == "HERO Integration Settings" and isinstance(field, dict):
+            self.state.update(field)
+            return
         assert doctype == "HERO Integration Sync State", doctype
         self.state[field] = value
 
@@ -177,8 +180,8 @@ class TestScheduledEntry(unittest.TestCase):
         self.assertEqual(fake.db.state["last_poll_started_on"], datetime(2026, 11, 10, 12, 0))
         self.assertEqual(fake.db.commits, 1)
 
-    def test_a_live_migration_run_makes_polling_wait(self):
-        settings = _settings(sync_status="", sync_error="")
+    def test_a_live_migration_run_makes_automatic_writes_wait(self):
+        settings = _settings(polling_mode="AUTO_SYNC", sync_status="", sync_error="")
         with patch("hero_integration.services.execution_runtime.execute") as run_monitor, \
              patch.dict(sys.modules, {"hero_integration.services.migration": SimpleNamespace(run_lease_alive=lambda name: True)}):
             fake, _ = self.run_tasks(settings, state={"active_run": "RUN-1"})
@@ -189,6 +192,12 @@ class TestScheduledEntry(unittest.TestCase):
              patch.dict(sys.modules, {"hero_integration.services.migration": SimpleNamespace(run_lease_alive=lambda name: False)}):
             self.run_tasks(settings, state={"active_run": "RUN-1"})
         run_monitor.assert_called_once()
+
+    def test_read_only_scheduled_monitor_can_sample_during_migration(self):
+        settings = _settings(polling_mode="MONITOR", sync_status="", sync_error="")
+        with patch("hero_integration.services.execution_runtime.execute") as execute:
+            self.run_tasks(settings, state={"active_run": "RUN-1"})
+        execute.assert_called_once_with("monitor")
 
     def test_out_of_range_numeric_settings_fail_closed(self):
         for field, value in (("polling_interval_minutes", 5000), ("polling_page_size", 0.5), ("polling_retry_limit", 9),

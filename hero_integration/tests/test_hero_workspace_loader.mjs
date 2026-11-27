@@ -5,7 +5,7 @@ import vm from "node:vm";
 
 const source = await readFile(new URL("../public/js/hero_workspace.js", import.meta.url), "utf8");
 
-function workspaceUi({ styleFailure = false, loaded = {}, requests = [], capture = () => {} } = {}) {
+function workspaceUi({ styleFailure = false, loaded = {}, requests = [], call, capture = () => {} } = {}) {
     const sandbox = {
         URL,
         URLSearchParams,
@@ -16,6 +16,7 @@ function workspaceUi({ styleFailure = false, loaded = {}, requests = [], capture
         __: value => value,
         frappe: {
             csrf_token: "",
+            call,
             pages: { "hero-integration": {} },
             require: (path) => { requests.push(path); return Promise.resolve(); },
         },
@@ -70,6 +71,23 @@ test("the content-addressed editor is reused rather than loading an unhashed leg
     const loaded = Object.fromEntries(["hero_workspace_tools", "hero_integration_overview", "hero_integration_settings_ui", "hero_integration_api_summary", "hero_integration_mapping_simple", "hero_integration_diagnostics", "hero_integration_migration"].map((name) => [name, {}]));
     await workspaceUi({loaded, requests}).ensureStyles();
     assert.deepEqual(requests, []);
+});
+
+test("workspace sends reset preview as GET and retains Frappe's POST default for confirmation", async () => {
+    const calls = [];
+    let platform;
+    workspaceUi({
+        call: async (options) => { calls.push(options); return {message: "ok"}; },
+        capture: (window) => { platform = window.hero_integration_platform; },
+    });
+    assert.equal(await platform.api("workspace_test_reset_preview"), "ok");
+    const approval = {token: "test-token", confirmed: 1};
+    assert.equal(await platform.api("workspace_test_reset_confirm", approval), "ok");
+    assert.equal(calls[0].method, "hero_integration.api.workspace_test_reset_preview");
+    assert.equal(calls[0].type, "GET");
+    assert.equal(calls[1].method, "hero_integration.api.workspace_test_reset_confirm");
+    assert.equal(Object.hasOwn(calls[1], "type"), false);
+    assert.equal(calls[1].args, approval);
 });
 
 test("workspace routes remain local and encode untrusted parameter text", () => {

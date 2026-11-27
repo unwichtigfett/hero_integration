@@ -47,21 +47,25 @@ CONFLICT_RESULTS = ("CONFLICT", "SKIPPED_AMBIGUOUS", "BLOCKED_RECORD")
 POLLING_PERIOD_DAYS = 30
 
 
-def manual_prerequisite(instance: str, frappe_module) -> str:
-    """Return the first unfinished onboarding area for this HERO source."""
-    for key, action in (("employees", "Employee Migration"), ("contacts", "Customer Migration")):
+def manual_start_blockers(instance: str, frappe_module, *, area_key: str | None = None) -> dict[str, str]:
+    """Return the remaining onboarding requirements for manual starts on this source."""
+    blockers = {}
+    for action, areas, message in (
+        ("Employee Migration", ("projects", "tasks", "combined"), "Migrate Employees first"),
+        ("Customer Migration", ("documents", "pictures", "combined"), "Migrate Contacts first"),
+    ):
+        if area_key is not None and area_key not in areas:
+            continue
         rows = frappe_module.get_all(
             "HERO Integration Run",
-            filters={"action": action, "mode": "Execute", "source_instance": instance},
+            filters={"action": action, "mode": "Execute", "source_instance": instance, "inventory_sync_run": ["is", "not set"]},
             fields=["state"], order_by="creation desc, name desc", limit_page_length=1,
         )
         if not rows or rows[0]["state"] not in SUCCESS_STATES:
-            return key
-    return ""
-
-
-def manual_allowed(key: str, prerequisite: str) -> bool:
-    return key == "full" or not prerequisite or key == prerequisite
+            for key in areas:
+                if key == area_key or (area_key is None and key != "combined"):
+                    blockers.setdefault(key, message)
+    return blockers
 
 
 def area(key: str) -> SyncArea:
@@ -97,3 +101,59 @@ def mapping_scope(rows: Iterable[Mapping[str, object]]) -> dict[str, object]:
         "field_count": sum(len(fields) for fields in objects.values()),
         "objects": [{"doctype": doctype, "fields": sorted(fields)} for doctype, fields in sorted(objects.items())],
     }
+
+def scheduler_state(frappe, settings, plan, instance, scheduler_active):
+    """Read committed configuration, a worker lease and the existing writeback queue."""
+    from frappe.utils.background_jobs import get_job_status
+    from redis.exceptions import RedisError
+    from hero_integration.services.sync_engine import FrappeSyncLedger
+    from hero_integration.services.sync_runtime_adapter import (
+        _require_area_enabled, _require_confirmed_source_binding, _require_latest_validated_snapshot,
+        _runtime_plan_service,
+    )
+
+    site = frappe.local.site
+    ledger = FrappeSyncLedger(frappe)
+    run = frappe.db.get_value(ledger.RUN, {"site_scope": site, "source_instance": instance,
+                              "automatic": 1, "state": "RUNNING"}, "sync_run_id")
+    processing = bool(run and ledger.lease_active(run))
+    queue = None
+    service = _runtime_plan_service(frappe)
+    approved = service.current_approved(site, instance)
+    if approved:
+        try:
+            queue = get_job_status("hero-auto-write-" + approved.plan_key)
+        except RedisError:
+            queue = "unavailable"
+    ready = scheduler_active and plan["mode"] != "OFF" and not plan["paused"] and not plan["unsupported_sources"]
+    reason = ""
+    area = ""
+    if ready:
+        if not approved:
+            reason = "No approved runtime plan exists for this site/source instance."
+        else:
+            try:
+                _require_confirmed_source_binding(settings)
+                # Validate existing references only. Rendering the page issues no HERO request.
+                service.resolve_executable_plan(site, instance, approved.generation, False, frappe.session.user)
+                import json
+                from hero_integration.services.sync_runtime_adapter import ReaderDisabled
+                operations = []
+                for selected in approved.selections:
+                    try:
+                        _require_area_enabled(frappe, settings, selected)
+                    except ReaderDisabled:
+                        continue
+                    service.resolve_executable_plan(site, instance, approved.generation, False, frappe.session.user,
+                                                    reader=selected.graphql_service)
+                    _require_latest_validated_snapshot(frappe, settings, instance, selected)
+                    operations.append(json.loads(frappe.db.get_value("HERO GraphQL Mapping", selected.graphql_mapping,
+                                                                    "mapping_json"))["target_operation"])
+                area = ", ".join(operations)
+                if not operations:
+                    reason = "No approved reader is enabled."
+            except (ValueError, KeyError, frappe.PermissionError, frappe.DoesNotExistError) as error:
+                reason = str(error)
+    return {"running": processing or queue == "started", "armed": bool(ready and not reason),
+            "plan_blocker": reason, "scheduled_operation": area, "writeback_job": queue,
+            "orphaned_run": run if run and not processing else None}

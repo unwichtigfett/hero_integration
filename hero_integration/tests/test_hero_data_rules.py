@@ -20,6 +20,11 @@ class TestEventSubject(unittest.TestCase):
         self.assertEqual(_event_subject({'title': None, 'type': 'site'}, creating=True), 'site')
         self.assertEqual(_event_subject({'title': '  '}, creating=True), EVENT_SUBJECT_FALLBACK)
 
+    def test_small_text_subject_preserves_long_titles(self):
+        long_title = 'ä' * 146
+        for creating in (True, False):
+            self.assertEqual(_event_subject({'title': long_title}, creating=creating), long_title)
+
     def test_an_existing_event_keeps_its_subject_when_the_title_is_empty(self):
         self.assertIsNone(_event_subject({'title': None, 'localized_type': 'Baustellentermin'}, creating=False))
 

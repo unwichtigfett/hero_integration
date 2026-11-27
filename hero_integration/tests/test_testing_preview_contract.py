@@ -50,6 +50,14 @@ class _UnverifiedSource(_VerifiedSource):
 
 
 class TestTestingPreviewContract(unittest.TestCase):
+    def test_new_test_run_requires_its_configured_limit(self):
+        from hero_integration.services.migration_testing import configuration
+        for value in (None, False, 0, "", 101):
+            with self.subTest(value=value), self.assertRaises(ValueError):
+                configuration(SimpleNamespace(testing_enabled=1, testing_max_actions=value))
+        for value in (1, 10, 50, 100):
+            self.assertEqual(configuration(SimpleNamespace(testing_enabled=1, testing_max_actions=value))["testing_max_actions"], value)
+
     def test_legacy_midpage_resume_blocks_before_read_without_page_evidence(self):
         run = SimpleNamespace(resume_phase='customer', resume_offset=0, resume_record_index=1,
                               state='Running', reload=lambda:None, save=lambda:None)

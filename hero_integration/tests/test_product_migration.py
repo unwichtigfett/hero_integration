@@ -54,7 +54,7 @@ class _Client:
             raise RuntimeError("too large")
         size = min(variables['first'], self.page_cap) if self.page_cap else variables['first']
         start, end = variables["offset"], min(variables["offset"] + size, self.total)
-        return {"supply_product_versions": [{"product_id": f"P{i}", "nr": str(i)} for i in range(start, end)]}
+        return {"supply_product_versions": [{"product_id": f"P{i}", "nr": str(i), "Genutzt": 1} for i in range(start, end)]}
 
 
 class TestPaging(unittest.TestCase):
@@ -83,6 +83,8 @@ class TestPaging(unittest.TestCase):
                          if kind == doctype and all(values.get(key) == value for key, value in filters.items())), None)
 
         fake = SimpleNamespace(
+            get_all=lambda doctype, *, filters, **kwargs: [name for (kind, name), values in documents.items()
+                if kind == doctype and all(values.get(k) == v for k, v in filters.items())],
             db=SimpleNamespace(get_default=lambda key:None, set_default=lambda key, value: saved.__setitem__(key, value),
                                exists=lambda doctype, name: (doctype, name) in documents,
                                get_value=get_value, commit=lambda: None, rollback=documents.clear),
@@ -150,7 +152,7 @@ class TestPaging(unittest.TestCase):
             commit=lambda: None, rollback=lambda: None), utils=SimpleNamespace(now_datetime=lambda: 'now'),
             log_error=lambda **k: None)
         with patch.object(pm, 'frappe', fake), patch.object(pm, '_links', return_value={}), \
-             patch.object(pm, 'fetch_page', return_value=[{'product_id': 'P1'}]), \
+             patch.object(pm, 'fetch_page', return_value=[{'product_id': 'P1', 'Genutzt': 1}]), \
              patch.object(pm, 'upsert', return_value='added') as upsert, \
              self.assertRaisesRegex(ValueError, 'repeated a product page'):
             pm.sync_products(_Client(1), source_instance='source-a', read=BUILTIN)

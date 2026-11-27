@@ -8,7 +8,7 @@ import unittest
 API = Path(__file__).resolve().parents[1] / "api.py"
 WRITE_RPC_NAMES = {
     "start_migration", "pending_sync", "sync_hero_execute", "cancel_run", "resume_run", "workspace_schema_refresh", "workspace_settings_save",
-    "workspace_testing_settings_save",
+    "workspace_testing_settings_save", "workspace_test_reset_confirm",
     "workspace_mutation_execution_set", "graphql_mapping_save", "runtime_plan_approve", "workspace_service_save", "workspace_service_validate",
     "workspace_service_delete", "adopt_mapping_package", "resume_mapping_adoption",
     "workspace_mutation_contract_save", "execute_graphql_service", "writeback_execute",
@@ -22,7 +22,7 @@ WRITE_RPC_NAMES = {
     "mapping_draft_reconcile_preview",
     "mapping_draft_reconcile_apply", "decide_hero_review",
 }
-READ_RPC_NAMES = {"runtime_plan_status",
+READ_RPC_NAMES = {"runtime_plan_status", "workspace_test_reset_preview",
                   "mapping_draft_read", "mapping_draft_exchange_export",
                   "workspace_node_bookmark_list", "workspace_node_bookmark_resolve",
                   "sync_page_state", "sync_page_runs", "sync_page_run_detail", "sync_page_conflicts",

@@ -295,8 +295,10 @@ class TestGeneratedTaskRead(unittest.TestCase):
                 self.__dict__.update(data)
             def get(self, field): return getattr(self, field, None)
             def set(self, field, value): setattr(self, field, value)
+            def db_get(self, field): return records['task'].get(field)
             def insert(self):
                 if self.doctype == 'Task':
+                    self.status = self.get('status') or 'Open'
                     self.name = 'TASK-1'; records['task'] = self
                 else:
                     self.name = 'LINK-1'; records['link'] = self
@@ -325,7 +327,8 @@ class TestGeneratedTaskRead(unittest.TestCase):
                     'HERO Integration Link': records['link'], 'Task': records['task'], 'Project': SimpleNamespace(name='PROJECT-1')}[doctype]
         self.fake_frappe.db = FakeDB()
         self.fake_frappe.get_doc = get_doc
-        self.fake_frappe.conf = SimpleNamespace(db_name='isolated-fake')
+        from frappe.types.frappedict import _dict
+        self.fake_frappe.conf = _dict(db_name='isolated-fake')
         self.fake_frappe.local = SimpleNamespace(site='test-site')
         self.fake_frappe.session = SimpleNamespace(user='Administrator')
         self.fake_frappe.only_for = lambda role: None
@@ -377,7 +380,9 @@ class TestGeneratedTaskRead(unittest.TestCase):
         host_frappe = SimpleNamespace(db=host_db)
         with patch.object(deferred_references, 'frappe', host_frappe):
             replay = type(self)('test_real_executor_decoder_mapping_and_task_adapter_replay_offline')
-            replay.debug()
+            result = unittest.TestResult()
+            replay.run(result)
+            self.assertTrue(result.wasSuccessful(), result.errors + result.failures)
             self.assertIs(deferred_references.frappe, host_frappe)
         self.assertEqual(host_db.mock_calls, [])
 

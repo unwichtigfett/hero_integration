@@ -54,6 +54,74 @@ class TestServiceValues(unittest.TestCase):
 
 
 class TestCalculation(unittest.TestCase):
+    def test_next_import_rechecks_only_prior_historical_products_and_allows_reactivation(self):
+        from hero_integration.services import file_migration, file_transfer, scoped_test_reads
+        row = dict(__typename='Documents_SupplyProduct',id='old',nr='N1',name='Old',unit_type='Stk')
+        product = dict(product_id='old',nr='N1',is_deleted=True,base_data={'name':'Old','unit_type':'Stk'})
+        detail = {'positions':[row,dict(row,id='unreviewed')]}
+        link = SimpleNamespace(target_field_hashes=json.dumps({'historical_materials':{'old':{}}}),source_payload_hash='new')
+        rd = SimpleNamespace(mapping_version='current')
+        fake = SimpleNamespace(get_doc=lambda *a: object())
+        with (patch.object(sm,'frappe',fake), patch.object(file_migration,'bound_configuration'),
+              patch.object(file_transfer,'_client_and_downloader',return_value=('client',None,'source')),
+              patch.object(sm.runtime,'approved_read',return_value=rd),
+              patch.object(scoped_test_reads,'exact_rows',return_value=[product]) as query):
+            proof = sm._refresh_historical_materials('run','source',link,detail)
+            self.assertEqual(proof['old']['service_hash'], 'new')
+            self.assertEqual(proof['old']['positions_hash'], sm.products.digest([row]))
+            query.assert_called_once_with('client', rd, ['old'], allow_absent=True)
+            product['base_data']['name'] = 'different'
+            with self.assertRaises(sm.ServiceBlocked):
+                sm._refresh_historical_materials('run','source',link,detail)
+            product['is_deleted'] = False
+            self.assertEqual(sm._refresh_historical_materials('run','source',link,detail), {})
+
+    def test_inventory_history_is_prefetched_once_and_rechecked_against_the_active_reader(self):
+        from hero_integration.services import file_migration, scoped_test_reads
+        position = dict(__typename="Documents_SupplyProduct", id="old", nr="N1", name="Old", unit_type="Stk")
+        product = dict(product_id="old", nr="N1", is_deleted=True, base_data={"name":"Old", "unit_type":"Stk"})
+        detail = {"positions":[position, dict(position, id="other")]}
+        link = SimpleNamespace(target_field_hashes=json.dumps({"historical_materials":{"old":{}}}), source_payload_hash="v2")
+        read = SimpleNamespace(origin="product-service", service_revision=2, mapping="product-map", mapping_version="v1",
+                               snapshot=SimpleNamespace(fingerprint="schema"), document="query Product { id }", variables={})
+        with (patch.object(sm.runtime, "page_links", return_value={"1":link, "2":link}),
+              patch.object(sm.runtime, "approved_read", return_value=read) as approved,
+              patch.object(scoped_test_reads, "exact_rows", return_value=[product]) as transport):
+            evidence = sm.historical_inventory_evidence("client", "source", {1:detail, 2:detail})
+            self.assertEqual(evidence[1], evidence[2])
+            transport.assert_called_once_with("client", read, ["old"], allow_absent=True)
+            proven = sm._refresh_historical_materials("run", "source", link, detail, evidence[1])
+            self.assertEqual(proven["old"]["positions_hash"], sm.products.digest([position]))
+            read.service_revision += 1
+            with self.assertRaises(file_migration.DirectContractChanged):
+                sm._refresh_historical_materials("run", "source", link, detail, evidence[1])
+            approved.return_value = None
+            self.assertIsNone(sm.historical_inventory_evidence("client", "source", {1:detail})[1]["reader"])
+            approved.return_value = read
+            product["is_deleted"] = False
+            renewed = sm.historical_inventory_evidence("client", "source", {1:detail})
+            self.assertEqual(sm._refresh_historical_materials("run", "source", link, detail, renewed[1]), {})
+
+    def test_confirmed_deleted_position_retains_source_values_without_product(self):
+        row = dict(__typename='Documents_SupplyProduct', id='old', nr='old-number', name='Older product',
+                   unit_type='Stk', quantity=2, net_price_per_unit=12.5)
+        proof = {'product_id':'old','nr':'old-number','is_deleted': True,'reader_version':'mapping',
+                 'service_hash':'snapshot','positions_hash':sm.products.digest([row])}
+        observation = {'detail':{'positions':[row]},'source_hash':'snapshot','historical_materials':{'old':proof}}
+        hist = sm.historical_materials(observation)
+        pending = SimpleNamespace(record_json=json.dumps(observation))
+        self.assertEqual(sm.active_service_dependencies(pending,[('supply_product','old'),('supply_product','current')]),
+                         [('supply_product','current')])
+        with patch.object(sm, 'scoped_link', side_effect=AssertionError('unexpected Item lookup')):
+            line, = sm.composition([row], 'source', historical=hist)
+        self.assertNotIn('item_code',line)
+        self.assertEqual((line['resolution'], line['quantity'], line['unit_price']), ('Historical',2,12.5))
+        self.assertEqual(json.loads(line['metadata'])['source_values']['name'], 'Older product')
+        row['quantity']=3
+        with self.assertRaises(sm.ServiceBlocked):
+            sm.historical_materials(observation)
+
+
     def test_material_identity_never_creates_duplicate_items_and_labor_cost_is_preserved(self):
         positions = [{'__typename':'Documents_SupplyProduct','id':'product-a','name':'Material', 'quantity':2,
                       'unit_type':'Stk','net_price_per_unit':5,'base_price':3},
@@ -75,6 +143,54 @@ class TestCalculation(unittest.TestCase):
             result=sm.composition([row],'source-a')
         self.assertEqual(result[0]['item_code'],'ITEM-A')
         self.assertEqual(result[0]['quantity'],0)
+
+    def test_material_resolution_before_and_after_independent_product_import(self):
+        from hero_integration.tests.test_product_mapping import _Frappe, own_read
+        from hero_integration.tests.test_product_migration import ROW
+
+        position = {'__typename': 'Documents_SupplyProduct', 'id': ROW['product_id'], 'quantity': 2}
+        for service_first in (True, False):
+            with self.subTest(service_first=service_first):
+                storage = _Frappe()
+
+                def links(doctype, *, filters, pluck, limit_page_length):
+                    self.assertEqual((doctype, pluck, limit_page_length), ('HERO Integration Link', 'name', 2))
+                    return [str(i) for i, (_, link) in enumerate(storage.links)
+                            if all(link.get(k) == v for k, v in filters.items())][:limit_page_length]
+
+                def get_doc(doctype, name, *, for_update):
+                    self.assertEqual((doctype, for_update), ('HERO Integration Link', True))
+                    return SimpleNamespace(**storage.links[int(name)][1])
+
+                def select_links(query, parameters, **kwargs):
+                    instance, kind, identity = parameters
+                    return links('HERO Integration Link', filters={'source_system':'HERO',
+                        'source_instance':instance, 'source_type':kind, 'source_id':identity},
+                        pluck='name', limit_page_length=2)
+
+                def get_value(doctype, name, field, **kwargs):
+                    if doctype == 'HERO Integration Link':
+                        return name if int(name) < len(storage.links) else None
+                    return storage.db.exists(doctype, name)
+
+                reader = SimpleNamespace(get_doc=get_doc, db=SimpleNamespace(
+                    sql=select_links, get_value=get_value))
+                with patch.object(sm.products, 'frappe', storage), patch.object(sm, 'frappe', reader):
+                    if service_first:
+                        self.assertEqual(sm.composition([position], 'source-a')[0]['resolution'], 'Unresolved')
+                        self.assertFalse(storage.items)
+                    self.assertEqual(sm.products.upsert(ROW, None, sm.products._Masters(), 'source-a',
+                                                       read=own_read()), 'added')
+                    self.assertEqual(sm.composition([position], 'source-b')[0]['resolution'], 'Unresolved')
+                    self.assertEqual(sm.composition([position], 'source-a')[0]['item_code'], ROW['nr'])
+                    self.assertEqual((len(storage.items), len(storage.links)), (1, 1))
+                    storage.links.append(storage.links[0])
+                    with self.assertRaisesRegex(sm.ServiceBlocked, 'several bindings'):
+                        sm.composition([position], 'source-a')
+                    storage.links.pop()
+                    storage.items.clear()
+                    with self.assertRaisesRegex(sm.ServiceBlocked, 'target is missing'):
+                        sm.composition([position], 'source-a')
 
     def test_unknown_union_member_and_invalid_quantity_block(self):
         for row in [{'__typename':'Other','id':'x'}, {'__typename':'Documents_SupplyProduct','id':'x','quantity':-1}]:
@@ -152,7 +268,7 @@ class TestServiceRun(unittest.TestCase):
             state = self.run_sync(page_overlap=1)
         self.assertTrue(state["done"])
         self.assertEqual([call.args[0]["id"] for call in write.call_args_list], [2, 3, 4])
-        self.assertEqual([call.args[2] for call in self.fetch.call_args_list], [0, 0, 1, 2, 3, 4])
+        self.assertEqual([call.args[2] for call in self.fetch.call_args_list], [0, 0, 2, 4])
 
     def test_changed_interrupted_overlap_page_is_rejected_before_write(self):
         with patch.object(sm, "upsert", side_effect=["added", sm.ServiceBlocked("Review")]):
@@ -236,6 +352,40 @@ class TestServiceUpsert(unittest.TestCase):
         with self.assertRaisesRegex(sm.ServiceBlocked,'already used'):
             sm.upsert(self.row,self.detail,self.read,'source-a','Company',None)
         self.assertEqual(self.created,[]);self.tax.assert_not_called();self.write.assert_not_called()
+
+    def test_explicit_separate_number_keeps_original_and_prices_actual_item(self):
+        self.fake.db.exists = lambda dt, name: dt == 'Item' and name == 'SERVICE-1'
+        self.fake.get_meta = lambda _: SimpleNamespace(has_field=lambda _: True)
+        self.fake.get_all = lambda *args, **kwargs: [SimpleNamespace(
+            source_system='HERO', source_type='supply_product', source_instance='source-a', sync_status='Synchronized')]
+        self.assertEqual(sm.upsert(self.row, self.detail, self.read, 'source-a', 'Company', None,
+                                   separate_product_code=True), 'added')
+        item = next(doc for doc in self.created if doc.doctype == 'Item')
+        code = sm._separate_item_code('SERVICE-1', '123', 'source-a')
+        self.assertEqual(item.item_code, code)
+        self.assertEqual(item['custom_hero_original_article_number'], 'SERVICE-1')
+        self.assertEqual(self.price.call_args.args[0], code)
+        self.fake.db.exists = lambda dt, name: dt == 'Item'
+        with self.assertRaisesRegex(sm.ServiceBlocked, 'separate service article number is already used'):
+            sm.upsert(self.row, self.detail, self.read, 'source-a', 'Company', None, separate_product_code=True)
+
+    def test_separated_service_remains_idempotent_after_approval(self):
+        identity = '123'
+        item = _Document(doctype='Item', item_code=sm._separate_item_code('SERVICE-1', identity, 'source-a'),
+                         custom_hero_original_article_number='SERVICE-1')
+        item['name'] = item.item_code
+        self.get_link.return_value = SimpleNamespace(sync_status='Synchronized', target_name=item.name,
+                                                     source_payload_hash='old', name='service-link')
+        self.fake.get_doc = lambda *a, **kw: item
+        baseline = {'values': {'custom_hero_original_article_number': 'SERVICE-1'}, 'separate_number': True}
+        with patch.object(sm, 'baseline_check', return_value=baseline):
+            self.assertEqual(sm.upsert(self.row,self.detail,self.read,'source-a','Company',None), 'updated')
+            baseline['values'] = self.write.call_args.args[6]
+            baseline['price'] = self.write.call_args.kwargs['extra']['price']
+            self.get_link.return_value.source_payload_hash = self.write.call_args.args[5]
+            self.assertEqual(sm.upsert(self.row,self.detail,self.read,'source-a','Company',None), 'unchanged')
+            with self.assertRaisesRegex(sm.ServiceBlocked, 'explicit rename'):
+                sm.upsert({**self.row, 'nr':'different'},self.detail,self.read,'source-a','Company',None)
 
     def test_upsert_checks_local_baseline_before_source_hash_skip(self):
         baseline={'item_name':'Original'}

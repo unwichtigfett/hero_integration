@@ -62,6 +62,9 @@ class ProjectIdentityReader:
         return {'project_matches': [record]}
 
 
+MAX_ID_FILTER_VALUES = 50  # Size of one verified HERO list filter, independent of migration limits.
+
+
 class CollectionIdentityReader:
     """Restrict the approved selection using a verified root identity argument.
 
@@ -70,6 +73,7 @@ class CollectionIdentityReader:
     """
     ROOTS = {
         ('HeroCustomers', 'contacts'): ('ids', 'id', 'Int'),
+        ('HeroProjectMatches', 'project_matches'): ('ids', 'id', 'Int'),
         ('HeroTasks', 'tasks'): ('ids', 'id', 'Int'),
         ('HeroCalendarEvents', 'calendar_events'): ('ids', 'id', 'Int'),
         ('HeroServices', 'supply_services'): ('service_ids', 'id', 'Int'),
@@ -84,7 +88,7 @@ class CollectionIdentityReader:
         self.schema_fingerprint = compiled.fingerprint
         self.area, self.identity_path, self.hero_id, self.file_uuid = area, identity_path, str(hero_id), file_uuid
 
-    def request(self, document, *, allow_alias=False):
+    def request(self, document, *, allow_alias=False, identities=None):
         from graphql import GraphQLInputObjectType
         from graphql.language.ast import ListValueNode, StringValueNode, ObjectValueNode, ObjectFieldNode
         tree = parse(document)
@@ -105,13 +109,19 @@ class CollectionIdentityReader:
             if (not is_list_type(kind) or get_named_type(kind).name != scalar
                     or any(arg.name.value == name for arg in field.arguments)):
                 return document
+            keys = (self.hero_id,) if identities is None else identities
+            if not isinstance(keys, (tuple, list)) or not 1 <= len(keys) <= MAX_ID_FILTER_VALUES or any(type(key) is not str for key in keys):
+                return document
+            if len(set(keys)) != len(keys):
+                return document
             if scalar == 'Int':
-                if not self.hero_id.isdigit() or not 0 < int(self.hero_id) <= 2147483647:
+                if any(not key.isascii() or not key.isdigit() or len(key) > 10 or key.startswith('0')
+                       or int(key) > 2147483647 for key in keys):
                     return document
-                value = IntValueNode(value=self.hero_id)
+                values = tuple(IntValueNode(value=key) for key in keys)
             else:
-                value = StringValueNode(value=self.hero_id)
-            argument = ArgumentNode(name=NameNode(value=name), value=ListValueNode(values=(value,)))
+                values = tuple(StringValueNode(value=key) for key in keys)
+            argument = ArgumentNode(name=NameNode(value=name), value=ListValueNode(values=values))
         elif (root and self.area in {'HeroDocuments', 'HeroPictures'} and self.identity_path == 'id'
                 and field.name.value == 'FileUpload_FileUploads' and isinstance(self.file_uuid, str) and self.file_uuid.strip()):
             declared = root.args.get('filters')

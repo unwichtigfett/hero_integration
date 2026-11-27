@@ -228,7 +228,7 @@ class TestMigrationRecordLimits(unittest.TestCase):
              patch.object(products, '_state', side_effect=AssertionError('production cursor read')), \
              patch.object(products, '_save', side_effect=AssertionError('production cursor write')), \
              patch.object(products, '_links', return_value={}), patch.object(products, '_Masters'), \
-             patch.object(products, 'fetch_page', return_value=[{'product_id': i} for i in range(1, 27)]) as fetch, \
+             patch.object(products, 'fetch_page', return_value=[{'product_id': i, 'Genutzt': 1} for i in range(1, 27)]) as fetch, \
              patch.object(products, 'upsert', return_value='updated') as write:
             first = products.sync_products(Mock(), source_instance='source', read=read, record_limit=5, run_name='test-run')
             second = products.sync_products(Mock(), source_instance='source', read=read, record_limit=5, run_name='test-run')
@@ -242,7 +242,7 @@ class TestMigrationRecordLimits(unittest.TestCase):
         saved = {}
         client = Mock()
         client.query.side_effect = lambda _query, variables: {
-            'supply_product_versions': [{'product_id': f'P{i}'} for i in range(variables['offset'],
+            'supply_product_versions': [{'product_id': f'P{i}', 'Genutzt': 1} for i in range(variables['offset'],
                                          variables['offset'] + variables['first'])]}
         fake = SimpleNamespace(db=SimpleNamespace(commit=Mock(), rollback=Mock()), log_error=Mock())
         with patch.object(products, 'frappe', fake), \
@@ -268,7 +268,7 @@ class TestMigrationRecordLimits(unittest.TestCase):
              patch.object(testing, 'test_state', return_value={}), \
              patch.object(testing, 'save_test_state', side_effect=lambda _run, _op, state: saved.update(copy.deepcopy(state))), \
              patch.object(products, '_links', return_value={}), patch.object(products, '_Masters'), \
-             patch.object(products, 'fetch_page', return_value=[{'product_id': 'P1'}]), \
+             patch.object(products, 'fetch_page', return_value=[{'product_id': 'P1', 'Genutzt': 1}]), \
              patch.object(products, 'upsert', side_effect=imported), \
              patch('hero_integration.services.integration_events.record_output') as output:
             state = products.sync_products(Mock(), source_instance='source', read=products.runtime.builtin_read('HeroProducts'),

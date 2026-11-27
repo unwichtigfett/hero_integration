@@ -9,6 +9,7 @@ import math
 import re
 from zoneinfo import ZoneInfo
 
+from hero_integration.services import migration_archive
 from hero_integration.services import direct_operations as direct
 from hero_integration.services.direct_mapping import MISSING, lookup, transformed_value
 
@@ -59,6 +60,15 @@ class IncompleteMappedAddress(ValueError):
     """An optional source address lacks the native fields needed to create it."""
 
 
+class MissingCustomerAddressLocation(IncompleteMappedAddress):
+    """An existing address cannot be imported until its street and city are populated."""
+
+
+def require_customer_address_location(street, city):
+    if not all(isinstance(value, str) and value.strip() for value in (street, city)):
+        raise MissingCustomerAddressLocation('Customer addresses require street and city.')
+
+
 def _hash(value):
     return sha256(json.dumps(value, sort_keys=True, ensure_ascii=False, separators=(',', ':'), allow_nan=False).encode()).hexdigest()
 
@@ -66,7 +76,7 @@ def _hash(value):
 def validate_query_adapter(value, definitions=()):
     if not isinstance(value, Mapping) or value.get('version') != 2 or type(value['version']) is not int:
         raise ValueError('Query adapter configuration requires version 2.')
-    if set(value) - {'version', 'transform_options', 'logbook', 'native_relations', 'read_service', 'role', 'max_records'}:
+    if set(value) - {'version', 'transform_options', 'logbook', 'native_relations', 'read_service', 'role', 'max_records', 'source_history'}:
         raise ValueError('Query adapter configuration has unsupported parameters.')
     if 'read_service' in value and (not isinstance(value['read_service'], str) or not value['read_service'].strip()):
         raise ValueError('Query adapter read service must be an explicit document name.')
@@ -77,6 +87,11 @@ def validate_query_adapter(value, definitions=()):
     options = value.get('transform_options', {})
     if not isinstance(options, dict) or len(options) > 100:
         raise ValueError('Query transform options must identify bounded field rules.')
+    if 'source_history' in value:
+        supported = {'partner_absences': {'HeroEmployees'}, 'file_details': {'HeroDocuments', 'HeroPictures'}}
+        if not isinstance(value['source_history'], str) or value['source_history'] not in supported or any(
+                d.operation not in supported[value['source_history']] for d in definitions):
+            raise ValueError('Source history is incompatible with this migration area.')
     ids = {d.definition_id for d in definitions}
     for identity, settings in options.items():
         if not isinstance(identity, str) or not identity or (ids and identity not in ids):
@@ -591,8 +606,8 @@ def seal_query(service, snapshot, config, plan):
         kind = spec.source_type.split('|')[0]
         if actual and actual not in families.get(kind, set()):
             from graphql import GraphQLEnumType
-            if not (kind == 'string' and isinstance(schema.get_type(actual), GraphQLEnumType)) and not (kind=='json' and actual in structured_types):
-                raise ValueError('Mapped source type differs from its saved schema.')
+            if not (kind == 'string' and isinstance(schema.get_type(actual), GraphQLEnumType)) and not (kind == 'json' and (actual in structured_types or spec.source_path in list_paths)):
+                raise ValueError(f'Mapped source type differs from its saved schema: {operation}.{spec.source_path}.')
     if not required <= selected:
         raise ValueError('Mapped query omits selected field or title dependencies: ' + ', '.join(sorted(required - selected)))
     identity = next(d.source_path for d in plan.definitions if d.purpose == 'Source Identity')
@@ -658,6 +673,11 @@ def mapped_values(plan, record, *, customer_link=None, confirmed_company=None, p
         if raw is MISSING:
             values.missing.add(spec.target_field)
             continue
+        if spec.transformation == 'User By Partner ID':
+            from hero_integration.services.employee_migration import historical_partners
+            if str(raw) in historical_partners(record.get('_hero_source_instance', 'default')):
+                values.missing.add(spec.target_field)
+                continue
         if spec.purpose == 'Customer Relation':
             if customer_link is None: raise ValueError('Customer identity resolver is unavailable.')
             value = customer_link(raw)
@@ -705,6 +725,8 @@ def address_values(plan, record):
         return None
     if not isinstance(parent, dict) or type(parent.get('id')) is not int or parent['id'] <= 0:
         raise ValueError('Mapped primary address requires a stable source identity.')
+    if migration_archive.primary_address_excluded(record, parent["id"]):
+        return None
     countries = [spec for spec in selected if spec.target_field == 'country']
     if len(countries) != 1:
         raise IncompleteMappedAddress('The source address country was not selected or returned.')
@@ -713,10 +735,18 @@ def address_values(plan, record):
         raise IncompleteMappedAddress('The source address country was not selected or returned.')
     empty_country = raw_country is None or isinstance(raw_country, str) and not raw_country.strip()
     values = mapped_values(plan, record, target_doctype='Address', skip_fields={'country'} if empty_country else ())
-    if not {'address_line1', 'pincode', 'city'} <= set(values):
-        raise IncompleteMappedAddress('Mapped primary address is incomplete; street, postcode and city are required.')
-    # The existing Address writer owns linking, exclusive ownership and baselines.
-    return {'id': str(parent['id']), 'street': values['address_line1'], 'zipcode': values['pincode'],
+    try:
+        require_customer_address_location(values.get('address_line1'), values.get('city'))
+    except MissingCustomerAddressLocation:
+        from hero_integration.services.address_correction import verified_address
+        materialized = verified_address(record, parent['id'], 'primary')
+        if not materialized:
+            raise
+        return {'id': str(parent['id']), 'verified_native_address': materialized}
+    if 'pincode' not in values and 'pincode' not in values.empty:
+        raise IncompleteMappedAddress('The source address postcode was not selected or returned.')
+    # An explicitly empty optional postcode supplies no native value or field baseline.
+    return {'id': str(parent['id']), 'street': values['address_line1'], 'zipcode': values.get('pincode'),
             'city': values['city'], 'country_name': values.get('country'),
             **({'country_code': 'de'} if not values.get('country') else {}),
             **({'line_2': values['address_line2']} if 'address_line2' in values else {}),

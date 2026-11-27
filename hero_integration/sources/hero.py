@@ -186,10 +186,18 @@ class GraphQLServiceSource:
         return SnapshotAdapter().adapt(self._stored_snapshot())
 
     def _saved_request(self, variables):
-        from hero_integration.services.mapping_contract_v1 import materialize_saved_query
-        return materialize_saved_query(self._stored_snapshot(),self.service.query_document,variables,
+        from hero_integration.services import migration_archive
+        return migration_archive.request(self._stored_snapshot(), self.service.query_document, variables,
+            root=self.contract.records_path, include_for_identity=getattr(self, "dependency_reader", False) or getattr(self, "scoped_test_ids", None) is not None,
             selected_paths=getattr(self.contract,'projection_paths',None),
             preserve_paths=getattr(self.contract,'projection_preserve_paths',()))
+
+    def _generated_request(self, document, variables):
+        from hero_integration.services import migration_archive
+        if not migration_archive.active():
+            return self._document_request(document, variables)
+        return migration_archive.request(self._stored_snapshot(), document, variables, root=self.contract.records_path,
+                                        include_for_identity=getattr(self, "scoped_test_ids", None) is not None)
 
     def _document_request(self, document, variables):
         from hero_integration.services.mapping_contract_v1 import materialize_saved_query
@@ -341,7 +349,7 @@ class GraphQLServiceSource:
             if not one_shot_lookup and self.contract.page_size > lookup_bound:
                 raise ReadContractError('Lookup page size exceeds its approved record bound.')
         if self.page_overlap and not (one_shot_lookup or unpaged):
-            validate_overlap(self.page_overlap, self.contract.page_size)
+            validate_overlap(self.page_overlap, self.contract.page_size, migration=True)
         with measure('read.approval'):
             if callable(self.revalidate) and self.revalidate() != self.contract:
                 raise ReadContractError('Read approval changed before transport.')
@@ -360,9 +368,20 @@ class GraphQLServiceSource:
             for name, value in tuple(variables.items()):
                 if value == "$offset": variables[name] = offset
                 elif value == "$page_size": variables[name] = self.contract.page_size
+        scoped_ids = getattr(self, 'scoped_test_ids', None)
+        selected = None
+        if scoped_ids is not None:
+            selected = scoped_ids[offset:offset+self.contract.page_size]
+            if not selected:
+                return SourcePage((),None)
+            for arg in offsets if request is not None else (k for k,v in self.contract.variables.items() if v=='$offset'):
+                variables[arg]=0
         with measure('read.compile'):
             wire = (self._saved_request(variables) if request is None else
-                    self._document_request(request.document, variables))
+                    self._generated_request(request.document, variables))
+        if selected is not None:
+            from hero_integration.services.scoped_test_reads import narrow
+            wire = self._document_request(narrow(wire.document,operation,self.contract.records_path,selected),wire.variables)
         with measure('read.transport'):
             data = self.client.query(wire.document, wire.variables)
         with measure('read.approval'):
@@ -400,9 +419,16 @@ class GraphQLServiceSource:
         bound = MAX_RECORDS if unpaged else lookup_bound if one_shot_lookup else self.contract.page_size
         if len(records) > bound:
             raise ReadContractError('Response exceeds the approved lookup bound.' if lookup else 'Response exceeds the approved page size.')
+        if selected is not None:
+            by_id={str(value_at(row,self.contract.identity_path)):row for row in records}
+            if len(by_id)!=len(records) or set(by_id)!=set(selected):
+                raise ReadContractError('Missing, repeated or foreign identity in scoped child read.')
+            records=[by_id[key] for key in selected]
         for row in records:
             value_at(row, self.contract.identity_path)
-        if operation == 'HeroProjectMatches' and self.query_adapter.get('logbook', {}).get('offset_variable'):
+        allowed_projects = getattr(self, 'logbook_project_ids', None)
+        if (operation == 'HeroProjectMatches' and self.query_adapter.get('logbook', {}).get('offset_variable')
+                and (allowed_projects is None or all(str(row.get('id')) in allowed_projects for row in records))):
             from hero_integration.services.project_logbook import complete_mapped_histories
             records = complete_mapped_histories(self, records, variables)
         annotated = tuple({**row, "_hero_source_instance": self.source_instance} for row in records)
@@ -410,7 +436,7 @@ class GraphQLServiceSource:
             return SourcePage(annotated, None)
         if self.page_overlap:
             # An explicit replay starts at zero under the same frozen reader contract.
-            window = advance(annotated, offset=offset, size=self.contract.page_size, overlap=self.page_overlap,
+            window = advance(annotated, offset=offset, size=self.contract.page_size, overlap=self.page_overlap, migration=True,
                              previous=self._offset_checkpoint if offset else None,
                              identity=lambda row: value_at(row, self.contract.identity_path))
             self._offset_checkpoint = window.checkpoint

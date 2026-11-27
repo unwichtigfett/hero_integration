@@ -20,6 +20,28 @@ class TestDocumentMaterializer(unittest.TestCase):
     def compile(self, variables):
         return Materializer.materialize_document(self.schema, self.snapshot.fingerprint, self.document, variables)
 
+    def test_saved_union_binds_only_the_matching_concrete_branch(self):
+        import json
+        from hero_integration.graphql_protocol.graphql_result_decoder import decode_graphql_result, GraphQLResultDecodeError
+        from hero_integration.graphql_protocol.transport import Response
+        schema = build_schema("type Query { positions:[Position] } union Position = Product | Wage "
+                              "type Product { id:ID! price:Float } type Wage { id:ID! rate:Float }")
+        query = "query { positions { __typename ... on Product { id price } ... on Wage { id rate } } }"
+        def bind(text):
+            request = Materializer.materialize_document(schema, "a"*64, text, {})
+            return Materializer.bind_saved_query_result(schema, request, root_name="positions")
+        bound = bind(query)
+        rows = [{"__typename":"Product","id":"P","price":5}, {"__typename":"Wage","id":"W","rate":6}]
+        def decode():
+            return decode_graphql_result(bound, Response(True,json.dumps({"data":{"positions":rows}}),True))
+        self.assertEqual(decode().value_for(("@Product","id")), ("P",None))
+        self.assertEqual(decode().value_for(("@Wage","rate")), (None,6))
+        rows[1]["__typename"] = "Unrecognized"
+        with self.assertRaises(GraphQLResultDecodeError):
+            decode()
+        with self.assertRaises(GraphQLOperationMaterializationError):
+            bind(query.replace("__typename", ""))
+
     def test_fragments_aliases_directives_and_defaults_are_preserved(self):
         request = self.compile({'n': 2, 'offset': 0})
         self.assertEqual(validate(self.schema, parse(request.document)), [])

@@ -3,6 +3,15 @@
  "fields":[
   {"fieldname":"correlation_id","label":"Correlation ID","fieldtype":"Data","reqd":1,"unique":1,"read_only":1,"in_list_view":1}, {"fieldname":"user","label":"User","fieldtype":"Link","options":"User","read_only":1}, {"fieldname":"site","label":"Site","fieldtype":"Data","read_only":1},
   {"fieldname":"operation_name","label":"Operation","fieldtype":"Data","read_only":1}, {"fieldname":"schema_fingerprint","label":"Schema Fingerprint","fieldtype":"Data","read_only":1}, {"fieldname":"mapping_revision","label":"Mapping Revision","fieldtype":"Int","read_only":1},
+  {"fieldname":"pending_target_key","label":"Pending Native Target","fieldtype":"Data","read_only":1,"search_index":1},
+  {"fieldname":"pending_create_scope","label":"Pending Creation Scope","fieldtype":"Data","read_only":1,"search_index":1},
+  {"fieldname":"remote_result_id","label":"Returned HERO Identity","fieldtype":"Data","read_only":1},
+  {"fieldname":"origin_event","label":"Origin Event","fieldtype":"Link","options":"HERO Integration Record","read_only":1},
+  {"fieldname":"bound_object_key","label":"Bound Object Key","fieldtype":"Data","read_only":1,"search_index":1},
+  {"fieldname":"pending_object_key","label":"Pending Object Key","fieldtype":"Data","read_only":1,"unique":1,"hidden":1},
+  {"fieldname":"event_action_key","label":"Native Event Delivery Key","fieldtype":"Data","read_only":1,"hidden":1,"unique":1},
+  {"fieldname":"delivery_stage","label":"Delivery Stage","fieldtype":"Select","options":"\nPrepared\nDispatching\nUncertain\nConfirmed\nNot Sent","read_only":1},
+  {"fieldname":"intent_json","label":"Approved Intent Evidence","fieldtype":"Long Text","read_only":1},
   {"fieldname":"request_fingerprint","label":"Request Fingerprint","fieldtype":"Data","read_only":1}, {"fieldname":"reservation_key","label":"Mutation Reservation","fieldtype":"Data","unique":1,"read_only":1,"hidden":1}, {"fieldname":"status","label":"Status","fieldtype":"Select","options":"Approved\nSucceeded\nFailed\nTimeout","read_only":1,"in_list_view":1}, {"fieldname":"detail","label":"Redacted Detail","fieldtype":"Small Text","read_only":1}
  ], "permissions":[{"role":"System Manager","read":1,"write":0,"create":0,"delete":0}], "modified":"2026-10-21 00:00:00.000000"
 }

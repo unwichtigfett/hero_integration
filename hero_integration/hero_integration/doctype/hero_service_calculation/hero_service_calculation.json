@@ -88,7 +88,7 @@
       "fieldname": "resolution",
       "fieldtype": "Select",
       "label": "Resolution",
-      "options": "Linked\nUnresolved",
+      "options": "Linked\nUnresolved\nHistorical",
       "read_only": 1,
       "in_list_view": 1
     },

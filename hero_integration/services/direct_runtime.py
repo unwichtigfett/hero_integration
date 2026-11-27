@@ -36,6 +36,8 @@ class DirectRead:
     service_revision: int = 0
     validate_write: Callable[[], None] | None = None
 
+    testing_rows: tuple[dict, ...] | None = None
+
     @property
     def mapping_version(self) -> str:
         return getattr(self.plan, "mapping_version", "") or f"{self.operation}:{self.origin}"
@@ -174,32 +176,41 @@ def records(read: DirectRead, data) -> list[dict]:
     # look like the empty page that marks an import as complete.
     value = lookup(data, path)
     if not isinstance(value, list) or not all(isinstance(row, dict) for row in value):
-        raise ValueError("HERO returned an invalid record list for " + read.operation + ".")
+        raise ValueError("HERO returned an invalid record list for " + (getattr(read, "target_operation", None) or read.operation) + ".")
     if unwrap:
         value = [row.get(unwrap) for row in value]
         if not all(isinstance(row, dict) for row in value):
-            raise ValueError("HERO returned an invalid record list for " + read.operation + ".")
+            raise ValueError("HERO returned an invalid record list for " + (getattr(read, "target_operation", None) or read.operation) + ".")
     return value
 
 
 def fetch_page(client, read: DirectRead, offset: int, size: int | None = None) -> list[dict]:
     """One page; a page HERO rejects is read again in two halves (down to 50 records)."""
+    if read.testing_rows is not None:
+        if read.operation == 'HeroEmployees':
+            return list(read.testing_rows) if offset == 0 else []
+        return list(read.testing_rows[offset:offset + (size or read.page_size)])
     if read.snapshot is None:
         raise ValueError('A schema-bound read is required before GraphQL transport.')
     size = size or read.page_size
     try:
-        from hero_integration.services.mapping_contract_v1 import materialize_saved_query
+        from hero_integration.services import migration_archive
         options = ({'selected_paths':read.projection_paths,'preserve_paths':read.projection_preserve_paths}
                    if read.projection_paths is not None else {})
-        request = materialize_saved_query(read.snapshot, read.document, page_variables(read, offset, size),**options)
+        request = migration_archive.request(read.snapshot, read.document, page_variables(read, offset, size),
+                                            root=read.records_path, **options)
         rows = records(read, client.query(request.document, request.variables))
-        if len(rows) > size:
-            raise ValueError("Response exceeds the requested direct reader page size.")
+        response_limit = size
+        if direct.OPERATIONS.get(read.operation, {}).get('unpaged'):
+            from hero_integration.services.employee_migration import MAX_RECORDS
+            response_limit = MAX_RECORDS
+        if len(rows) > response_limit:
+            raise ValueError("Response exceeds the direct reader response bound.")
         return rows
     except ValueError:
         raise
     except Exception:
-        if size <= 50:
+        if size <= 50 or direct.OPERATIONS.get(read.operation, {}).get("unpaged"):
             raise
         half = size // 2
         first = fetch_page(client, read, offset, half)
@@ -272,6 +283,9 @@ def process_record(read, row, instance, source_type, run_name, write):
 
     if read.validate_write:
         read.validate_write()
+    if read.validate_write and read.operation == 'HeroEmployees' and source_type == 'partner':
+        from hero_integration.services.employee_binding_revision import carry_employee_bindings
+        carry_employee_bindings(read, row)
     return process_migration_record(read.plan, row, instance, source_type, write, evidence=run_name,
                                     successful=lambda status: status in {"added", "updated", "unchanged"})
 

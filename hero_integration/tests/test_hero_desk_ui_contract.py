@@ -47,12 +47,16 @@ class TestHeroDeskUiContract(unittest.TestCase):
         sections = dict(re.findall(r"        async function (\w+)\([^)]*\) \{(.*?)^        \}", migration, re.M | re.S))
         status = 'call("runtime_plan_status",'
         self.assertEqual({name for name, body in sections.items() if status in body},
-                         {"showSyncEvidence", "reviewBoundSync"})
-        self.assertEqual(migration.count("runtime_plan_status"), 2)
+                         {"showSyncEvidence", "reviewBoundSync", "reviewMonitor"})
+        self.assertEqual(migration.count("runtime_plan_status"), 3)
         self.assertEqual(re.findall(r'call\("([^"]+)"', sections["showSyncEvidence"]), ["runtime_plan_status"])
         dialog = sections["reviewBoundSync"]
         self.assertLess(dialog.index(status), dialog.index("frappe.confirm("))
         self.assertLess(dialog.index("frappe.confirm("), dialog.index('call("start_sync_once", approval, "POST")'))
+        monitor = sections["reviewMonitor"]
+        self.assertEqual(re.findall(r'call\("([^"]+)"', monitor), ["runtime_plan_status", "start_monitor_test"])
+        self.assertLess(monitor.index(status), monitor.index("frappe.confirm("))
+        self.assertLess(monitor.index("frappe.confirm("), monitor.index('call("start_monitor_test", approval, "POST")'))
         self.assertNotIn("sync_hero_preview", migration)
         self.assertNotIn("sync_hero_execute", migration)
 
@@ -132,9 +136,9 @@ class TestHeroDeskUiContract(unittest.TestCase):
         source = SETTINGS_JS.read_text()
         for contract in (
             "Testing", "testingEnabled", "testingMaxActions", "testing_enabled", "testing_max_actions",
-            "Max. records per area", "Imports write ERPNext data.",
-            "Full Migration applies the limit separately to each area.",
-            "changing it affects new runs only.",
+            "Max. primary records", "Imports write ERPNext data.",
+            "Full Migration applies the limit separately to projects, products and services and includes proven project dependencies.",
+            "The run keeps the limit set at its start.",
             "Save Testing Settings", "workspace_testing_settings_save",
         ):
             with self.subTest(contract=contract):

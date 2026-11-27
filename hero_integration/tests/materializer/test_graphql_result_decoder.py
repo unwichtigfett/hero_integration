@@ -286,6 +286,16 @@ class GraphQLResultDecoderTests(unittest.TestCase):
             (1, 2, 3),
         )
 
+    def test_product_attributes_accept_structured_json_only_for_the_json_scalar(self):
+        path = ("attributes",)
+        response_path = ("data", "result", "attributes")
+        value = {"spec": [0, False, None, "x"]}
+        response = make_response({"data": {"result": {"attributes": value}}})
+        decoded = decode_graphql_result(make_request(make_binding(path, response_path, "JSON")), response)
+        self.assertEqual(decoded.value_for(path)["spec"], (0, False, None, "x"))
+        with self.assertRaises(GraphQLResultDecodeError):
+            decode_graphql_result(make_request(make_binding(path, response_path, "Date")), response)
+
     def test_enum_or_custom_scalar_leaf(self):
         decoded = decode_graphql_result(
             make_request(

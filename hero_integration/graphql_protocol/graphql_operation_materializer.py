@@ -179,6 +179,7 @@ class GraphQLResultBinding:
     protocol_field_node_ids: tuple[str, ...]
     response_path: tuple[str, ...]
     graphql_type: str
+    possible_typenames: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -391,8 +392,8 @@ class GraphQLOperationMaterializer:
     @staticmethod
     def bind_saved_query_result(schema, request, *, root_name):
         """Bind unconditional saved selections to their schema types and response aliases."""
-        from graphql import get_named_type
-        from graphql.language.ast import FieldNode
+        from graphql import get_named_type, is_abstract_type
+        from graphql.language.ast import FieldNode, InlineFragmentNode
 
         if not isinstance(request, GraphQLDocumentRequest) or request.operation_kind is not GraphQLOperationKind.QUERY:
             raise GraphQLOperationMaterializationError("A materialized saved query is required.")
@@ -407,8 +408,23 @@ class GraphQLOperationMaterializer:
         bindings = []
 
         def visit(owner, fields, path=(), ids=()):
+            members = tuple(t.name for t in schema.get_possible_types(owner)) if is_abstract_type(owner) else (owner.name,)
+            discriminated = any(isinstance(n, FieldNode) and n.name.value == "__typename" and not n.alias and not n.directives
+                                for n in fields)
             for node in fields:
-                if not isinstance(node, FieldNode) or node.directives or node.name.value not in owner.fields:
+                if isinstance(node, InlineFragmentNode) and not node.directives and node.type_condition:
+                    member = node.type_condition.name.value
+                    if not discriminated or member not in members:
+                        raise GraphQLOperationMaterializationError("Conditional or unresolved result selection.")
+                    visit(schema.get_type(member), node.selection_set.selections, (*path, "@" + member),
+                          (*ids, f"fragment:{owner.name}.@{member}"))
+                    continue
+                if isinstance(node, FieldNode) and node.name.value == "__typename" and not node.directives:
+                    current = (*path, (node.alias or node.name).value)
+                    bindings.append(GraphQLResultBinding(current[1:], (*ids, f"field:{owner.name}.__typename"),
+                                                         ("data", *current), "String!", members))
+                    continue
+                if not isinstance(node, FieldNode) or node.directives or node.name.value not in getattr(owner, "fields", {}):
                     raise GraphQLOperationMaterializationError("Conditional or unresolved result selection.")
                 name = node.name.value
                 field = owner.fields[name]

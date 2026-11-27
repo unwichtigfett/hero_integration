@@ -16,7 +16,7 @@ def candidates() -> list[dict]:
         SELECT p.name, p.project_name, p.custom_hero_customer_title AS salutation, l.name AS link,
                l.source_field_hashes, l.target_field_hashes
         FROM `tabProject` p JOIN `tabHERO Integration Link` l
-          ON l.target_doctype='Project' AND l.target_name=p.name AND l.source_type='project'
+          ON l.source_system='HERO' AND l.target_doctype='Project' AND l.target_name=p.name AND l.source_type='project'
         WHERE IFNULL(p.custom_hero_customer_title, '') != ''""", as_dict=True)
     found = []
     for row in rows:

@@ -16,6 +16,11 @@ class HEROIntegrationSettings(Document):
         validate_overlap(self.get("polling_page_overlap"), int(self.get("polling_page_size") or 100))
         if (self.get("polling_read_mode") or "NORMAL") != "NORMAL":
             frappe.throw(frappe._("Fast Mode requires a verified HERO change-discovery contract."))
+        from hero_integration.services.concurrency import worker_count
+        try:
+            self.polling_concurrency = worker_count(self.get("polling_concurrency"))
+        except ValueError as error:
+            frappe.throw(frappe._(str(error)))
         self._update_source_binding()
         if self.hero_api_url:
             hosts = {line.strip().lower() for line in (self.allowed_hero_hosts or "").splitlines() if line.strip()}

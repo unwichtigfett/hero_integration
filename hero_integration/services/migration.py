@@ -3,14 +3,17 @@ from __future__ import annotations
 import hashlib
 import json
 import re
+import time
 from contextlib import contextmanager, nullcontext
 from dataclasses import dataclass
 from datetime import timedelta
 from uuid import uuid4
 
 import frappe
+from hero_integration.services import migration_archive
+from hero_integration.services import concurrency
 from hero_integration.services import execution_budget
-from hero_integration.services.binding_registry import BindingConflict
+from hero_integration.services.binding_registry import BindingConflict, RETIRED_LINK_SYSTEM
 from frappe.utils import get_datetime, now_datetime
 
 from hero_integration.client.graphql import HeroGraphQLClient
@@ -25,10 +28,11 @@ from hero_integration.integrations.erpnext.contact import (
 )
 from hero_integration.sources.hero import GraphQLServiceSource, SourcePage, TestingPreviewSource
 from hero_integration.services.change_detection import (
-    changed_fields, decode as decode_hashes, encode as encode_hashes, field_hashes, managed_target_update, new_mapped_field_conflicts, next_baseline, reconcile,
+    EMPTY_HASH, changed_fields, decode as decode_hashes, encode as encode_hashes, field_hashes, managed_target_update, new_mapped_field_conflicts, next_baseline, reconcile,
 )
 from hero_integration.services.conflict_notifications import notify_conflict_once, notify_review, notify_run_summary
 from hero_integration.services.integration_events import record_output
+from hero_integration.services.task_assignment_state import completing_task
 from hero_integration.services import task_lifecycle
 from hero_integration.services.performance import measured, profiled
 from hero_integration.services.mapping_runtime import MappingPlanError, active_mapping_plan
@@ -60,6 +64,7 @@ class Result:
     pending_relation: bool = False
     related_field_conflict: bool = False
     verified_object: str = ""
+    required_references: tuple = ()
 
 
 class CustomerAddressError(ValueError):
@@ -149,6 +154,18 @@ def _reconcile_project_notes_representation(outcome, record, values, target_valu
     return outcome
 
 
+def _seed_untouched_task_status(task, link, source, target, done_field):
+    """Recover only an untouched original row with a confirmed empty completion date."""
+    if ('status' in source or 'status' in target or task.get('status') != 'Open'
+            or task.get('completed_on') or source.get(done_field) != EMPTY_HASH
+            or target.get(done_field) != EMPTY_HASH or not task.creation
+            or task.creation != task.modified or task.creation > link.creation):
+        return False
+    source['status'] = EMPTY_HASH
+    target['status'] = field_hashes({'status': task.status})['status']
+    return True
+
+
 def _task_midnight_baseline(prior_source, prior_target, current):
     """Recognize a proven legacy Date stored by native Datetime as midnight.
 
@@ -170,6 +187,7 @@ def _task_midnight_baseline(prior_source, prior_target, current):
 def _run_checkpoint_contract(run, *, lock=False):
     """The effective reader/rule contract on the existing Run, without credentials."""
     from hero_integration.services.mapping_runtime import effective_rule_fingerprint
+    from hero_integration.services.graphql_schema_cache import checkpoint_digest
     from hero_integration.services.read_contract import from_documents
     from hero_integration.hero_integration.doctype.hero_graphql_mapping.hero_graphql_mapping import lock_exchange_context
 
@@ -179,6 +197,7 @@ def _run_checkpoint_contract(run, *, lock=False):
         frappe.db.sql("SELECT field FROM `tabSingles` WHERE doctype=%s FOR UPDATE", ("HERO Integration Settings",))
     config = get_configuration()
     signatures = []
+    snapshots = {}
     readers = [(run.graphql_service, run.graphql_mapping, run.service_revision, run.mapping_revision)]
     if getattr(run, 'customer_service', ''):
         readers.append((run.customer_service, run.customer_mapping,
@@ -192,7 +211,10 @@ def _run_checkpoint_contract(run, *, lock=False):
         if (mapping.source_instance or '', mapping.schema_snapshot, mapping.direction) != scope:
             raise MappingPlanError("Checkpoint mapping context changed concurrently.")
         service = frappe.get_doc("HERO GraphQL Service", service_name, for_update=lock)
-        snapshot = frappe.get_doc("HERO GraphQL Schema Snapshot", service.schema_snapshot, for_update=lock)
+        if service.schema_snapshot not in snapshots:
+            snapshots[service.schema_snapshot] = frappe.get_doc(
+                "HERO GraphQL Schema Snapshot", service.schema_snapshot, for_update=lock)
+        snapshot = snapshots[service.schema_snapshot]
         _validate_run_source_binding(run, config, snapshot)
         contract = from_documents(service, mapping, snapshot)
         if contract.service_revision != int(service_revision) or contract.mapping_revision != int(mapping_revision):
@@ -202,7 +224,7 @@ def _run_checkpoint_contract(run, *, lock=False):
             "mapping": mapping_name, "mapping_revision": contract.mapping_revision,
             "reader": _digest({"query": service.query_document, "mapping": json.loads(mapping.mapping_json)}),
             "schema": snapshot.name, "schema_fingerprint": snapshot.schema_fingerprint,
-            "schema_content": _digest(json.loads(snapshot.snapshot_json)),
+            "schema_content": checkpoint_digest(snapshot.snapshot_json),
             "field_rules": effective_rule_fingerprint(contract.definition_ids, mapping_name, lock=lock),
         })
     return {"version": 1, "site": frappe.local.site, "source_instance": config.source_instance,
@@ -260,21 +282,25 @@ def _verified_historical_users(run, source):
     action = getattr(run, 'action', '')
     if action not in PROJECT_ACTIONS and action != 'Projection Migration':
         return ()
+    return _verified_historical_people(source)[0]
+
+
+def _verified_historical_people(source):
     from hero_integration.client.graphql import HeroClientError
     from hero_integration.services import direct_runtime
     from hero_integration.services.employee_migration import EmployeeMigrationBlocked, _historical_identities
     from hero_integration.services.migration_testing import project_reader_fingerprint
     read = direct_runtime.approved_read('HeroEmployees', source.source_instance)
     if read is None:
-        return ()
+        return (), ()
     fingerprint = project_reader_fingerprint(read)
     if source.revalidate and source.revalidate() != source.contract:
         raise MappingPlanError('Read approval changed before historical identity verification.')
     try:
-        identities, _ = _historical_identities(source.client, read.records_path, None, None,
+        identities = _historical_identities(source.client, read.records_path, None, None,
                                                read=read, source_instance=source.source_instance)
     except (HeroClientError, EmployeeMigrationBlocked):
-        return ()  # Unverified references keep their ordinary pending status.
+        return (), ()  # Unverified references keep their ordinary pending status.
     if source.revalidate and source.revalidate() != source.contract:
         raise MappingPlanError('Read approval changed during historical identity verification.')
     current = direct_runtime.approved_read('HeroEmployees', source.source_instance)
@@ -291,6 +317,8 @@ def execute_run(run_name: str) -> None:
 @profiled('migration.run')
 def _execute_run(run_name: str) -> None:
     run = frappe.get_doc("HERO Integration Run", run_name)
+    from hero_integration.services.test_environment import guard_run
+    guard_run(run)
     frappe.set_user(run.owner)
     if run.state in TERMINAL_STATES:
         _advance_full_migration(run.name)
@@ -309,8 +337,21 @@ def _execute_run(run_name: str) -> None:
             from hero_integration.services.file_migration import related_test_for_run
             from hero_integration.services.migration_testing import RecordLimitedSource, RelatedProjectSource, record_limit
             cohort = related_test_for_run(run)
-            testing_source = (RelatedProjectSource(source, record_limit(run), cohort) if cohort is not None
-                              else RecordLimitedSource(source, record_limit(run)))
+            if (int(getattr(run, 'budget_contract_version', 0) or 1) in (2, 3)
+                    and run.name == run.execution_budget_run):
+                from hero_integration.services.migration_testing_selection import prepare_native, SelectionBlocked
+                operation = source.contract.target_operation
+                plan = _mapping_plan_for_run(run, operation)
+                customer_plan = _mapping_plan_for_run(run, 'HeroCustomers') if operation == 'HeroProjectMatches' else None
+                try:
+                    with migration_archive.run_selection(run), execution_budget.run_scope(run) as selection_budget:
+                        testing_source = prepare_native(source, selection_budget, run.checkpoint_contract_json,
+                                                        plan, customer_plan)
+                except SelectionBlocked as error:
+                    raise MappingPlanError(str(error)) from error
+            else:
+                testing_source = (RelatedProjectSource(source, record_limit(run), cohort) if cohort is not None
+                                  else RecordLimitedSource(source, record_limit(run)))
             source = testing_source
         from hero_integration.services.employee_migration import historical_user_scope
         previous_page = json.loads(getattr(run, "page_checkpoint_json", None) or "{}")
@@ -318,22 +359,30 @@ def _execute_run(run_name: str) -> None:
             # The old offset describes a mutable inventory. Keep its evidence until
             # a newly admitted worker saves its first confirmed page/record.
             with _checkpoint_transaction(run, claim_started_on):
-                run.resume_phase, run.resume_offset, run.resume_record_index = "", 0, 0
-                run.customer_phase_state = run.project_phase_state = "Queued"
+                from hero_integration.services.migration_replay import begin
+                begin(run)
                 run.page_checkpoint_json = json.dumps(previous_page)
-        with execution_budget.run_scope(run) as budget:
+        with migration_archive.run_selection(run), execution_budget.run_scope(run) as budget:
             historical = () if budget else _verified_historical_users(run, source)
             with historical_user_scope(getattr(source, 'source_instance', ''), historical):
                 _process_requested_phases(run, source, checkpoint=lambda: _checkpoint_transaction(run, claim_started_on))
         run.reload()
         if run.state == "Running":
+            from hero_integration.services.deferred_references import finish_standalone_cohort
+            incomplete = finish_standalone_cohort(run)
             with _checkpoint_transaction(run, claim_started_on):
                 run.reload()
+                if incomplete:
+                    run.error_message = incomplete
                 incomplete_sample = bool(testing_source and getattr(testing_source, 'status', '') == 'BLOCKED')
-                run.state = "Completed With Conflicts" if run.conflict_records or incomplete_sample else "Completed"
+                run.state = ("Blocked" if incomplete else "Completed With Conflicts"
+                             if run.conflict_records or incomplete_sample else "Completed")
                 run.finished_on = now_datetime()
                 run.save()
-                _mark_sync_success(run)
+                if incomplete:
+                    _mark_sync_error(run)
+                else:
+                    _mark_sync_success(run)
             _notify_not_imported(run)
     except execution_budget.BudgetReached as error:
         failed = True
@@ -473,6 +522,7 @@ def _source_for_run(run, config):
         )
     source.page_overlap = int(getattr(run, 'page_overlap', 0) or 0)
     if getattr(source, 'customer_source', None):
+        source.customer_source.dependency_reader = True
         source.customer_source.page_overlap = source.page_overlap
     return source
 
@@ -667,15 +717,49 @@ def _release_active_run_lock() -> None:
     release(frappe)
 
 
+def _completed_customer_sibling(run):
+    """Accept only the same full run's finished, unbounded customer reader."""
+    if (run.action != 'Project Migration' or getattr(run, 'mode', '') != 'Execute'
+            or getattr(run, 'testing_enabled', False) or getattr(run, 'execution_budget_run', None)
+            or not getattr(run, 'customer_service', None) or not run.checkpoint_contract_json
+            or run.customer_phase_state != 'Queued' or run.resume_offset or run.resume_record_index):
+        return None
+    from hero_integration.services import file_migration as fm, migration_replay
+    if migration_replay.enabled(run):
+        # A replay queues the prerequisite only when its own evidence needs rebuilding.
+        return None
+    parent = fm._parent_run(run.name)
+    if not parent:
+        return None
+    chain = fm._full(parent)
+    if run.name not in (chain.get('child'), (chain.get('wave_children') or {}).get('Project Migration')):
+        return None
+    project = json.loads(run.checkpoint_contract_json)
+    for child in reversed(chain.get('completed_children', ())):
+        prior = frappe.get_doc('HERO Integration Run', child)
+        if (prior.action != 'Customer Migration' or prior.state not in fm.SUCCESS
+                or prior.customer_phase_state != 'Completed' or prior.testing_enabled or prior.execution_budget_run
+                or fm._parent_run(child) != parent or not prior.checkpoint_contract_json):
+            continue
+        contract = json.loads(prior.checkpoint_contract_json)
+        same_scope = all(contract.get(k) == project.get(k) for k in
+                         ('version', 'site', 'source_instance', 'source_binding_revision', 'mode', 'actor', 'page_overlap'))
+        readers = contract.get('readers', [])
+        if (same_scope and len(readers) == 1 and readers[0].get('service') == run.customer_service
+                and readers[0] in project.get('readers', [])):
+            return child
+    return None
+
+
 def _process_requested_phases(run, source: GraphQLServiceSource, *, checkpoint=None) -> None:
-    # A project run is never allowed to bypass its own complete Customer pass.
-    # This is intentionally stricter than a mere lookup during project creation:
-    # the gate belongs to the same run and source instance, and survives retries.
     checkpoint = checkpoint or nullcontext
     _bind_source_instance(run, source.source_instance)
     if run.action in PROJECTION_ACTIONS:
         _process_projection(run, source, checkpoint=checkpoint)
         return
+    if _completed_customer_sibling(run):
+        with checkpoint():
+            _set_phase_state(run, 'customer', 'Completed')
     needs_customer_phase = run.action in CUSTOMER_ACTIONS or run.action in PROJECT_ACTIONS
     if needs_customer_phase and not _process_phase(run, "customer", source.customers, checkpoint=checkpoint):
         return
@@ -824,6 +908,35 @@ def _validate_enumeration_page(page: SourcePage, offset: int, seen_ids: set[str]
     seen_ids.update(identities)
 
 
+@concurrency.limited_worker
+def _write_checkpoint_record(run, checkpoint, page, offset, index, phase, kind, record, write, *, prior=None):
+    """Retry a deadlock victim at the record boundary, including its receipt and counters."""
+    contract = getattr(run, 'checkpoint_contract_json', None)
+    for attempt in range(3):
+        body_finished = False
+        try:
+            with checkpoint():
+                result = write()
+                options = {'prior': prior} if prior else {}
+                _record_result(run, kind, record, result, **options)
+                if phase in PHASES:
+                    _record_phase_result(run, phase, result, **options)
+                run.resume_phase, run.resume_offset, run.resume_record_index = phase, offset, index + 1
+                _record_offset_checkpoint(run, page, phase, offset, index + 1)
+                run.save()
+                body_finished = True
+            return
+        except getattr(frappe, 'QueryDeadlockError', ()):
+            # Never replay an uncertain commit or a post-commit callback. The real
+            # checkpoint context rolls back and rechecks the original claim on reentry.
+            if body_finished or attempt == 2 or checkpoint is nullcontext:
+                raise
+            run.reload()
+            if run.checkpoint_contract_json != contract:
+                raise MappingPlanError("The checkpoint contract changed during retry.")
+            time.sleep(0.05 * (attempt + 1))
+
+
 def _process_phase(run, phase: str, reader, *, checkpoint=None) -> bool:
     checkpoint = checkpoint or nullcontext
     if _phase_state(run, phase) == "Completed":
@@ -842,6 +955,8 @@ def _process_phase(run, phase: str, reader, *, checkpoint=None) -> bool:
     operation = "HeroCustomers" if phase == "customer" else "HeroProjectMatches"
     plan = _mapping_plan_for_run(run, operation) if getattr(run, "graphql_mapping", None) else None
     migrate = _migrate_customer if phase == "customer" else _migrate_project
+    from hero_integration.services import migration_replay
+    previous = migration_replay.prior_receipts(run, phase)
     seen_ids: set[str] = set()
     while True:
         _cancel_if_requested(run)
@@ -864,25 +979,24 @@ def _process_phase(run, phase: str, reader, *, checkpoint=None) -> bool:
                 _block_run(run, detail)
             return False
         _validate_enumeration_page(page, offset, seen_ids, allow_filtered_empty=isinstance(testing_source, RelatedProjectSource))
-        for index, record in enumerate(page.records):
+        from hero_integration.services.record_dispatch import distribute
+        distributed = record_index == 0 and distribute(run, page, phase, offset, plan, checkpoint)
+        changed = getattr(page, 'changed_overlap_ids', ())
+        if changed and not distributed:
+            previous.update(migration_replay.prior_receipts(run, phase, changed, changed_overlap=True))
+        for index, record in enumerate(() if distributed else page.records):
             if index < record_index:
                 continue
             _cancel_if_requested(run)
-            with checkpoint():
-                if plan is not None:
-                    if budget := execution_budget.current_budget():
-                        _reserve_mapped_record(budget, phase, record, plan)
-                    result = _migrate_with_binding(record, run, plan, phase, lambda: migrate(record, run, plan=plan))
-                else:
-                    # Legacy direct previews have no executable run contract.
-                    result = _migrate_isolated(lambda: migrate(record, run))
-                _record_result(run, phase, record, result)
-                _record_phase_result(run, phase, result)
-                run.resume_phase = phase
-                run.resume_offset = offset
-                run.resume_record_index = index + 1
-                _record_offset_checkpoint(run, page, phase, offset, index + 1)
-                run.save()
+            def write():
+                if plan is None:
+                    return _migrate_isolated(lambda: migrate(record, run))
+                if budget := execution_budget.current_budget():
+                    _reserve_mapped_record(budget, phase, record, plan)
+                return _migrate_with_binding(record, run, plan, phase, lambda: migrate(record, run, plan=plan))
+
+            prior = previous.get(str(record['id']))
+            _write_checkpoint_record(run, checkpoint, page, offset, index, phase, phase, record, write, prior=prior)
         with checkpoint():
             run.resume_phase = phase
             _record_offset_checkpoint(run, page, phase, offset, len(page.records), complete=True)
@@ -908,7 +1022,7 @@ def _persist_testing_result(run, source: TestingPreviewSource) -> None:
     """Store only technical counters and source outcomes for the finished test run."""
     try:
         run.reload()
-        status = "FAILED" if run.state == "Failed" else source.status
+        status = {"Failed": "FAILED", "Blocked": "BLOCKED"}.get(run.state, source.status)
         run.testing_executed_actions = source.executed_actions
         run.testing_records_received = source.records_received
         run.testing_status = status
@@ -923,7 +1037,7 @@ def _persist_testing_result(run, source: TestingPreviewSource) -> None:
 
 
 def _migrate_customer(record: dict[str, object], run, *, plan=None) -> Result:
-    from hero_integration.services.query_mapping import IncompleteMappedAddress
+    from hero_integration.services.query_mapping import IncompleteMappedAddress, MissingCustomerAddressLocation
     try:
         plan = plan or _mapping_plan_for_run(run, "HeroCustomers")
         source_id = plan.source_identity(record)
@@ -943,9 +1057,8 @@ def _migrate_customer(record: dict[str, object], run, *, plan=None) -> Result:
             else:
                 address = _customer_primary_address(record, plan.customer_primary_address_line2(record))
         except (IncompleteAddress, IncompleteMappedAddress) as error:
-            # The Customer is still imported; an incomplete address is skipped, as if HERO had none.
             address, address_note = None, f" {error} It was not imported."
-            incomplete_address = True
+            incomplete_address = error
         if not getattr(plan, 'adapter_options', None) and address is not None and not address.get("country_code"):
             # HERO customers are German unless HERO names another country.
             address["country_code"] = DEFAULT_ADDRESS_COUNTRY
@@ -958,7 +1071,7 @@ def _migrate_customer(record: dict[str, object], run, *, plan=None) -> Result:
     # A v2 query plan needs no lifecycle rule; its validated canonical
     # ``is_deleted`` flag decides on its own.
     adapter_deleted = bool(getattr(plan, 'adapter_options', None)) and record.get('is_deleted') is True
-    if adapter_deleted or plan.source_deleted(record):
+    if (adapter_deleted or plan.source_deleted(record)) and not (migration_archive.includes_archived() and record.get("is_deleted") is True):
         if run.mode != 'Preview':
             _mark_source_deleted(_link("customer", source_id, _source_instance(record)))
         return Result("SKIPPED_SOURCE_DELETED", "Source customer is deleted. No target deletion occurs.")
@@ -1042,6 +1155,9 @@ def _migrate_customer(record: dict[str, object], run, *, plan=None) -> Result:
             frappe.db.rollback(save_point='hero_customer_primary_relations')
             return Result('CONFLICT', str(error), 'Customer', result.target_name)
     result = _sync_mapped_relations(plan, record, result, run)
+    if isinstance(incomplete_address, MissingCustomerAddressLocation) and result.code in {
+            'CREATED', 'UPDATED', 'SKIPPED', 'CONVERGED', 'OBSERVED', 'PREVIEW_OK'}:
+        return _customer_address_conflict(result, incomplete_address)
     if incomplete_address and result.target_name and result.code in {'CREATED', 'UPDATED', 'SKIPPED', 'CONVERGED', 'OBSERVED'}:
         if not result.pending_relation and run.mode != 'Preview':
             record_output(run=run.name, source_type='customer', source_id=str(source_id), result='PENDING_REVIEW',
@@ -1138,15 +1254,20 @@ def _rejections() -> tuple[type, ...]:
 
 
 def _reserve_mapped_record(budget, kind, record, plan):
-    from hero_integration.services.deferred_references import references
+    from hero_integration.services.deferred_references import OPERATIONS, references
+    if migration_archive.excluded(OPERATIONS.get(kind), record):
+        return
     identity = plan.source_identity(record)
     dependencies = references(plan, record)
     dependencies.extend(execution_budget.mapped_dependencies(plan, record, plan.target_doctype))
-    budget.reserve_many([(kind, identity), *dependencies])
+    budget.reserve_record(kind, identity, dependencies)
 
 
 def _migrate_with_binding(record, run, plan, kind, write, *, relationships_only=False):
     from hero_integration.services.execution_runtime import process_migration_record
+    from hero_integration.services.deferred_references import OPERATIONS
+    if migration_archive.excluded(OPERATIONS.get(kind), record):
+        return Result("SKIPPED_SOURCE_DELETED", "Archived source record excluded by migration settings.")
     if run.mode == "Preview":
         return _migrate_isolated(write)
     return _migrate_isolated(lambda: process_migration_record(plan, record, _source_instance(record), kind,
@@ -1156,23 +1277,28 @@ def _migrate_with_binding(record, run, plan, kind, write, *, relationships_only=
 
 def _migrate_isolated(migrate, savepoint="hero_record") -> Result:
     """Run one record so that an ERPNext validation error blocks only this record."""
-    frappe.db.savepoint(savepoint)
-    try:
-        return migrate()
-    except BindingConflict as error:
-        frappe.db.rollback(save_point=savepoint)
-        return Result("CONFLICT", str(error))
-    except Exception as error:
-        if not isinstance(error, _rejections()):
-            raise
+    from hero_integration.services.change_detection import record_transaction_callbacks
+    with record_transaction_callbacks(frappe.db) as rollback:
+        frappe.db.savepoint(savepoint)
         try:
-            frappe.db.rollback(save_point=savepoint)
-        except Exception:
-            # An inner full rollback removed the savepoint; the run fails as before.
-            raise error from None
-        frappe.clear_messages()
-        frappe.log_error(title="HERO record rejected by ERPNext")
-        return Result("BLOCKED_RECORD", f"ERPNext rejected the record ({type(error).__name__}); see Error Log.")
+            return migrate()
+        except BindingConflict as error:
+            rollback(save_point=savepoint)
+            return Result("CONFLICT", str(error))
+        except Exception as error:
+            if isinstance(error, tuple(kind for name in ('QueueOverloaded', 'TimestampMismatchError', 'QueryDeadlockError', 'QueryTimeoutError')
+                                       if isinstance(kind := getattr(frappe, name, None), type))):
+                raise
+            if not isinstance(error, _rejections()):
+                raise
+            try:
+                rollback(save_point=savepoint)
+            except Exception:
+                # An inner full rollback removed the savepoint; the run fails as before.
+                raise error from None
+            frappe.clear_messages()
+            frappe.log_error(title="HERO record rejected by ERPNext")
+            return Result("BLOCKED_RECORD", f"ERPNext rejected the record ({type(error).__name__}); see Error Log.")
 
 
 def _projection_task_scope(run, plan, mapping, snapshot_source, source_instance):
@@ -1197,7 +1323,7 @@ def _reference_rule(rule):
             rule.transformation in {'HERO Customer Link','HERO Project Link','HERO User Link','User By Partner ID'})
 
 
-def _defer_reference_values(plan, values, run):
+def _defer_reference_values(plan, values, run, record):
     """Keep relationship fields out of writes and baseline acknowledgements.
 
     The original record and exact dependencies are saved by remember(); only
@@ -1212,6 +1338,14 @@ def _defer_reference_values(plan, values, run):
         if _reference_rule(rule):
             if rule.target_field not in values.missing:
                 deferred.add(rule.target_field)
+            from hero_integration.services.direct_mapping import lookup
+            raw = lookup(record, rule.source_path)
+            if type(raw) is int and raw > 0:
+                # Keep enough evidence for a native mandatory field on creation.
+                # Existing targets still retain their local relationship until replay.
+                if not hasattr(values, 'deferred_links'):
+                    values.deferred_links = {}
+                values.deferred_links[rule.target_field] = (rule, raw, values.get(rule.target_field))
             values.pop(rule.target_field, None)
             values.empty.discard(rule.target_field)
             values.missing.add(rule.target_field)
@@ -1236,13 +1370,13 @@ def _migrate_projection_record(record, run, plan, task_scope):
     return result
 
 
-def realize_mapped_bindings(record,run,plan):
+def realize_mapped_bindings(record,run,plan, *, partial_rules=None, historical_projects=None):
     """Update only native references/assignments of an already imported target."""
     from dataclasses import replace
     from hero_integration.services.deferred_references import realizing
     from hero_integration.services.query_mapping import mapped_values
     operation = plan.target_operation or plan.operation
-    if (not realizing() or run.mode=='Preview' or run.state!='Completed' or
+    if (not realizing() or run.mode=='Preview' or run.state not in ('Running', 'Completed', 'Completed With Conflicts') or
             operation not in {'HeroTasks','HeroProjectMatches','HeroCalendarEvents'} or plan.adapter_options.get('version')!=2
             or run.source_instance!=_source_instance(record)):
         raise MappingPlanError('Mapped binding realization requires its successful originating area.')
@@ -1258,12 +1392,25 @@ def realize_mapped_bindings(record,run,plan):
     if operation=='HeroCalendarEvents' and (target.get('event_type')!='Private' or any(target.get(field) for field in (
             'event_participants','send_reminder','sync_with_google_calendar','add_video_conferencing'))):
         return Result('CONFLICT','Event sharing or outbound settings changed; native calendar update requires review.',doctype,target.name)
-    subset=replace(plan,definitions=tuple(rule for rule in plan.definitions
-        if rule.target_doctype==doctype and _reference_rule(rule)))
-    values=mapped_values(subset,record,customer_link=lambda value:_customer_name_for_source(value,instance),
-        project_link=lambda value:_project_name_or_deferred(value,instance,plan,record))
-    result=_upsert(kind,identity,record,values,doctype,name_field,plan.mapping_version,run,
-        source_instance=instance,preserve_unselected=True)
+    selected = plan.definitions if partial_rules is None else partial_rules
+    if historical_projects:
+        from hero_integration.services.direct_mapping import lookup
+        from hero_integration.services.deferred_references import reference_kind
+        selected = [rule for rule in selected if not (reference_kind(rule) == 'project'
+                    and str(lookup(record, rule.source_path)) in historical_projects)]
+    subset = replace(plan, definitions=tuple(rule for rule in selected
+        if rule.target_doctype == doctype and _reference_rule(rule)))
+    if subset.definitions or partial_rules is None:
+        values = mapped_values(subset,record,customer_link=lambda value:_customer_name_for_source(value,instance),
+            project_link=lambda value:_project_name_or_deferred(value,instance,plan,record))
+        result = _upsert(kind,identity,record,values,doctype,name_field,plan.mapping_version,run,
+            source_instance=instance,preserve_unselected=True)
+    else:
+        result = Result('SKIPPED', 'Existing native target verified.', doctype, target.name)
+    if partial_rules is not None:
+        if operation == 'HeroTasks' and any(rule.target_doctype == 'ToDo' for rule in selected):
+            return _mapped_task_assignment(record,run,plan,result)
+        return result
     if operation=='HeroCalendarEvents':
         return result
     if operation=='HeroTasks':
@@ -1320,21 +1467,21 @@ def _process_projection(run, source, *, checkpoint=None) -> None:
             raise RepeatedProjectionPageError(str(error)) from error
         if not execution_budget.current_budget():
             _prefetch_project_references(source, operation, page.records)
-        for index, record in enumerate(page.records):
+        from hero_integration.services.record_dispatch import distribute
+        distributed = index_start == 0 and distribute(run, page, operation, offset, plan, checkpoint)
+        for index, record in enumerate(() if distributed else page.records):
             if index < index_start:
                 continue
             _cancel_if_requested(run)
-            with checkpoint():
+            def write():
                 if budget := execution_budget.current_budget():
                     _reserve_mapped_record(budget, PROJECTIONS[operation]['source_type'], record, plan)
                     _prefetch_project_references(source, operation, [record])
-                result = _migrate_with_binding(record, run, plan, PROJECTIONS[operation]['source_type'],
+                return _migrate_with_binding(record, run, plan, PROJECTIONS[operation]['source_type'],
                     lambda: _migrate_projection_record(record, run, plan, task_scope))
-                _record_result(run, PROJECTIONS[operation]['source_type'], record, result)
-                run.resume_phase = operation
-                run.resume_offset, run.resume_record_index = offset, index + 1
-                _record_offset_checkpoint(run, page, operation, offset, index + 1)
-                run.save()
+
+            _write_checkpoint_record(run, checkpoint, page, offset, index, operation,
+                                     PROJECTIONS[operation]['source_type'], record, write)
         if page.next_offset is None:
             unmatched = _TASK_USER_DIRECTORY.get('unmatched')
             if unmatched and getattr(run, 'mode', '') == 'Execute':
@@ -1395,7 +1542,7 @@ def _plan_task_assignment(run, record, task_name: str, source_instance: str) -> 
         return decision('BLOCKED', 'PENDING_TASK: a new Task has no persisted identity or verified local permissions yet.', **details)
     from hero_integration.services.task_assignment_policy import approved_initial_policy, task_has_policy_company, PolicyError
     try:
-        policy = approved_initial_policy(source_instance, candidates[0].name) if frappe.db.exists('DocType', 'HERO Task Assignment Policy') else None
+        policy = approved_initial_policy(source_instance, candidates[0].name, getattr(run, 'name', None), record.get('id')) if frappe.db.exists('DocType', 'HERO Task Assignment Policy') else None
     except PolicyError:
         policy = None
     if not policy:
@@ -1462,14 +1609,17 @@ def _plan_task_assignment(run, record, task_name: str, source_instance: str) -> 
         return decision('CONFLICT', 'Multiple open assignments require local review.', **details)
     if state:
         issuer = (getattr(state, 'owner', None) or frappe.session.user) if policy_payload.get('allow_all_system_managers') else frappe.session.user
+        managed = active
+        if silent_initial and task.status == 'Completed' and not active:
+            managed = [item for item in history_docs if item.name == state.todo and item.status == 'Closed']
         valid = (state.state == 'SYSTEM' and state.task_name == task_name
                  and state.policy == policy.name and int(state.policy_revision) == int(policy.policy_revision)
-                 and int(state.mapping_revision) == int(run.mapping_revision) and len(active) == 1
-                 and active[0].name == state.todo and str(active[0].modified) == str(state.todo_modified)
-                 and active[0].assigned_by == issuer)
+                 and int(state.mapping_revision) == int(run.mapping_revision) and len(managed) == 1
+                 and managed[0].name == state.todo and str(managed[0].modified) == str(state.todo_modified)
+                 and managed[0].assigned_by == issuer)
         if valid:
             old_binding = frappe.get_doc('HERO Object Binding', state.user_binding, for_update=True)
-            valid = (active[0].allocated_to == old_binding.target_name
+            valid = (managed[0].allocated_to == old_binding.target_name
                      and int(state.user_binding_revision or 0) == int(old_binding.binding_revision or 0)
                      and int(state.user_binding_revision or 0) > 0 and old_binding.lifecycle == 'VALID')
         if not valid:
@@ -1578,9 +1728,7 @@ def _record_task_assignment_pending(run, record, task_name: str, source_instance
 
 def _migrate_native_task(record, run, plan, scope) -> Result:
     """Apply the explicitly approved Task intake using the existing Link identity."""
-    from types import SimpleNamespace
     from hero_integration.services.binding_registry import BindingRegistryService
-    from hero_integration.services.mapping_registry_model import MappingDirection
     from hero_integration.services.native_projections import _html, _text
 
     frappe.only_for('System Manager')
@@ -1591,7 +1739,7 @@ def _migrate_native_task(record, run, plan, scope) -> Result:
         raise MappingPlanError('Native Task intake source scope is not approved.')
     source_id = plan.source_identity(record)
     selected_paths = {definition.source_path for definition in plan.definitions}
-    if record.get('is_deleted') is True:
+    if record.get('is_deleted') is True and not migration_archive.includes_archived():
         return Result('SKIPPED_SOURCE_DELETED', 'Source deletion does not delete or close a Task.')
     if _no_project_match(record.get('target_project_match_id')):
         # No project: an explicitly empty value that neither links, clears nor needs review.
@@ -1652,6 +1800,8 @@ def _migrate_native_task(record, run, plan, scope) -> Result:
             target_fields = {**field_hashes({field: task.get(field) for field in values}),
                              **field_hashes({field: value for field, value in task_lifecycle.target_values(task).items()
                                              if field in lifecycle})}
+            source_fields['status'] = field_hashes({'status': 'Completed' if lifecycle.get(task_lifecycle.DONE) else None})['status']
+            target_fields['status'] = field_hashes({'status': task.db_get('status')})['status']
             # Review unwritable HERO values; empty optional values need no review.
             pending_comment = ('comment' in selected_paths and _task_value_present(record.get('comment'))
                                and 'description' not in values)
@@ -1688,6 +1838,8 @@ def _migrate_native_task(record, run, plan, scope) -> Result:
     target_base = decode_hashes(link.target_field_hashes)
     if source_base is None or target_base is None:
         return Result('CONFLICT', 'Task binding lacks a confirmed field baseline.', 'Task', task.name)
+    if task_lifecycle.DONE in lifecycle:
+        _seed_untouched_task_status(task, link, source_base, target_base, task_lifecycle.DONE)
     pending, conflicts, updates, omitted = [], [], {}, []
     for field, source_path in (('subject', 'title'), ('description', 'comment'), ('project', 'target_project_match_id'),
                                ('custom_hero_due_date', 'due_date')):
@@ -1695,17 +1847,14 @@ def _migrate_native_task(record, run, plan, scope) -> Result:
             continue
         source_hash = field_hashes({field: values[field]})[field] if field in values else None
         target_hash = field_hashes({field: task.get(field)})[field]
-        binding = SimpleNamespace(direction=MappingDirection.HERO_TO_FRAPPE, mapping_revision=int(run.mapping_revision),
-                                  acknowledged_source_fingerprint=source_base.get(field),
-                                  acknowledged_target_fingerprint=target_base.get(field))
         if (field == 'project' and not _defer_relationships(run) and run.mode != 'Preview'
                 and field not in source_base and field not in target_base and field in values and not task.get(field)):
             # The initial import deliberately left this relationship unacknowledged.
             # Acquire it only while the target is still empty; local choices win.
             updates[field] = values[field]
             continue
-        decision = BindingRegistryService.inbound_reconciliation(binding, active_mapping_revision=int(run.mapping_revision),
-                                                                  source_fingerprint=source_hash, target_fingerprint=target_hash)
+        decision = BindingRegistryService.compare_inbound_values(
+            source_hash, target_hash, source_base.get(field), target_base.get(field))
         if decision == 'APPLY_SOURCE': updates[field] = values[field]
         elif decision == 'CONFIRM_EQUAL':
             source_base[field], target_base[field] = source_hash, target_hash
@@ -1726,7 +1875,10 @@ def _migrate_native_task(record, run, plan, scope) -> Result:
         target_hash = field_hashes({field: current[field]})[field]
         decision = task_lifecycle.decide(field, source_hash, target_hash, source_base.get(field),
                                          target_base.get(field), current[field])
-        if decision == 'APPLY':
+        if (field == task_lifecycle.DONE and decision == 'APPLY' and value and task.status != 'Completed'
+                and target_base.get('status') != field_hashes({'status': task.status})['status']):
+            conflicts.append('status')
+        elif decision == 'APPLY':
             lifecycle_updates[field] = value
         elif decision == 'CONFIRM':
             source_base[field], target_base[field] = source_hash, target_hash
@@ -1738,7 +1890,12 @@ def _migrate_native_task(record, run, plan, scope) -> Result:
     if updates or lifecycle_updates:
         for field, value in updates.items(): task.set(field, value)
         task_lifecycle.apply(task, lifecycle_updates)
-        with managed_target_update('Task', task.name, link.name): task.save()
+        closing = lifecycle_updates.get(task_lifecycle.DONE)
+        with managed_target_update('Task', task.name, link.name), (completing_task(task.name) if closing else nullcontext()):
+            task.save()
+        if task_lifecycle.DONE in lifecycle_updates:
+            source_base['status'] = field_hashes({'status': 'Completed' if closing else None})['status']
+            target_base['status'] = field_hashes({'status': task.db_get('status')})['status']
         for field, value in updates.items():
             source_base[field] = field_hashes({field: value})[field]
             target_base[field] = field_hashes({field: task.get(field)})[field]
@@ -1749,6 +1906,7 @@ def _migrate_native_task(record, run, plan, scope) -> Result:
         if task_lifecycle.ASSIGNEE in lifecycle_updates:
             note = task_lifecycle.sync_assignment(task, current[task_lifecycle.ASSIGNEE])
             _remember_unmatched_assignee(task, note)
+    before = (link.source_field_hashes, link.target_field_hashes, link.mapping_version, link.sync_status, link.conflict_detail)
     link.source_field_hashes = encode_hashes(source_base)
     link.target_field_hashes = encode_hashes(target_base)
     link.mapping_version = version
@@ -1758,7 +1916,8 @@ def _migrate_native_task(record, run, plan, scope) -> Result:
     elif not omitted:
         link.sync_status = 'Synchronized'
         link.conflict_detail = ''
-    link.save()
+    if before != (link.source_field_hashes, link.target_field_hashes, link.mapping_version, link.sync_status, link.conflict_detail):
+        link.save()
     return Result('CONFLICT' if conflicts or pending or link.sync_status == 'Conflict'
                   else ('UPDATED' if updates or lifecycle_updates else 'SKIPPED'),
                   link.conflict_detail or note or 'Native Task field comparison completed.', 'Task', task.name)
@@ -1862,15 +2021,21 @@ def _migrate_projection(record, run, plan) -> Result:
             validate_projection_record(operation, record, allow_partial=bool(existing))
         if getattr(plan, 'adapter_options', None) and contract.get('native_kind') == 'event' and any(type(record.get(flag)) is not bool for flag in ('deleted', 'is_recurring')):
             raise MappingPlanError('Mapped Event lifecycle flags must be explicitly returned as booleans.')
-        if record.get('is_deleted') is True or record.get('deleted') is True:
+        if (record.get('is_deleted') is True or record.get('deleted') is True) and not migration_archive.includes_archived():
             if run.mode != 'Preview':
                 _mark_source_deleted(_link(contract['source_type'], source_id, instance))
             return Result('SKIPPED_SOURCE_DELETED', 'Source deletion is observed; no target deletion occurs.')
         # Hold Events with changed privacy/outbound settings before resolving native
         # options, including Preview calls without a complete run context.
+        from hero_integration.services import calendar_interval
+        from hero_integration.services.native_projections import RECURRING_REVIEW
         held = _review_hold(existing)
-        if held:
+        recurrence_hold = bool(held and existing.sync_status == REVIEW_PENDING and
+                               existing.conflict_detail == RECURRING_REVIEW and record.get('is_recurring') is True)
+        if held and not recurrence_hold:
             return held
+        interval = None
+        interval_checked = False
         target = None
         if existing:
             if existing.target_doctype != 'Event':
@@ -1887,28 +2052,49 @@ def _migrate_projection(record, run, plan) -> Result:
             if getattr(plan, 'adapter_options', None):
                 from hero_integration.services.query_mapping import event_record
                 native_record = event_record(plan, record)
+            if contract.get('native_kind') == 'event' and record.get('is_recurring') is True:
+                observed_interval = calendar_interval.for_run(run, record, options['source_timezone'], instance)
+                interval_checked = observed_interval is not calendar_interval.UNAVAILABLE
+                interval = observed_interval if interval_checked else None
+                if recurrence_hold and not interval:
+                    return held
             native_values = native_resolve(contract, native_record, source_id, instance, options, lookup=_native_lookup,
-                                          allow_partial=bool(existing), review=review)
+                                          allow_partial=bool(existing), review=review, recurrence_interval=interval)
             if contract.get('native_kind') == 'event' and options['target_timezone'] != frappe.db.get_single_value('System Settings', 'time_zone'):
                 raise MappingPlanError('Configured event target timezone differs from the native System Settings timezone.')
             defaults = creation_defaults(contract, options)
-            if target is not None and target.get('custom_hero_is_recurring') and record.get('is_recurring') is True:
+            if target is not None and target.get('custom_hero_is_recurring') in (True, 'true', '1') and (not interval_checked or not target.get(calendar_interval.FIELD)) and record.get('is_recurring') is True:
                 # An approved recurring event keeps its reviewed times silently.
                 review = [reason for reason in review if not reason.startswith('Recurring HERO event')]
         values = plan.values(record, project_link=lambda value: _project_name_or_deferred(value, instance, plan, record),
                              native_value=lambda target: native_values[target], allow_partial=bool(existing))
-        _defer_reference_values(plan, values, run)
+        _defer_reference_values(plan, values, run, record)
         values['custom_hero_key'] = _digest([instance, contract['source_type'], source_id])
         values['custom_hero_source_instance'] = instance
     except DeletedSourceProjectError as error:
         return Result('SKIPPED_SOURCE_DELETED', str(error))
     except (ValueError, MappingPlanError) as error:
         return Result('BLOCKED_RECORD', str(error))
+    if recurrence_hold and (not interval or review):
+        return held
     result = _upsert(contract['source_type'], source_id, record, values, contract['target_doctype'],
                    'item_code' if contract['target_doctype'] == 'Item' else 'custom_hero_key', plan.mapping_version, run, source_instance=instance,
                    target_snapshot=lambda target: _projection_target_values(target, values, contract), creation_values=defaults,
                    preserve_omitted=contract.get('native_kind') == 'event',
-                   review_reason=' '.join(review) if review and not existing else None)
+                   review_reason=' '.join(review) if review and not existing else None,
+                   verified_review_reason=RECURRING_REVIEW if recurrence_hold else None)
+    if (contract.get('native_kind') == 'event' and run.mode != 'Preview' and result.target_name and
+            (interval_checked or record.get('is_recurring') is False) and result.code in {'CREATED', 'UPDATED', 'SKIPPED', 'OBSERVED', 'CONVERGED', 'PENDING_REVIEW'}):
+        # HERO delivers one native Event per occurrence. A second native
+        # repeating schedule would duplicate dates and recreate cancellations.
+        desired = interval if record.get('is_recurring') else None
+        saved = frappe.db.get_value('Event', result.target_name, calendar_interval.FIELD, for_update=True)
+        if saved != desired and (saved or desired):
+            frappe.db.set_value('Event', result.target_name, calendar_interval.FIELD, desired)
+        if recurrence_hold:
+            fresh_link = _link(contract['source_type'], source_id, instance, for_update=True)
+            if fresh_link.sync_status == REVIEW_PENDING and fresh_link.conflict_detail == RECURRING_REVIEW:
+                decide_review(fresh_link, 'approve')
     if review and existing and result.code in {'UPDATED', 'SKIPPED', 'OBSERVED', 'PREVIEW_OK'}:
         detail = 'Event time or recurrence requires review; unrelated field changes were considered. ' + review[0]
         if run.mode != 'Preview':
@@ -2088,7 +2274,7 @@ def _migrate_project(record: dict[str, object], run, *, plan=None) -> Result:
                 return _project_title_for_record(source, include_address=False)
 
         values = plan.values(record, customer_for, _confirmed_company_name, title_for)
-        deferred_fields = _defer_reference_values(plan, values, run)
+        deferred_fields = _defer_reference_values(plan, values, run, record)
         # An existing Project keeps its current customer/title when HERO no
         # longer supplies a usable value; nothing is cleared or renamed.
         for field in keep:
@@ -2120,10 +2306,21 @@ def _migrate_project(record: dict[str, object], run, *, plan=None) -> Result:
             and result.code in {'CREATED', 'UPDATED', 'SKIPPED', 'CONVERGED', 'OBSERVED', 'PREVIEW_OK'}):
         from hero_integration.services.project_logbook import sync_mapped_entries
         logbook_conflicts = []
-        sync_mapped_entries(plan, record, result.target_name or '', preview=run.mode == 'Preview', conflicts=logbook_conflicts)
+        empty_entries = {}
+        sync_mapped_entries(plan, record, result.target_name or '', preview=run.mode == 'Preview',
+                            conflicts=logbook_conflicts, empty_entries=empty_entries)
+        for history_id, outcome in empty_entries.items():
+            action = 'logbook_empty_content' if outcome == 'SKIPPED' else 'logbook_empty_bound'
+            record_output(run=run.name, source_type='project_history', source_id=history_id, result=outcome,
+                          action=action, target_doctype='Project', target_name=result.target_name,
+                          detail=('Mapped logbook content and configured headings are empty.' if outcome == 'SKIPPED'
+                                  else 'Mapped logbook content is now empty. Existing content was retained.'),
+                          correlation_id=f'project:{source_id}',
+                          event_id=_digest([run.name, source_instance, source_id, history_id, action]))
         if logbook_conflicts:
             from dataclasses import replace
-            result = replace(result, code='CONFLICT', detail=(result.detail or '') + ' Project logbook changes require review.')
+            result = replace(result, code='CONFLICT', related_field_conflict=True,
+                             detail=(result.detail or '') + ' Project logbook changes require review.')
     result = _sync_mapped_relations(plan, record, result, run)
     if name_note and _creates(result):
         from dataclasses import replace
@@ -2131,20 +2328,40 @@ def _migrate_project(record: dict[str, object], run, *, plan=None) -> Result:
     return result
 
 
+def _customer_address_conflict(result, error):
+    from dataclasses import replace
+    return replace(result, code='CONFLICT', detail=f'{result.detail} {error}'.strip(),
+                   related_field_conflict=True, pending_relation=True)
+
+
 def _sync_mapped_relations(plan, record, result, run):
     """Preview declared relations or realize them inside the post-success worker."""
     if not getattr(plan, 'adapter_options', None) or not plan.adapter_options.get('native_relations'):
         return result
     from hero_integration.services.deferred_references import realizing
-    if run.mode != 'Preview' and not realizing():
-        return result
+    deferred = run.mode != 'Preview' and not realizing()
     if result.code not in {'CREATED', 'UPDATED', 'SKIPPED', 'CONVERGED', 'OBSERVED', 'PREVIEW_OK'}:
         return result
     from dataclasses import replace
     from hero_integration.services.mapped_relations import IncompleteProjectAddress, sync
     from hero_integration.services.mapped_collection_relations import IncompleteCustomerAddress, UnboundCustomerAddress
+    from hero_integration.services.query_mapping import MissingCustomerAddressLocation
+    if deferred:
+        from hero_integration.services.mapped_collection_relations import prepare
+        for relation in plan.adapter_options['native_relations']:
+            if relation['kind'] == 'customer_addresses':
+                try:
+                    prepare(relation, record, plan.target_doctype, result.target_name)
+                except MissingCustomerAddressLocation as error:
+                    return _customer_address_conflict(result, error)
+                except ValueError:
+                    # Other relation errors retain their existing classification in the relationship pass.
+                    continue
+        return result
     try:
         counts = sync(plan, record, plan.target_doctype, result.target_name or '', preview=run.mode == 'Preview')
+    except MissingCustomerAddressLocation as error:
+        return _customer_address_conflict(result, error)
     except (UnboundCustomerAddress, IncompleteCustomerAddress, IncompleteProjectAddress) as error:
         if run.mode != 'Preview' and result.target_name:
             project = isinstance(error, IncompleteProjectAddress)
@@ -2364,6 +2581,7 @@ def _upsert(
     required_on_create: tuple[str, ...] = (),
     document_name: str | None = None,
     review_reason: str | None = None,
+    verified_review_reason: str | None = None,
 ) -> Result:
     if not _target_available(doctype):
         return Result("UNAVAILABLE", f"{doctype} is not installed on this site.")
@@ -2374,7 +2592,8 @@ def _upsert(
         if not realizing() or run.mode=='Preview' or not existing:
             raise MappingPlanError('Relationship-only updates require their imported target and realization service.')
     held = _review_hold(existing)
-    if held:
+    if held and not (verified_review_reason and existing.sync_status == REVIEW_PENDING
+                     and existing.conflict_detail == verified_review_reason):
         return held
     if existing:
         if existing.target_doctype != doctype:
@@ -2421,10 +2640,13 @@ def _upsert(
             return Result("SKIPPED", "Record is already synchronized.", doctype, target.name)
         comparison = _Comparison(values, comparison_extra)
         target_values = comparison.target_values(target, snapshot)
+        seeded_status = False
         if doctype == 'Task':
+            if 'status' in comparison.source_hashes and existing.mapping_version == mapping_version:
+                seeded_status = _seed_untouched_task_status(target, existing, prior_source, prior_target, 'completed_on')
             prior_target = _task_midnight_baseline(prior_source, prior_target, target_values)
         target_field_hashes = field_hashes(target_values)
-        if preserve_omitted or preserve_unselected:
+        if preserve_omitted or preserve_unselected or doctype == 'Task':
             # Events omit unconfirmed values entirely: their acknowledged
             # baselines are carried forward instead of being compared.
             comparison.omit(set(prior_source) | set(prior_target))
@@ -2446,7 +2668,9 @@ def _upsert(
         if rebind_event:
             existing.mapping_version = mapping_version
             _save_link(existing)
-        _observe_link(existing, source_hash, _digest(target_values))
+        if (doctype != 'Task' or outcome.apply or outcome.local
+                or source_hash != (getattr(existing, 'observed_source_hash', None) or existing.source_payload_hash)):
+            _observe_link(existing, source_hash, _digest(target_values))
         if outcome.apply:
             savepoint = "hero_upsert_update"
             frappe.db.savepoint(savepoint)
@@ -2456,16 +2680,21 @@ def _upsert(
                 for field in sorted(outcome.apply):
                     if field in values:
                         target.set(field, values[field])
-                with managed_target_update(doctype, target.name, existing.name):
+                closing = doctype == 'Task' and 'status' in outcome.apply and target.status == 'Completed'
+                with managed_target_update(doctype, target.name, existing.name), (
+                    completing_task(target.name) if closing else nullcontext()
+                ):
                     target.save()
                 if after_update:
                     after_update(target, outcome)
             except (HomePhoneConflict, CustomerAddressError) as error:
                 frappe.db.rollback(save_point=savepoint)
                 return Result("CONFLICT", str(error), doctype, target.name)
+            # Frappe can persist a different native representation (e.g. an empty Int as 0).
+            target = frappe.get_doc(doctype, target.name, for_update=True)
             target_values = comparison.target_values(target, snapshot)
             target_field_hashes = field_hashes(target_values)
-        if outcome.advances_baseline:
+        if outcome.advances_baseline or seeded_status:
             _update_link_baseline(
                 existing, source_hash, _digest(target_values),
                 next_baseline(prior_source, comparison.source_hashes, outcome, tracked=comparison.tracked),
@@ -2483,6 +2712,24 @@ def _upsert(
         if outcome.acknowledged:
             return Result("SKIPPED", "HERO cleared values that the no-clear policy does not write: " + ", ".join(sorted(outcome.acknowledged)) + ".", doctype, target.name)
         return Result("SKIPPED", "Record is already synchronized.", doctype, target.name)
+    missing_links = []
+    for field, (rule, raw, resolved) in getattr(values, 'deferred_links', {}).items():
+        native_field = frappe.get_meta(doctype).get_field(field)
+        if not native_field or not native_field.reqd:
+            continue
+        if resolved:
+            values[field] = resolved
+            values.missing.discard(field)
+            values.empty.discard(field)
+        else:
+            from hero_integration.services.deferred_references import reference_kind, installed
+            kind = reference_kind(rule)
+            if kind and installed(frappe) and not _link(kind, str(raw), source_instance):
+                missing_links.append((kind, str(raw)))
+                continue
+            return Result('BLOCKED_RECORD', f'The mandatory {field} binding requires review.')
+    if missing_links:
+        return Result('DEFERRED', 'Creation waits for mandatory bindings.', required_references=tuple(sorted(set(missing_links))))
     unknown = sorted(set(getattr(values, "missing", ())) & set(required_on_create))
     if unknown:
         # A derived classification (e.g. Customer type from company_name) is
@@ -2520,11 +2767,20 @@ def _upsert(
             after_insert(target)
         snapshot = target_snapshot or (lambda item: _target_values(item, values))
         comparison = _Comparison(values, comparison_extra)
+        # Frappe can persist a different native representation (e.g. an empty Int as 0).
+        target = frappe.get_doc(doctype, target.name, for_update=True)
         target_values = comparison.target_values(target, snapshot)
+        if doctype == 'Task' and 'status' not in comparison.source_hashes:
+            comparison.source_hashes['status'] = EMPTY_HASH
+            target_values['status'] = target.get('status')
         target_hash = _digest(target_values)
+        birth = {}
+        if doctype == 'Event' and review_reason:
+            from hero_integration.services.binding_registry import incarnation
+            birth['target_incarnation'] = incarnation(target.creation)
         frappe.get_doc({
             "doctype": "HERO Integration Link", "source_system": "HERO", "source_type": source_type,
-            "source_id": source_id, "source_instance": source_instance,
+            "source_id": source_id, "source_instance": source_instance, **birth,
             "sync_status": REVIEW_PENDING if review_reason else "Synchronized",
             "conflict_detail": review_reason or "", "last_synced_on": now_datetime(),
             "target_doctype": doctype, "target_name": target.name, "source_payload_hash": source_hash,
@@ -2625,7 +2881,7 @@ def decide_review(link, decision: str) -> None:
     _save_link(link)
 
 
-def _record_result(run, source_type: str, record: dict[str, object], result: Result) -> None:
+def _record_result(run, source_type: str, record: dict[str, object], result: Result, *, prior=None) -> None:
     from hero_integration.services.deferred_references import remember
     remember(run, source_type, record, result)
     identity = record.get("id")
@@ -2635,13 +2891,20 @@ def _record_result(run, source_type: str, record: dict[str, object], result: Res
         action="preview" if run.mode == "Preview" else "hero_to_frappe",
         detail=result.detail, target_doctype=result.target_doctype, target_name=result.target_name,
     )
-    run.processed = int(run.processed or 0) + 1
-    if result.code == "CREATED":
-        run.created_records = int(run.created_records or 0) + 1
-    elif result.code in {"CONFLICT", "SKIPPED_AMBIGUOUS", "BLOCKED_RECORD", "UNAVAILABLE", "PENDING_REVIEW"}:
-        run.conflict_records = int(run.conflict_records or 0) + 1
-    else:
-        run.skipped_records = int(run.skipped_records or 0) + 1
+    budget = execution_budget.current_budget()
+    from hero_integration.services.deferred_references import OPERATIONS
+    if budget and budget.version in (2, 3) and source_type != "attachment" and not migration_archive.excluded(OPERATIONS.get(source_type), record):
+        status = ("pending" if result.code == "DEFERRED" else "failed" if result.code in {"BLOCKED_RECORD","UNAVAILABLE"} else
+                  "conflict" if result.code in {"CONFLICT","PENDING_REVIEW","SKIPPED_AMBIGUOUS"}
+                  or result.related_field_conflict else "processed")
+        repeated = (run.action in PROJECTION_ACTIONS and budget.version == 3 and
+                    frappe.db.get_value('HERO Budget Outcome', {'budget': budget.budget_id,
+                        'phase': 'writer', 'object_type': source_type, 'external_id': source_id}, 'outcome') == 'processed')
+        budget.outcome(source_type, source_id, status)
+        if repeated and status == 'processed':
+            return
+    from hero_integration.services.migration_replay import count_result
+    count_result(run, result, prior)
 
 
 def _target_available(doctype: str) -> bool:
@@ -2674,7 +2937,8 @@ def _unlinked_namesake(doctype: str, name_field: str, value: object) -> str | No
     """A same-named target without a HERO link may be a manual record; one linked to another HERO record is not."""
     names = frappe.get_all(doctype, filters={name_field: value}, pluck="name", limit_page_length=0)
     linked = set(frappe.get_all(
-        "HERO Integration Link", filters={"target_doctype": doctype, "target_name": ["in", names]},
+        "HERO Integration Link", filters={"source_system": ["!=", RETIRED_LINK_SYSTEM],
+                                        "target_doctype": doctype, "target_name": ["in", names]},
         pluck="target_name", limit_page_length=0,
     )) if names else set()
     return next((name for name in names if name not in linked), None)
@@ -2715,6 +2979,9 @@ def _mark_source_deleted(link) -> None:
 
 
 def _mark_link_conflict(link, detail: str) -> None:
+    if (getattr(link, "target_doctype", None) == "Task" and link.sync_status == "Conflict"
+            and link.conflict_detail == detail):
+        return
     link.sync_status = "Conflict"
     link.conflict_detail = detail
     _save_link(link)
@@ -2723,6 +2990,9 @@ def _mark_link_conflict(link, detail: str) -> None:
 def _observe_link(link, source_hash: str, target_hash: str) -> None:
     """Keep observation separate from the last successfully compared baseline."""
 
+    if (getattr(link, 'target_doctype', None) == 'Task' and getattr(link, 'observed_source_hash', None) == source_hash
+            and getattr(link, 'observed_target_hash', None) == target_hash):
+        return
     link.observed_source_hash = source_hash
     link.observed_target_hash = target_hash
     link.last_observed_on = now_datetime()
@@ -2807,7 +3077,9 @@ def _customer_primary_address(record: dict[str, object], selected_line2: str | N
     if not isinstance(source_id, int) or isinstance(source_id, bool) or source_id <= 0:
         raise MappingPlanError("Customer primary address identity is missing or invalid.")
     fields = {key: value.get(key) for key in ("street", "zipcode", "city")}
-    if not all(isinstance(item, str) and item.strip() for item in fields.values()):
+    from hero_integration.services.query_mapping import require_customer_address_location
+    require_customer_address_location(fields['street'], fields['city'])
+    if not isinstance(fields['zipcode'], str) or not fields['zipcode'].strip():
         raise IncompleteAddress("Customer primary address is incomplete.")
     country = value.get('country')
     country_code = country.get('code') if isinstance(country, dict) else None
@@ -2830,12 +3102,18 @@ def _synchronize_customer_relations(customer, contact_values, home_phone, addres
 
 
 def _realize_primary_address(customer, address, source_instance, mapping_version, plan, record, evidence):
+    if 'verified_native_address' in address:
+        from hero_integration.services.address_correction import verified_address
+        if verified_address(record, address['id'], 'primary', expected_customer=customer.name, locked=True) != address['verified_native_address']:
+            raise CustomerAddressError('The verified external address decision has changed.')
+        return
+
     def write_address(locked_target):
         return _synchronize_customer_address(customer, address, source_instance, mapping_version,
                                              locked_target=locked_target)
 
     if budget := execution_budget.current_budget():
-        budget.reserve_many([("customer_address", str(address["id"]))])
+        budget.reserve_many([("customer_address", str(address["id"]))], relation="primary_address")
     if "mapped_values" in address:
         if (not plan or not plan.binding_contract or not isinstance(record.get("address"), dict)
                 or str(record["address"].get("id")) != str(address["id"])):
@@ -3041,16 +3319,9 @@ def _set_phase_state(run, phase: str, state: str) -> None:
     run.save()
 
 
-def _record_phase_result(run, phase: str, result: Result) -> None:
-    prefix = f"{phase}_phase"
-    setattr(run, f"{prefix}_processed", int(getattr(run, f"{prefix}_processed", 0) or 0) + 1)
-    if result.code == "CREATED":
-        field = f"{prefix}_created"
-    elif result.code in PHASE_BLOCKING_RESULTS:
-        field = f"{prefix}_blocked"
-    else:
-        field = f"{prefix}_skipped"
-    setattr(run, field, int(getattr(run, field, 0) or 0) + 1)
+def _record_phase_result(run, phase: str, result: Result, *, prior=None) -> None:
+    from hero_integration.services.migration_replay import count_result
+    count_result(run, result, prior, phase)
 
 
 def _customer_phase_completed(run, source_instance: str) -> bool:
@@ -3121,20 +3392,32 @@ def _migrate_mapped_task(record, run, plan, scope) -> Result:
     source_id = plan.source_identity(record)
     if type(record.get('is_deleted')) is not bool:
         return Result('BLOCKED_RECORD', 'Mapped Task deletion state must be explicitly returned as a boolean.')
-    if record.get('is_deleted') is True:
+    from hero_integration.services.cockpit_task_source import store
+
+    if record.get('is_deleted') is True and not migration_archive.includes_archived():
+        if run.mode == 'Execute':
+            store(record, instance)
         return Result('SKIPPED_SOURCE_DELETED', 'Source deletion does not delete or close a Task.')
     try:
         values = mapped_values(plan, record,
             project_link=lambda value: _project_name_or_deferred(value, instance, plan, record))
-        _defer_reference_values(plan, values, run)
+        _defer_reference_values(plan, values, run, record)
         if values.get('completed_on'):
             values['status'] = 'Completed'
+        elif 'completed_on' in values.empty:
+            # Compare the native default without writing a status on an open Task.
+            values.empty.add('status')
+        elif 'completed_on' in values.missing:
+            values.missing.add('status')
     except (ValueError, MappingPlanError) as error:
         return Result('BLOCKED_RECORD', str(error))
     if not values.get('subject'):
         return Result('BLOCKED_RECORD', 'A mapped Task title is required for intake.')
     result = _upsert('Task', source_id, record, values, 'Task', 'subject', plan.mapping_version, run,
         source_instance=instance, required_on_create=('subject',))
+    if run.mode == 'Execute' and result.target_name and result.code in {
+            'CREATED', 'UPDATED', 'SKIPPED', 'CONVERGED', 'OBSERVED'}:
+        store(record, instance, expected_name=result.target_name)
     return _mapped_task_assignment(record,run,plan,result)
 
 
@@ -3217,6 +3500,8 @@ def _ack_mapped_assignment(run, record, task_name, source_instance, recipient) -
         raise MappingPlanError('Mapped assignment requires a verified parent field baseline.')
     key = 'ToDo.allocated_to'
     acknowledged = field_hashes({key: recipient})[key]
+    if source.get(key) == target.get(key) == acknowledged:
+        return True
     source[key], target[key] = acknowledged, acknowledged
     frappe.db.set_value('HERO Integration Link', locked.name,
         {'source_field_hashes': encode_hashes(source), 'target_field_hashes': encode_hashes(target)}, update_modified=False)

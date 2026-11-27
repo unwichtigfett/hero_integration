@@ -207,6 +207,15 @@ def _named_type(value: object, name: str) -> None:
             )
         return
 
+    # HERO's JSON scalar permits containers, including nested product attributes.
+    # The strict response parser supplies JSON types but a numeric exponent can overflow.
+    if name == "JSON":
+        try:
+            json.dumps(value, allow_nan=False)
+        except (TypeError, ValueError, RecursionError):
+            raise GraphQLResultDecodeError("RESULT_TYPE_INVALID") from None
+        return
+
     # Enum and custom scalar values are leaf values.  Without the schema the
     # decoder deliberately does not guess custom coercion semantics, but it
     # still rejects structured objects at a scalar/enum result binding.
@@ -289,6 +298,7 @@ def _validate_projected(
     value: object,
     graphql_type: str,
     projection_depth: int,
+    possible_typenames: tuple[str, ...] = (),
 ) -> None:
     if projection_depth < 0:
         raise GraphQLResultDecodeError(
@@ -296,6 +306,8 @@ def _validate_projected(
         )
 
     if projection_depth == 0:
+        if possible_typenames and value is not None and value not in possible_typenames:
+            raise GraphQLResultDecodeError("RESULT_TYPE_INVALID")
         _validate_graphql_type(
             value,
             graphql_type,
@@ -315,6 +327,7 @@ def _validate_projected(
             item,
             graphql_type,
             projection_depth - 1,
+            possible_typenames,
         )
 
 
@@ -439,6 +452,7 @@ def decode_graphql_result(
             value,
             binding.graphql_type,
             projection_depth,
+            binding.possible_typenames,
         )
 
         decoded.append(

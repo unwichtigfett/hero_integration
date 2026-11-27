@@ -50,25 +50,49 @@ class TestOffsetWindow(unittest.TestCase):
         from hero_integration.tests.saved_reader_fixture import versioned_contract_source
         from hero_integration.services.migration import _validate_enumeration_page
 
-        rows = [{"id": i, "version": 1} for i in range(7)]
+        rows = [{"id": i, "version": 1} for i in range(23)]
         offsets = []
         def query(_document, variables):
             offset, size = variables["offset"], variables["first"]
             offsets.append(offset)
-            if offset == 3:
-                rows[3] = {"id": 3, "version": 2}
+            if offset == 19:
+                rows[19] = {"id": 19, "version": 2}
             return {"project_matches": rows[offset:offset + size]}
-        source = versioned_contract_source(SimpleNamespace(query=query), page_size=5)
+        source = versioned_contract_source(SimpleNamespace(query=query), page_size=21)
         source.page_overlap = 2
         seen = set()
         first = source.projects(0)
         _validate_enumeration_page(first, 0, seen)
         second = source.projects(first.next_offset)
         _validate_enumeration_page(second, first.next_offset, seen)
-        self.assertEqual(list(second.changed_overlap_ids), ["3"])
-        self.assertEqual([row["id"] for row in second.records], [3, 5, 6])
-        self.assertEqual(second.next_offset, 7)
-        self.assertEqual(offsets, [0, 3])
+        self.assertEqual(list(second.changed_overlap_ids), ["19"])
+        self.assertEqual([row["id"] for row in second.records], [19, 21, 22])
+        self.assertEqual(second.next_offset, 23)
+        self.assertEqual(offsets, [0, 19])
+
+    def test_migration_overlap_uses_received_count_and_accepts_small_readers(self):
+        from hero_integration.tests.saved_reader_fixture import versioned_contract_source
+
+        for size, count, applied in ((1, 1, 0), (20, 20, 0), (21, 21, 2), (100, 20, 0), (1, 0, 0)):
+            with self.subTest(size=size, count=count):
+                rows = [{"id": i, "version": 1} for i in range(count)]
+                client = SimpleNamespace(query=lambda *_: {"project_matches": rows})
+                source = versioned_contract_source(client, page_size=size)
+                source.page_overlap = 2
+                page = source.projects(0)
+                self.assertEqual(page.next_offset, count - applied if count else None)
+                self.assertEqual(page.offset_checkpoint["applied_overlap"], applied)
+                self.assertEqual(len(page.records), count)
+        for invalid in (-1, 21, True):
+            with self.assertRaises(ValueError):
+                validate_overlap(invalid, 1, migration=True)
+
+    def test_resume_from_old_small_page_consumes_its_tail_once(self):
+        rows = [{"id": i} for i in range(8)]
+        old = advance(rows[:5], offset=0, size=5, overlap=2)
+        page = advance(rows[3:], offset=3, size=5, overlap=2, previous=old.checkpoint, migration=True)
+        self.assertEqual(page.rows, tuple(rows[5:]))
+        self.assertEqual((page.next_offset, page.checkpoint["tail"]), (8, {}))
 
     def test_overlap_is_inherited_from_parent_and_immutable_after_insert(self):
         from frappe import _dict

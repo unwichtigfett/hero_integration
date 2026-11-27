@@ -26,6 +26,11 @@ def event():
 
 
 class TestNativeProjections(unittest.TestCase):
+    def test_local_recurring_event_requires_separate_review(self):
+        from hero_integration.services.native_projections import event_sharing_requires_review
+        self.assertFalse(event_sharing_requires_review({"event_type": "Private", "repeat_this_event": 0}))
+        self.assertTrue(event_sharing_requires_review({"event_type": "Private", "repeat_this_event": 1}))
+
     def test_v2_selected_status_reaches_native_event_creation_and_update(self):
         from hero_integration.tests.test_query_mapping_v2 import rule, plan
         operation = 'HeroCalendarEvents'

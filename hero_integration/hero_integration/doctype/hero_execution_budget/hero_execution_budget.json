@@ -39,6 +39,24 @@
       "label": "Reserved Source Identities",
       "fieldtype": "Long Text",
       "read_only": 1
+    },
+    {
+      "fieldname": "contract_version",
+      "label": "Budget Contract Version",
+      "fieldtype": "Int",
+      "read_only": 1
+    },
+    {
+      "fieldname": "selection_json",
+      "label": "Frozen Test Cohort",
+      "fieldtype": "Long Text",
+      "read_only": 1
+    },
+    {
+      "fieldname": "incremental_json",
+      "label": "Incremental Cohort Checkpoints",
+      "fieldtype": "Long Text",
+      "read_only": 1
     }
   ],
   "field_order": [
@@ -47,7 +65,10 @@
     "source_instance",
     "record_limit",
     "used",
-    "identities_json"
+    "identities_json",
+    "contract_version",
+    "selection_json",
+    "incremental_json"
   ],
   "permissions": [
     {

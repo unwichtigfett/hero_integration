@@ -49,6 +49,19 @@ class MappedValues(dict):
         self.empty = set(empty)
 
 
+def field_authorities(config, definition_ids):
+    """Return the explicit per-rule restrictions carried by this mapping revision."""
+    if "field_authority" not in config:
+        return {}
+    roles = config["field_authority"]
+    allowed = {"HERO", "ERPNEXT", "BIDIRECTIONAL", "READ_ONLY", "MANUAL"}
+    if (not isinstance(roles, dict) or not isinstance(definition_ids, (tuple, list))
+            or set(roles) - set(definition_ids)
+            or any(not isinstance(role, str) or role not in allowed for role in roles.values())):
+        raise MappingPlanError("Field authority must identify a selected rule and its supported role.")
+    return dict(roles)
+
+
 @dataclass(frozen=True)
 class BindingContract:
     source_instance: str
@@ -65,6 +78,13 @@ class MappingPlan:
     adapter_options: dict = field(default_factory=dict)
 
     binding_contract: BindingContract | None = None
+    field_authority: dict[str, str] = field(default_factory=dict)
+
+    def permits_inbound(self, rule):
+        return self.field_authority.get(rule.definition_id) not in {"ERPNEXT", "READ_ONLY", "MANUAL"}
+
+    def permits_manual_outbound(self, rule):
+        return self.field_authority.get(rule.definition_id) not in {"HERO", "READ_ONLY"}
 
     def with_reader(self, service, mapping, snapshot, contract):
         from hero_integration.services.graphql_schema_cache import compiled_schema
@@ -92,6 +112,8 @@ class MappingPlan:
         payload = [definition.__dict__ for definition in self.definitions]
         if self.adapter_options:
             payload = {"rules": payload, "query_adapter": self.adapter_options}
+        if self.field_authority:
+            payload = {"mapping": payload, "field_authority": self.field_authority}
         encoded = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode()
         return f"hero-mapping-{hashlib.sha256(encoded).hexdigest()[:16]}"
 
@@ -371,6 +393,7 @@ def _active_mapping_plan(operation: str, *, definition_ids: tuple[str, ...] = ()
     if native_task and (not definition_ids or not mapping_name or len(set(definition_ids)) != len(definition_ids)):
         raise MappingPlanError('Native Task requires explicitly selected approved rules.')
     adapter_options = {}
+    roles = {}
     if lock_rules and not native_task:
         raise MappingPlanError('Locking rule reads are restricted to the native Task contract.')
     filters = {"operation": target_operation or operation, "status": "Active"}
@@ -427,6 +450,7 @@ def _active_mapping_plan(operation: str, *, definition_ids: tuple[str, ...] = ()
             raise MappingPlanError('Selected rules do not match the approved mapping binding.')
         if any(row.get('schema_snapshot') != mapping.schema_snapshot or row.get('schema_fingerprint') != mapping.schema_fingerprint for row in rows):
             raise MappingPlanError('Selected rule snapshot does not match the approved read mapping.')
+        roles = field_authorities(config, definition_ids)
         scoped = [row for row in rows if row.get('personal_graphql_mapping')]
         if scoped and lineage_fields:
             from hero_integration.services.mapping_rule_lineage import parse_lineage, semantic_fingerprint
@@ -479,8 +503,18 @@ def _active_mapping_plan(operation: str, *, definition_ids: tuple[str, ...] = ()
         else:
             for spec in definitions:
                 validate_spec(spec, metadata)
-        return MappingPlan(operation, tuple(definitions), target_operation or operation, adapter_options)
-    return plan_from_definitions(operation, definitions, target_operation=target_operation, native_task=native_task, adapter_options=adapter_options)
+        plan = MappingPlan(operation, tuple(definitions), target_operation or operation, adapter_options)
+    else:
+        plan = plan_from_definitions(operation, definitions, target_operation=target_operation, native_task=native_task,
+                                     adapter_options=adapter_options)
+    if not roles:
+        return plan
+    from hero_integration.services.native_projections import is_native_event_title
+    for rule in definitions:
+        scalar = rule.purpose in {"Field", "Record Name"} or is_native_event_title(rule)
+        if rule.definition_id in roles and (rule.target_doctype != plan.target_doctype or not scalar or rule.relation):
+            raise MappingPlanError("Field authority requires a scalar rule on the selected native target.")
+    return replace(plan, field_authority=roles)
 
 
 def effective_rule_fingerprint(definition_ids, mapping_name, *, lock=False, frappe_module=None):

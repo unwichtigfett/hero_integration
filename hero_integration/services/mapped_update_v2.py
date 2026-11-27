@@ -46,6 +46,10 @@ class MappedUpdateBindingError(MappedUpdateError):
     """A native relationship needs review; no identity may be guessed."""
 
 
+class _SharedAddressBinding(MappedUpdateBindingError):
+    """Multiple HERO address identities share this native address."""
+
+
 def _json(value):
     return json.dumps(value,sort_keys=True,ensure_ascii=False,separators=(',',':'),default=str,allow_nan=False)
 
@@ -255,6 +259,8 @@ def validate_sources(content, *, field_provider=None):
 def _link(doctype,name,source,kind,*,check_observation=True):
     rows=frappe.get_all('HERO Integration Link',filters={'source_system':'HERO','source_instance':source,
         'target_doctype':doctype,'target_name':name,'source_type':kind},pluck='name',limit_page_length=2)
+    if doctype == 'Address' and kind == 'customer_address' and len(rows) > 1:
+        raise _SharedAddressBinding('The mapped native Address has multiple HERO identities.')
     if len(rows)!=1: raise MappedUpdateBindingError('Exactly one native source binding is required.')
     link=frappe.get_doc('HERO Integration Link',rows[0])
     if link.sync_status!='Synchronized' or check_observation and getattr(link,'observed_source_hash',None) and link.observed_source_hash!=link.source_payload_hash:
@@ -303,6 +309,8 @@ def _load_context(mapping_name,doctype,name):
     if doctype!=content['source']['doctype'] or mapping.operation_name!=content['target']['operation']:
         raise MappedUpdateError('The selected document is outside this mapping namespace.')
     document=frappe.get_doc(doctype,name);frappe.has_permission(doctype,'write',doc=document,throw=True)
+    if doctype == "Task" and getattr(document, "parent_task", None):
+        raise MappedUpdateBindingError("The independently bound native subtask requires hierarchy review.")
     proof=capture_source(snapshot,config.source_instance,config)
     link=_link(doctype,name,proof.source_instance,AREAS[content['area']][1],check_observation=False)
     read=send_helpers._load_read(content['read_service'],snapshot)
@@ -328,7 +336,37 @@ def _load_context(mapping_name,doctype,name):
     ctx.review_fields = send_helpers._bound_review_fields(document, link, read)
     if not ctx.review_fields and getattr(link, 'observed_source_hash', None) and link.observed_source_hash != link.source_payload_hash:
         raise MappedUpdateBindingError('The native binding requires synchronization or conflict review.')
+    from hero_integration.services.execution_runtime import outbound_target_bindings
+    ctx.parent, ctx.fields = outbound_target_bindings(frappe, ctx.query_plan, document, ctx.hero_id)
+    from hero_integration.services.mapping_runtime import effective_rule_fingerprint
+    ctx.rules_fingerprint = effective_rule_fingerprint(read.contract.definition_ids, read.mapping.name)
+    from hero_integration.services.sync_runtime_adapter import _require_latest_validated_snapshot
+    _require_latest_validated_snapshot(frappe, frappe.get_single("HERO Integration Settings"), proof.source_instance,
+        SimpleNamespace(graphql_mapping=mapping.name, schema_snapshot=snapshot.name, schema_fingerprint=snapshot.schema_fingerprint))
+    ctx.exact_read = _exact_reader(ctx)
     return ctx
+
+
+def _exact_reader(ctx):
+    from hero_integration.services.b8_runtime import ApprovedBoundReader, saved_runtime_read
+    if ctx.content["area"] not in {"HeroCustomers", "HeroProjectMatches", "HeroTasks", "HeroCalendarEvents", "HeroServices"}:
+        return None
+    plan = getattr(ctx.read, "materialized", None) or saved_runtime_read(ctx.read.service, ctx.read.mapping, ctx.snapshot)
+    reader = ApprovedBoundReader(plan, ctx.snapshot.snapshot_json, ctx.proof.binding_revision, 60)
+    return reader if reader.capabilities.bounded_comparison else None
+
+
+def _registry_decision(ctx, item, doc, remote):
+    """Classify a paired field from its common inbound and outbound baseline."""
+    from hero_integration.services.execution_runtime import outbound_field_decision
+    roles = getattr(getattr(ctx, "query_plan", None), "field_authority", {})
+    if not roles and not getattr(ctx, "parent", None):
+        return None, None
+    rule = _rule(ctx, item)
+    owner = doc.doctype == ctx.document.doctype
+    field = ctx.fields.get(item["source"]["field"]) if owner else None
+    return outbound_field_decision(ctx.query_plan, rule, doc, remote, ctx.proof.source_instance,
+                                   field, has_parent=bool(ctx.parent and owner), null_policy=item["options"].get("null", "OMIT"))
 
 
 def _read_record(ctx,client):
@@ -337,12 +375,23 @@ def _read_record(ctx,client):
     from hero_integration.services.read_contract import from_documents
     from hero_integration.services.writeback_source import validate_source
     def revalidate():
+        if getattr(ctx.read, 'approval', None):
+            current = send_helpers._load_read(ctx.read.service.name, ctx.snapshot)
+            if getattr(current, 'approval', None) != ctx.read.approval or current.contract != ctx.read.contract:
+                raise MappedUpdateError('The approved readback query changed.')
+            return current.contract
         service=frappe.get_doc('HERO GraphQL Service',ctx.read.service.name)
         mapping=frappe.get_doc('HERO GraphQL Mapping',ctx.read.mapping.name)
         contract=from_documents(service,mapping,ctx.snapshot)
         if contract!=ctx.read.contract or service.query_document!=ctx.read.service.query_document:
             raise MappedUpdateError('The approved readback query changed.')
         return contract
+    if getattr(ctx, "exact_read", None) is not None:
+        revalidate()
+        validate_source(ctx.proof)
+        record = ctx.exact_read.read_with_client(ctx.hero_id, client)
+        _guard_record(ctx, record)
+        return record
     if ctx.content['area'] == 'HeroProjectMatches':
         from hero_integration.services.project_identity_read import ProjectIdentityReader
         client = ProjectIdentityReader(client, ctx.raw_schema, ctx.hero_id)
@@ -386,6 +435,10 @@ def _guard_record(ctx,record):
         raise MappedUpdateError('The HERO contact is no longer a Customer.')
     if record.get('is_deleted') is True or record.get('deleted') is True:
         raise MappedUpdateError('A deleted HERO record cannot be updated.')
+    if area == "HeroCalendarEvents" and getattr(ctx, "document", None):
+        from hero_integration.services.native_projections import event_sharing_requires_review
+        if event_sharing_requires_review(ctx.document):
+            raise MappedUpdateError("Event sharing or outbound settings changed; native calendar update requires review.")
     if area=='HeroCalendarEvents' and (record.get('readonly') is not False or record.get('is_recurring') is not False):
         raise MappedUpdateError('Readonly or recurring HERO events require their separate provider/recurrence workflow.')
     if area in {'HeroDocuments','HeroPictures'} and (record.get('category')=='images') != (area=='HeroPictures'):
@@ -404,7 +457,11 @@ def _source(ctx,item,remote):
     elif owner=='Customer' and dt in {'Contact','Address'}:
         doc=send_helpers._source_document(ctx,dt)
         if dt=='Address':
-            link=_link(dt,doc.name,ctx.proof.source_instance,'customer_address')
+            try:
+                link=_link(dt,doc.name,ctx.proof.source_instance,'customer_address')
+            except _SharedAddressBinding:
+                ctx.source_documents[item['id']] = doc
+                raise
             if str(link.source_id)!=str(_at(remote,'address.id')): raise MappedUpdateError('The related Address identity differs from HERO.')
         else: link=ctx.link
     elif owner=='Task' and dt=='ToDo':
@@ -677,13 +734,18 @@ def _baseline_matches(ctx,item,remote,canonical):
             prefix='product-migration-v3:'
             version=link.mapping_version[len(prefix):] if link.mapping_version.startswith(prefix) else ''
             return bool(version) and digest({**values,'mapping':version})==link.source_payload_hash
-        return state.get('fields',{}).get(field)==digest(canonical or None)
+        from hero_integration.services.product_migration import field_digest
+        previous = state.get("fields", {}).get(field)
+        return previous == field_digest(canonical) or (field == "disabled" and type(canonical) is int
+                and canonical == 0 and previous == digest(None))
     if area=='HeroServices':
         if item['resolver']=='BARCODE':
             bars=state.get('values',{}).get('barcodes',[])
             return isinstance(bars,list) and [row.get('barcode') for row in bars if row.get('barcode')]==[canonical]
         return field in state.get('values',{}) and _json(state['values'][field])==_json(canonical)
-    if area=='HeroEmployees': return field in state and str(state[field] or '')==str(canonical or '')
+    if area=='HeroEmployees':
+        from hero_integration.services.employee_migration import native_value
+        return field in state and state[field] == native_value(canonical)
     if area in {'HeroDocuments','HeroPictures'}:
         from hero_integration.services.file_transfer import value_hash,mapped_values
         values=mapped_values(SimpleNamespace(plan=ctx.query_plan),remote)
@@ -725,10 +787,16 @@ def _binding_state(link):
     return {field:getattr(link,field,None) for field in fields}
 
 
-def _prepare(ctx,client,*,preview_only=False):
+def _prepare(ctx,client,*,preview_only=False, observed_record=None):
     from graphql import get_named_type
     from hero_integration.services.mutation_binding_contract import validate_mutation
-    remote=_read_record(ctx,client);schema=_schema(ctx.raw_schema);operation=ctx.mapping.operation_name
+    from hero_integration.services import task_hierarchy as hierarchy
+    if observed_record is None:
+        remote = _read_record(ctx,client)
+    else:
+        _guard_record(ctx, observed_record)
+        remote = observed_record
+    schema=_schema(ctx.raw_schema);operation=ctx.mapping.operation_name
     actual_id=_at(remote,ctx.content['identity']['mutation_read_path'])
     if type(actual_id) not in (int,str) or not str(actual_id).isdigit() or int(actual_id)<=0:
         raise MappedUpdateError('Approved readback did not prove the mutation record identity.')
@@ -747,12 +815,16 @@ def _prepare(ctx,client,*,preview_only=False):
             raise MappedUpdateError('The related HERO identity is invalid.')
         _put(inputs,copy['input_path'],_typed(observed,_input_type(schema,operation,copy['input_path'])))
         copied.append(copy)
-    changes=[];conflicts=[];checks=[];states=[];assigned={};evaluated={}
+    changes=[];conflicts=[];checks=[];states=[];assigned={};evaluated={};held=[]
     for item in ctx.content['assignments']:
         from hero_integration.services.project_naming import is_local_project_name
         if is_local_project_name(item['source'], item['input_path']):
             raise MappedUpdateError('Project naming is local to ERPNext and cannot be sent to HERO.')
         try: doc,local=_source(ctx,item,remote)
+        except _SharedAddressBinding:
+            # Keep related events pending. An independent owner edit needs no address input.
+            held.append({"id": item["id"], "field": item["input_path"], "reason": "AMBIGUOUS_ADDRESS"})
+            continue
         except send_helpers._SourceRelationMissing:
             if item['options'].get('missing')=='OMIT': continue
             raise
@@ -771,21 +843,67 @@ def _prepare(ctx,client,*,preview_only=False):
                 'hero':_at(remote,item['read_path'],None),'new':local,
                 'blocked_reason':error.message_template})
             continue
+        binding = getattr(ctx, "fields", {}).get("description") if hierarchy.is_assignment(item) else None
+        section = None
+        business_remote = remote
+        if hierarchy.is_description(binding):
+            states[-1]["field_binding"] = [binding.identity_key, binding.revision, binding.acknowledged_version]
+            section = hierarchy.section_for(frappe, doc.name)
+            proof = hierarchy.confirmed(binding)
+            if section or proof:
+                if "comment" not in remote:
+                    held.append({"id": item["id"], "field": item["input_path"], "reason": "OMITTED"})
+                    continue
+                try:
+                    business_remote = hierarchy.clean_record(remote, binding)
+                except hierarchy.ProjectionConflict as error:
+                    conflicts.append({"id": item["id"], "field": item["input_path"], "source_doctype": "Task",
+                                      "source_field": "description", "blocked_reason": str(error)})
+                    continue
+                decision, binding = _registry_decision(ctx, item, doc, business_remote)
+                if decision in {"UNCHANGED", "CONFIRM_EQUAL"}:
+                    # A hierarchy-only edit must preserve the actual business text and its formatting.
+                    wire = business_remote["comment"]
+                if wire is MISSING:
+                    # OMIT protects a remote business description even when native text is empty.
+                    wire = business_remote["comment"]
+                projected_section = hierarchy.section_proof(section, hierarchy.normalized(wire))
+                wire = hierarchy.compose(wire, section)
         if wire is MISSING: continue
-        canonical=_canonical(ctx,item,remote)
+        canonical=_canonical(ctx,item,business_remote)
         kind=_input_type(schema,operation,item['input_path'])
         if str(get_named_type(kind))=='Boolean' and type(wire) is int and wire in (0,1): wire=bool(wire)
         wire=_typed(wire,kind)
-        previous=_remote_wire(ctx,item,doc,remote)
+        previous = (hierarchy.normalized(remote["comment"]) if section or hierarchy.confirmed(binding)
+                    else _remote_wire(ctx,item,doc,remote))
         checks.append({'id':item['id'],'value':wire})
         assigned[item['input_path']]=wire
         evaluated[item['input_path']]=(item,doc,local,wire,previous,canonical)
+        if not (section or hierarchy.confirmed(binding)):
+            decision, binding = _registry_decision(ctx, item, doc, remote)
+        if section is not None and (section or hierarchy.confirmed(binding)):
+            if decision in {"UNCHANGED", "CONFIRM_EQUAL"} and not _same(previous, wire):
+                decision = "KEEP_LOCAL"
+            # Never claim coincidentally identical user prose as a generated suffix.
+            if not hierarchy.confirmed(binding) and _same(previous, wire):
+                section = None
+        if binding:
+            states[-1]["field_binding"] = [binding.identity_key, binding.revision, binding.acknowledged_version]
+        if decision == "UNCHANGED" and _same(previous, wire):
+            continue
+        if decision in {"APPLY_SOURCE", "HELD_BY_AUTHORITY", "OMITTED", "UNCHANGED"}:
+            held.append({"id": item["id"], "field": item["input_path"], "reason": decision})
+            continue
         if _same(previous,wire): continue
         change={'id':item['id'],'field':item['input_path'],'source_doctype':doc.doctype,
             'source_field':item['source']['field'],'label':frappe.get_meta(doc.doctype).get_field(item['source']['field']).label,
             'hero':None if previous is MISSING else previous,'new':wire,'local':local,'canonical_remote':canonical}
-        if (doc.doctype == ctx.document.doctype and item['source']['field'] in getattr(ctx, 'review_fields', ())
-                or not _baseline_matches(ctx,item,remote,canonical)):
+        if section is not None and (section or hierarchy.confirmed(binding)):
+            change["task_section"] = projected_section
+        if (doc.doctype == ctx.document.doctype and item["source"]["field"] in getattr(ctx, "review_fields", ())
+                or decision is not None and decision != "KEEP_LOCAL"):
+            conflicts.append(change)
+        elif decision is None and not _baseline_matches(ctx,item,remote,canonical):
             conflicts.append(change)
         else: changes.append(change)
     # All mapped event times travel together: an all-day toggle cannot silently
@@ -793,10 +911,14 @@ def _prepare(ctx,client,*,preview_only=False):
     selected={change['field'] for change in changes}
     if ctx.content['area']=='HeroCalendarEvents' and selected&{'calendar_event.start','calendar_event.end','calendar_event.all_day'}:
         needed={'calendar_event.start','calendar_event.end','calendar_event.all_day'}
+        if any(entry['field'] in needed for entry in held):
+            raise MappedUpdateError('Event time updates require start, end and all-day bindings together.')
         if not needed<=assigned.keys(): raise MappedUpdateError('Event time updates require start, end and all-day bindings together.')
         for path in needed:
             item,doc,local,wire,previous,canonical=evaluated[path]
-            if (item['read_path'] in held_sources or not _baseline_matches(ctx,item,remote,canonical)) and not any(c['id']==item['id'] for c in conflicts):
+            decision, _binding = _registry_decision(ctx,item,doc,remote)
+            current = decision in {"KEEP_LOCAL", "CONFIRM_EQUAL"} if decision else _baseline_matches(ctx,item,remote,canonical)
+            if (item["read_path"] in held_sources or not current) and not any(c['id']==item['id'] for c in conflicts):
                 conflicts.append({'id':item['id'],'field':path,'source_doctype':doc.doctype,
                     'source_field':item['source']['field'],
                     'label':frappe.get_meta(doc.doctype).get_field(item['source']['field']).label,
@@ -834,26 +956,52 @@ def _prepare(ctx,client,*,preview_only=False):
         if not variable: raise MappedUpdateError('The approved mutation service does not bind every configured input argument.')
         variables[variable]=value
     variables=validate_mutation(ctx.raw_schema,ctx.parsed,variables)
-    proof=[ctx.document.doctype,ctx.document.name,str(ctx.document.modified),ctx.mapping.name,
+    proof=[ctx.document.doctype,ctx.document.name,ctx.mapping.name,
         ctx.mapping.mapping_revision,ctx.content,ctx.contract.name,ctx.contract.contract_revision,
         ctx.contract.contract_fingerprint,ctx.service.query_document,ctx.read.contract.__dict__,
-        ctx.read.service.query_document,ctx.proof.fingerprint,_binding_state(ctx.link),remote,states,variables]
+        ctx.read.service.query_document,ctx.proof.fingerprint,_binding_state(ctx.link),remote,_state_proof(states),variables,
+        *getattr(ctx.read, "approval", ())]
+    selected_ids = {item['id'] for item in ctx.content['assignments'] if item['input_path'] in selected}
     return SimpleNamespace(remote=remote,changes=changes,conflicts=conflicts,variables=variables,states=states,
-        checks=checks,copied=copied,mutation_id=actual_id,fingerprint=sha256(_json(proof).encode()).hexdigest())
+        checks=[check for check in checks if check['id'] in selected_ids],
+        held=held,copied=copied,mutation_id=actual_id,fingerprint=sha256(_json(proof).encode()).hexdigest())
 
 
-def preview(mapping_name,doctype,name,*,client=None):
+def preview(mapping_name,doctype,name,*,client=None,related_observation=None):
     from hero_integration.api import _mutation_execution_state
     from hero_integration.client.graphql import HeroGraphQLClient
     from hero_integration.services.writeback_source import validate_source
     ctx=_load_context(mapping_name,doctype,name);config=validate_source(ctx.proof)
     client=client or HeroGraphQLClient(config.endpoint,lambda:config.api_token,config.timeout_seconds,max_retries=0)
     prepared=_prepare(ctx,client,preview_only=True) if ctx.content['area']=='HeroProjectMatches' else _prepare(ctx,client)
+    if related_observation is not None:
+        from hero_integration.services.change_detection import mapped_observation_hash, related_document_key, related_field_key
+        applicable = set()
+        for item in ctx.content["assignments"]:
+            source = item["source"]
+            key = related_field_key(source)
+            doc = ctx.source_documents.get(item["id"])
+            if (key in related_observation and doc is not None
+                    and (source["doctype"] != doctype or ctx.parent and source["field"] not in ctx.fields)
+                    and related_document_key(doc) == related_observation.get("_related_document")
+                    and mapped_observation_hash(doc, source["field"]) == related_observation[key]):
+                applicable.add(item["id"])
+        if not applicable:
+            return {"mapping": mapping_name, "superseded": True, "can_send": False}
+        # The ordinary grouped contract still controls every assignment and the
+        # exact fingerprint. Only a current observed difference may initiate it.
+        changes = [item for item in prepared.changes if item["id"] in applicable]
+        conflicts = [item for item in prepared.conflicts if item["id"] in applicable]
+        held = [item for item in getattr(prepared, "held", ()) if item["id"] in applicable]
+    else:
+        changes = prepared.changes
+        conflicts = prepared.conflicts
+        held = getattr(prepared, "held", [])
     enabled=bool(_mutation_execution_state()['mutation_execution_enabled'])
     return {'mapping':mapping_name,'doctype':doctype,'name':name,'area':ctx.content['area'],
-        'hero_id':ctx.hero_id,'mutation_id':prepared.mutation_id,'create':False,'changes':prepared.changes,
-        'conflicts':prepared.conflicts,'fingerprint':prepared.fingerprint,'sending_enabled':enabled,
-        'can_send':enabled and bool(prepared.changes)}
+        'hero_id':ctx.hero_id,'mutation_id':prepared.mutation_id,'create':False,'changes':changes,
+        'conflicts':conflicts,'held':held,'fingerprint':prepared.fingerprint,'sending_enabled':enabled,
+        'can_send':enabled and bool(changes)}
 
 
 def _check_local_current(ctx,prepared):
@@ -862,12 +1010,31 @@ def _check_local_current(ctx,prepared):
         doc=frappe.get_doc(state['doctype'],state['name'],for_update=True)
         frappe.has_permission(doc.doctype,'write' if doc.doctype==ctx.document.doctype else 'read',doc=doc,throw=True)
         item=items[state['id']];condition=item['options'].get('when')
-        if (str(doc.modified)!=state['modified'] or not _same(doc.get(item['source']['field']),state['value'])
+        if (not _same(doc.get(item['source']['field']),state['value'])
                 or condition and not _same(doc.get(condition['field']),state['condition'])):
             raise MappedUpdateError('The native document changed during Send; reconcile the remote result.')
         link=frappe.get_doc('HERO Integration Link',ctx.source_links[item['id']].name,for_update=True)
         if _binding_state(link)!=state['binding']:
             raise MappedUpdateError('The native identity or baseline changed during Send; reconcile the remote result.')
+
+
+def _confirmed_task_payload(ctx, prepared, after):
+    """Advance a whole-record hash only from its identical preimage and verified change set."""
+    from hero_integration.services.migration import _digest as migration_digest
+
+    prior = ctx.link.source_payload_hash
+    if not prior or ctx.link.observed_source_hash not in (None, "", prior):
+        return None
+    before = dict(prepared.remote, _hero_source_instance=ctx.proof.source_instance)
+    current = dict(after, _hero_source_instance=ctx.proof.source_instance)
+    if migration_digest(before) != prior or before.keys() != current.keys():
+        return None
+    paths = {item["id"]: item["read_path"] for item in ctx.content["assignments"]}
+    verified = {paths[change["id"]] for change in prepared.changes}
+    # Task fields are direct scalar members. A changed nested object needs inbound review.
+    if any(before[key] != current[key] for key in before if key not in verified and key != "modified"):
+        return None
+    return migration_digest(current)
 
 
 def _acknowledge(ctx,prepared,after):
@@ -878,7 +1045,12 @@ def _acknowledge(ctx,prepared,after):
         item=items[change['id']];link=ctx.source_links[item['id']];field=item['source']['field'];area=ctx.content['area']
         data=updates.setdefault(link.name,{'source_field_hashes':decode(link.source_field_hashes) or {},
             'target_field_hashes':json.loads(link.target_field_hashes or '{}')})
-        state=data['target_field_hashes'];canonical=_canonical(ctx,item,after)
+        state=data['target_field_hashes']
+        business_after = after
+        if "task_section" in change:
+            from hero_integration.services.task_hierarchy import source_body
+            business_after = dict(after, comment=source_body(after["comment"], change["task_section"]))
+        canonical=_canonical(ctx,item,business_after)
         if item['id'] in getattr(ctx,'price_collections',{}):
             from hero_integration.services.mapped_collection_relations import _hash
             data['target_payload_hash']=_hash(ctx.price_collections[item['id']]['observed'])
@@ -888,12 +1060,15 @@ def _acknowledge(ctx,prepared,after):
             managed=state['prices'][item['options']['price_list']] if area=='HeroProducts' else state['price']
             managed['rate']=float(change['local'])
         elif area=='HeroProducts':
-            if item['resolver']!='BARCODE': state.setdefault('fields',{})[field]=digest(change['local'] or None)
+            from hero_integration.services.product_migration import field_digest
+            if item['resolver']!='BARCODE': state.setdefault('fields',{})[field]=field_digest(change['local'])
         elif area=='HeroServices':
             from hero_integration.services.service_migration import normalized
             value=normalized(ctx.source_documents[item['id']],{field})[field]
             state.setdefault('values',{})[field]=value
-        elif area=='HeroEmployees': state[field]=str(change['local'] or '')
+        elif area=='HeroEmployees':
+            from hero_integration.services.employee_migration import native_value
+            state[field] = native_value(change['local'])
         elif area in {'HeroDocuments','HeroPictures'}:
             from hero_integration.services.file_transfer import value_hash
             if state.get('version')!=2 or field not in state.get('mapped_fields',[]) or not isinstance(state.get('target'),dict):
@@ -915,6 +1090,10 @@ def _acknowledge(ctx,prepared,after):
             data['target_field_hashes']=_json(data['target_field_hashes'])
             frappe.db.set_value('HERO Integration Link',name,data,update_modified=False)
             continue
+        if area == "HeroTasks" and name == ctx.link.name:
+            confirmed_hash = _confirmed_task_payload(ctx, prepared, after)
+            if confirmed_hash:
+                data.update(source_payload_hash=confirmed_hash, observed_source_hash=confirmed_hash)
         if area=='HeroProducts':
             fields=state.get('fields',{})
             # Unsent local fields retain their previous individual proof. Only
@@ -936,53 +1115,220 @@ def _acknowledge(ctx,prepared,after):
         frappe.db.set_value('HERO Integration Link',name,data,update_modified=False)
 
 
-def send(mapping_name,doctype,name,*,fingerprint='',confirmed=False,client=None,mutation_client=None):
-    from hero_integration.api import _assert_mutation_execution_released,_reserve_mutation,_finalize_mutation
+def _digest(value):
+    return sha256(_json(value).encode()).hexdigest()
+
+
+def _authority(ctx):
+    parent = ctx.parent
+    return _digest([ctx.proof.fingerprint, ctx.mapping.name, ctx.mapping.mapping_revision, ctx.content,
+        ctx.contract.name, ctx.contract.contract_revision, ctx.contract.contract_fingerprint, ctx.contract.mapping_json,
+        ctx.service.query_document, ctx.read.mapping.name, ctx.read.contract.service_revision,
+        ctx.read.contract.mapping_revision, ctx.read.service.query_document, ctx.rules_fingerprint,
+        [parent.identity_key, parent.revision] if parent else None, *getattr(ctx.read, "approval", ())])
+
+
+def _state_proof(states):
+    # A save to an unrelated field can coexist with an outstanding intent.
+    return _digest([{k: v for k, v in state.items() if k != "modified"} for state in states])
+
+
+def _intent(ctx, prepared):
+    from hero_integration.services.frappe_writeback import object_write_scope
+    site = frappe.local.site
+    if any(state.get("field_binding") for state in prepared.states):
+        from hero_integration.services.binding_registry import FrappeBindingStorage
+        storage = FrappeBindingStorage(frappe)
+        storage._write(frappe, storage.FIELD)
+    from hero_integration.services.change_detection import related_field_key
+    held = set()
+    for entry in prepared.conflicts:
+        if not entry.get("source_field"):
+            continue
+        held.add(related_field_key({"doctype":entry["source_doctype"], "field":entry["source_field"]}))
+        if entry["source_doctype"] == ctx.document.doctype:
+            held.add(entry["source_field"])
+    return {"version": 2, "site": site, "object": object_write_scope(site, ctx.proof.source_instance,
+            ctx.document.doctype, ctx.document.name), "doctype": ctx.document.doctype, "name": ctx.document.name,
+        "mapping": ctx.mapping.name, "mapping_revision": int(ctx.mapping.mapping_revision),
+        "snapshot": ctx.snapshot.schema_fingerprint, "authority": _authority(ctx),
+        "mutation_id": str(prepared.mutation_id), "states": _state_proof(prepared.states),
+        "wire": {check["id"]: _digest(check["value"]) for check in prepared.checks},
+        "changed": [change["id"] for change in prepared.changes],
+        "task_sections": {entry["id"]: entry["task_section"] for entry in prepared.changes if "task_section" in entry},
+        "deferred_native_fields": sorted(held),
+        "copied": {copy["read_path"]: _digest(_at(prepared.remote, copy["read_path"])) for copy in prepared.copied}}
+
+
+def _check_authority(proof, ctx, prepared, *, lock=False):
+    from hero_integration.services.execution_runtime import outbound_target_bindings
+    from hero_integration.services.mapping_runtime import effective_rule_fingerprint
+    if lock:
+        send_helpers._lock_reader_approval(ctx.read)
+        for doctype, name in (("HERO GraphQL Mapping", ctx.mapping.name), ("HERO Mutation Contract", ctx.contract.name),
+                              ("HERO GraphQL Service", ctx.service.name), ("HERO GraphQL Mapping", ctx.read.mapping.name),
+                              ("HERO GraphQL Service", ctx.read.service.name), ("HERO GraphQL Schema Snapshot", ctx.snapshot.name)):
+            if not frappe.db.get_value(doctype, name, "name", for_update=True):
+                raise MappedUpdateError("The mapped update authority or payload changed after reservation.")
+        # Acquire the current native and B6 rows before reloading the approved context.
+        ctx.parent, ctx.fields = outbound_target_bindings(frappe, ctx.query_plan, ctx.document, ctx.hero_id, lock=True)
+        effective_rule_fingerprint(ctx.read.contract.definition_ids, ctx.read.mapping.name, lock=True)
+        _check_local_current(ctx, prepared)
+        ctx = _load_context(proof["mapping"], proof["doctype"], proof["name"])
+    if _authority(ctx) != proof["authority"] or _state_proof(prepared.states) != proof["states"]:
+        raise MappedUpdateError("The mapped update authority or payload changed after reservation.")
+    for state in prepared.states:
+        reference = state.get("field_binding")
+        if reference:
+            current = next((field for field in ctx.fields.values() if field.identity_key == reference[0]), None)
+            if not current or [current.identity_key, current.revision, current.acknowledged_version] != reference:
+                raise MappedUpdateError("The native identity or baseline changed during Send; reconcile the remote result.")
+    return ctx
+
+
+def _verified_remote(ctx, proof, remote):
+    if str(_at(remote, ctx.content["identity"]["mutation_read_path"])) != proof["mutation_id"]:
+        raise MappedUpdateError("The mutation identity changed during readback.")
+    for path, expected in proof["copied"].items():
+        if _digest(_at(remote, path)) != expected:
+            raise MappedUpdateError("A protected related identity changed during Send.")
+    items = {item["id"]: item for item in ctx.content["assignments"]}
+    for key, expected in proof["wire"].items():
+        item = items[key]
+        doc = ctx.source_documents[key]
+        from graphql import get_named_type
+        kind = _input_type(_schema(ctx.raw_schema), ctx.mapping.operation_name, item["input_path"])
+        if key in proof.get("task_sections", {}):
+            from hero_integration.services.task_hierarchy import normalized
+            value = normalized(_at(remote, item["read_path"]))
+        else:
+            value = _remote_wire(ctx, item, doc, remote)
+        if str(get_named_type(kind)) == "Boolean" and type(value) is int and value in (0, 1):
+            value = bool(value)
+        if _digest(_typed(value, kind)) != expected:
+            raise MappedUpdateError("HERO did not retain the configured mapped field value.")
+
+
+def _acknowledge_verified(ctx, prepared, after, correlation):
+    from hero_integration.services.binding_registry import BindingRegistryService, FrappeBindingStorage
+    items = {item["id"]: item for item in ctx.content["assignments"]}
+    registry = BindingRegistryService(FrappeBindingStorage(frappe))
+    for change in prepared.changes:
+        item = items[change["id"]]
+        if item["source"]["doctype"] != ctx.document.doctype:
+            continue
+        binding = ctx.fields.get(item["source"]["field"])
+        if binding is None:
+            continue
+        from hero_integration.services.execution_runtime import acknowledge_outbound_field
+        business_after = after
+        if "task_section" in change:
+            from hero_integration.services.task_hierarchy import source_body
+            business_after = dict(after, comment=source_body(after["comment"], change["task_section"]))
+        acknowledge_outbound_field(registry, ctx.query_plan, _rule(ctx, item), ctx.document, business_after,
+                                   ctx.proof.source_instance, binding, change["local"], correlation,
+                                   null_policy=item["options"].get("null", "OMIT"),
+                                   **({"task_section": change["task_section"]} if "task_section" in change else {}))
+    _acknowledge(ctx, prepared, after)
+
+
+def _reader(ctx):
     from hero_integration.client.graphql import HeroGraphQLClient
-    from hero_integration.client.graphql_mutation import HeroMutationClient
     from hero_integration.services.writeback_source import validate_source
-    _assert_mutation_execution_released()
-    ctx=_load_context(mapping_name,doctype,name);config=validate_source(ctx.proof)
-    client=client or HeroGraphQLClient(config.endpoint,lambda:config.api_token,config.timeout_seconds,max_retries=0)
-    prepared=_prepare(ctx,client)
-    if confirmed not in (True,1,'1','true') or not fingerprint or fingerprint!=prepared.fingerprint:
-        raise MappedUpdateError('The mapped update preview changed; review and confirm it again.')
-    if not prepared.changes or {c.get('field') for c in prepared.changes} & {c.get('field') for c in prepared.conflicts}:
-        raise MappedUpdateError('Send requires mapped local changes without remote baseline conflicts.')
-    audit=_reserve_mutation(operation_name=ctx.mapping.operation_name,schema_fingerprint=ctx.snapshot.schema_fingerprint,
-        mapping_revision=int(ctx.mapping.mapping_revision),request_fingerprint=prepared.fingerprint)
+    config = validate_source(ctx.proof)
+    return HeroGraphQLClient(config.endpoint, lambda: validate_source(ctx.proof).api_token,
+                             config.timeout_seconds, max_retries=0)
+
+
+def reconcile_delivery(audit, proof, ledger):
+    """Read-only verification of an abandoned multi-field mutation, using its issued field set."""
+    from hero_integration.api import _finalize_mutation
+    from hero_integration.services.writeback_source import validate_source
+    ctx = _load_context(proof["mapping"], proof["doctype"], proof["name"])
+    if _authority(ctx) != proof["authority"]:
+        raise MappedUpdateError("The mapped update authority or payload changed after reservation.")
+    ledger.commit()
+    prepared = _prepare(ctx, _reader(ctx))
+    _check_authority(proof, ctx, prepared)
     try:
-        # Reservation commits its audit row. Re-prove all authority and payload
-        # after that boundary, before the single allowed transport attempt.
-        fresh=_load_context(mapping_name,doctype,name);verified=_prepare(fresh,client)
-        if verified.fingerprint!=prepared.fingerprint:
-            raise MappedUpdateError('The mapped update authority or payload changed after reservation.')
-        _assert_mutation_execution_released();config=validate_source(ctx.proof)
-        transport=mutation_client or HeroMutationClient(config.endpoint,lambda:config.api_token,config.timeout_seconds)
-        from hero_integration.services.mapping_contract_v1 import materialize_saved_mutation
-        request=materialize_saved_mutation(fresh.snapshot,fresh.service.query_document,verified.variables,
-            request_scope=audit.correlation_id)
-        returned=transport.execute_once(request.document,request.variables)
-        record=returned.get(ctx.mapping.operation_name) if isinstance(returned,dict) else None
-        if not isinstance(record,dict) or returned.get('errors') or str(record.get('id'))!=str(prepared.mutation_id):
-            raise MappedUpdateError('HERO did not confirm the separately proven mutation identity.')
-        validate_source(ctx.proof);after=_read_record(ctx,client)
-        if str(_at(after,ctx.content['identity']['mutation_read_path']))!=str(prepared.mutation_id):
-            raise MappedUpdateError('The mutation identity changed during readback.')
-        for copy in prepared.copied:
-            if copy['input_path'].endswith('.id') or copy['input_path'].endswith('.product_id'):
-                if not _same(_at(after,copy['read_path']),_at(prepared.remote,copy['read_path'])):
-                    raise MappedUpdateError('A protected related identity changed during Send.')
-        items={item['id']:item for item in ctx.content['assignments']}
-        for check in prepared.checks:
-            item=items[check['id']]
-            if not _same(_remote_wire(ctx,item,ctx.source_documents[item['id']],after),check['value']):
-                raise MappedUpdateError('HERO did not retain the configured mapped field value.')
-        validate_source(ctx.proof);_check_local_current(ctx,prepared);_acknowledge(ctx,prepared,after)
-    except Exception:
-        frappe.db.rollback()
-        _finalize_mutation(audit,'Failed','Mapped update was not verified; no automatic retry. Check HERO before another submission.')
-        raise MappedUpdateError('Sending to HERO could not be confirmed; no automatic retry was performed.') from None
-    _finalize_mutation(audit,'Succeeded','Mapped update was sent once and verified by approved Query readback.')
-    return {'status':'SENT','hero_id':ctx.hero_id,'mutation_id':prepared.mutation_id,
-        'changes':[change['label'] for change in prepared.changes],'correlation_id':audit.correlation_id}
+        _verified_remote(ctx, proof, prepared.remote)
+    except MappedUpdateError:
+        return {"status": "REVIEW_REQUIRED", "correlation_id": audit.correlation_id}
+    ledger.commit()
+    _check_authority(proof, ctx, prepared, lock=True)
+    validate_source(ctx.proof)
+    states = {state["id"]: state for state in prepared.states}
+    prepared.changes = [{"id": key, "local": states[key]["value"]} for key in proof["changed"]]
+    for change in prepared.changes:
+        if change["id"] in proof.get("task_sections", {}):
+            change["task_section"] = proof["task_sections"][change["id"]]
+    _acknowledge_verified(ctx, prepared, prepared.remote, audit.correlation_id)
+    _finalize_mutation(audit, "Succeeded", "Mapped intent verified by read-only recovery.", commit=ledger.commit)
+    return {"status": "Confirmed", "correlation_id": audit.correlation_id}
+
+
+def send(mapping_name,doctype,name,*,fingerprint='',confirmed=False,client=None,mutation_client=None,event_name=''):
+    from hero_integration.api import _assert_mutation_execution_released
+    from hero_integration.client.graphql_mutation import HeroMutationClient
+    from hero_integration.services.execution_runtime import deliver_bound_intent
+    from hero_integration.services.mapping_contract_v1 import materialize_saved_mutation
+    from hero_integration.services.writeback_source import validate_source
+
+    _assert_mutation_execution_released()
+    ctx = _load_context(mapping_name, doctype, name)
+    client = client or _reader(ctx)
+    prepared = _prepare(ctx, client)
+    if confirmed not in (True, 1, "1", "true") or not fingerprint or fingerprint != prepared.fingerprint:
+        raise MappedUpdateError("The mapped update preview changed; review and confirm it again.")
+    if not prepared.changes or {c.get('field') for c in prepared.changes} & {c.get('field') for c in prepared.conflicts}:
+        raise MappedUpdateError("Send requires mapped local changes without remote baseline conflicts.")
+    proof = _intent(ctx, prepared)
+
+    def check():
+        _check_authority(proof, ctx, prepared, lock=True)
+
+    def perform(audit, dispatch, ledger):
+        fresh = _load_context(mapping_name, doctype, name)
+        ledger.commit()
+        verified = _prepare(fresh, client)
+        if verified.fingerprint != prepared.fingerprint:
+            raise MappedUpdateError("The mapped update authority or payload changed after reservation.")
+        request = materialize_saved_mutation(fresh.snapshot, fresh.service.query_document, verified.variables,
+                                            request_scope=audit.correlation_id)
+        config = validate_source(fresh.proof)
+        transport = mutation_client or HeroMutationClient(config.endpoint, lambda: validate_source(fresh.proof).api_token,
+                                                          config.timeout_seconds)
+        def dispatch_check():
+            _check_authority(proof, fresh, verified, lock=True)
+            if proof.get("task_sections"):
+                from hero_integration.services.task_hierarchy import section_for, section_proof
+                actual = section_proof(section_for(frappe, name))
+                if any((actual or {}).get("sha256") != (expected or {}).get("sha256")
+                       for expected in proof["task_sections"].values()):
+                    raise MappedUpdateError("The native task hierarchy changed after preview.")
+        dispatch(dispatch_check)
+        from hero_integration.client.mutation_guard import worker_update
+
+        def bound_fields():
+            sent = {check["id"] for check in verified.checks}
+            assignments = [item for item in fresh.content["assignments"] if item["id"] in sent]
+            return fresh.parent, [fresh.fields.get(item["source"]["field"])
+                                  if item["source"]["doctype"] == doctype else None for item in assignments]
+
+        with worker_update(request, audit, fresh.proof, bound_fields):
+            returned = transport.execute_once(request.document, request.variables)
+        record = returned.get(fresh.mapping.operation_name) if isinstance(returned, dict) else None
+        if not isinstance(record, dict) or returned.get("errors") or str(record.get("id")) != proof["mutation_id"]:
+            raise MappedUpdateError("HERO did not confirm the separately proven mutation identity.")
+        validate_source(fresh.proof)
+        after = _read_record(fresh, client)
+        _verified_remote(fresh, proof, after)
+        ledger.commit()
+        _check_authority(proof, fresh, verified, lock=True)
+        validate_source(fresh.proof)
+        _acknowledge_verified(fresh, verified, after, audit.correlation_id)
+
+    audit, _ = deliver_bound_intent(frappe, proof, operation=ctx.mapping.operation_name,
+                                    fingerprint=prepared.fingerprint, initial_check=check, perform=perform, event_name=event_name)
+    return {"status": "SENT", "hero_id": ctx.hero_id, "mutation_id": prepared.mutation_id,
+            "changes": [change["label"] for change in prepared.changes], "correlation_id": audit.correlation_id}

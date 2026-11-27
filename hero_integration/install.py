@@ -179,6 +179,24 @@ _REQUIRED_ERPNext_DOCTYPES = (
 )
 
 
+from hero_integration.services.source_history import ABSENCE_FIELD, FILE_FIELD, DOC_SCALARS
+
+# Visibility can be changed later without changing mappings or HR permissions.
+SOURCE_HISTORY_FIELDS = {ABSENCE_FIELD, FILE_FIELD, *('custom_hero_doc_' + key for key in DOC_SCALARS)}
+from hero_integration.services.calendar_interval import DEFINITION as CALENDAR_INTERVAL_FIELD
+
+HERO_CUSTOM_FIELDS.setdefault('Event', []).append(CALENDAR_INTERVAL_FIELD)
+HERO_CUSTOM_FIELDS.setdefault('Employee', []).append({
+    'fieldname': ABSENCE_FIELD, 'fieldtype': 'Table', 'options': 'HERO Source Absence',
+    'label': 'HERO Absence History', 'read_only': 1, 'no_copy': 1, 'hidden': 1, 'permlevel': 1,
+})
+HERO_CUSTOM_FIELDS.setdefault('File', []).extend([
+    {'fieldname': FILE_FIELD, 'fieldtype': 'Long Text', 'label': 'HERO File Metadata',
+     'read_only': 1, 'no_copy': 1, 'hidden': 1},
+    *[{'fieldname': 'custom_hero_doc_' + key, 'label': 'HERO Document ' + key,
+       'fieldtype': 'Long Text', 'no_copy': 1, 'hidden': 1, 'read_only': 1} for key in DOC_SCALARS],
+])
+
 for _doctype, _fields in OBSERVATIONS.items():
     HERO_CUSTOM_FIELDS.setdefault(_doctype, []).extend(
         {"fieldname": field, "label": label, "fieldtype": "Data", "read_only": 1, "no_copy": 1}
@@ -200,10 +218,17 @@ def before_install() -> None:
     _require_erpnext_schema()
 
 
+def ensure_bank_account_lookup():
+    import frappe
+    frappe.db.add_index('Bank Account', ['iban'], index_name='hero_bank_iban')
+
+
 def after_install() -> None:
     ensure_hero_source_fields()
     ensure_pending_reference_schema()
+    ensure_exact_source_identities()
     ensure_employee_optional_fields()
+    ensure_bank_account_lookup()
     from hero_integration.app_setup import apply_form_layout, ensure_app_records
 
     ensure_app_records()
@@ -227,7 +252,9 @@ def after_install() -> None:
 def after_migrate() -> None:
     ensure_hero_source_fields()
     ensure_pending_reference_schema()
+    ensure_exact_source_identities()
     ensure_employee_optional_fields()
+    ensure_bank_account_lookup()
     from hero_integration.app_setup import ensure_app_records
 
     ensure_app_records()
@@ -248,6 +275,39 @@ def after_migrate() -> None:
 
         ensure_reference_fields()
         ensure_setting()
+
+
+def ensure_exact_source_identities() -> None:
+    """HERO catalog IDs are opaque. Preserve case for lookups, receipts and uniqueness."""
+    if frappe.db.db_type != 'mariadb':
+        return
+    fields = {
+        'HERO Integration Link': ('source_id', 'source_key'),
+        'HERO Object Binding': ('external_object_id',),
+        'HERO Budget Outcome': ('external_id',),
+        'HERO Integration Record': ('source_id',),
+        'HERO Pending Dependency': ('source_id',),
+        'HERO Pending Reference': ('source_id',),
+        'HERO Service Calculation': ('source_id',),
+    }
+    for doctype, columns in fields.items():
+        table = 'tab' + doctype
+        definitions = frappe.db.sql(
+            """SELECT COLUMN_NAME, COLUMN_TYPE, IS_NULLABLE, COLUMN_DEFAULT, CHARACTER_SET_NAME, COLLATION_NAME
+               FROM information_schema.COLUMNS WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME=%s AND COLUMN_NAME IN %s""",
+            (table, columns),
+        )
+        if {row[0] for row in definitions} != set(columns):
+            raise ValueError(f'Missing source identity field on {doctype}.')
+        changes = []
+        for name, sql_type, nullable, default, charset, collation in definitions:
+            if collation == 'utf8mb4_nopad_bin':
+                continue
+            if (sql_type, nullable, charset) != ('varchar(140)', 'YES', 'utf8mb4') or default not in (None, 'NULL'):
+                raise ValueError(f'Unexpected source identity column definition on {doctype}.{name}.')
+            changes.append(f'MODIFY COLUMN `{name}` VARCHAR(140) CHARACTER SET utf8mb4 COLLATE utf8mb4_nopad_bin NULL DEFAULT NULL')
+        if changes:
+            frappe.db.sql_ddl(f'ALTER TABLE `{table}` ' + ', '.join(changes))
 
 
 def ensure_pending_reference_schema() -> None:
@@ -293,7 +353,7 @@ def _missing_custom_field_definitions() -> dict[str, list[dict[str, object]]]:
             # The label is display only; the app sets it itself (field_labels).
             conflicts = [
                 key for key, expected in definition.items()
-                if key not in DISPLAY_PROPERTIES and _field_value(existing, key) != _normalised_field_value(expected)
+                if key not in DISPLAY_PROPERTIES and not (key == 'hidden' and definition['fieldname'] in SOURCE_HISTORY_FIELDS) and _field_value(existing, key) != _normalised_field_value(expected)
             ]
             if conflicts:
                 frappe.throw(frappe._("Custom Field {0}.{1} conflicts with the HERO schema ({2}).")

@@ -228,6 +228,133 @@ class TestSyntheticDeferredMariaDB(TestCase):
         with self._resolution_context():
             deferred.resolve_one(pending)
 
+    def _mixed_task(self):
+        from hero_integration.services.integration_events import record_output
+        task, pending = self._task_and_pending()
+        frappe.db.set_value('HERO Integration Run', self.run.name, 'state', 'Completed With Conflicts')
+        record_output(run=self.run.name, source_type='Task', source_id=self.row['id'],
+                      result='CREATED', action='hero_to_frappe', target_doctype='Task', target_name=task)
+        return task, pending
+
+    def test_mixed_child_reconciles_only_accepted_observations_after_target_arrival(self):
+        from hero_integration.services.integration_events import record_output
+        task, pending = self._mixed_task()
+        self.assertEqual(deferred._mixed_run_rows(names=[pending]), {pending})
+        self._resolve(pending)
+        self.assertEqual(frappe.db.get_value(deferred.MAIN, pending, 'status'), 'Waiting')
+        record_output(run=self.run.name, source_type='Task', source_id=self.row['id'],
+                      result='PENDING_REVIEW', action='hero_to_frappe', target_doctype='Task', target_name=task,
+                      detail='Deferred relationship reconciliation: waiting for recipient')
+        self.assertEqual(deferred._mixed_run_rows(names=[pending]), {pending})
+        project = self._project(20001)
+        receipt = record_output(run=self.run.name, source_type='Task', source_id=self.row['id'],
+                      result='CONFLICT', action='hero_to_frappe', target_doctype='Task', target_name=task)
+        self.assertFalse(deferred._mixed_run_rows(names=[pending]))
+        self._resolve(pending)
+        self.assertFalse(frappe.db.get_value('Task', task, 'project'))
+        frappe.db.delete('HERO Integration Record', {'name':receipt})  # Remove only this synthetic negative control.
+        self._resolve(pending)
+        self.assertEqual(frappe.db.get_value('Task', task, 'project'), project.name)
+        self.assertEqual(frappe.db.get_value(deferred.MAIN, pending, 'status'), 'Resolved')
+        counts = lambda: (frappe.db.count('HERO Integration Record', {'run': self.run.name}),
+                          frappe.db.count('HERO Integration Link', {'source_instance': self.source}),
+                          frappe.db.count(deferred.CHILD, {'parent':pending}))
+        before = counts()
+        self._resolve(pending)
+        self.assertEqual(before, counts())
+
+    def test_confirmed_lead_preserves_local_project_and_resolves_the_observation(self):
+        self.row['target_project_match'] = {'id':20001, 'is_deleted':False, 'project_nr':'KONT-123'}
+        task, pending = self._mixed_task()
+        frappe.db.set_value('HERO Integration Run', self.run.name, 'graphql_service', 'synthetic-reader')
+        local = self._project(20002)
+        frappe.db.set_value('Task', task, 'project', local.name)
+        self._resolve(pending)
+        self.assertEqual(frappe.db.get_value(deferred.MAIN, pending, 'status'), 'Resolved')
+        self.assertEqual(frappe.db.get_value('Task', task, 'project'), local.name)
+        self.assertFalse(migration._link('project', '20001', self.source))
+
+    def test_targeted_deleted_reference_keeps_native_task_and_earlier_conflict(self):
+        task, pending = self._mixed_task()
+        frappe.db.set_value('HERO Integration Run', self.run.name, 'graphql_service', 'synthetic-reader')
+        link = migration._link('Task', str(self.row['id']), self.source)
+        before = frappe.db.get_value('Task', task, 'modified')
+        with self._resolution_context(), deferred._page_project_history(), \
+                patch('hero_integration.sources.hero.GraphQLServiceSource.approved') as reader, \
+                patch('hero_integration.client.settings.get_configuration',
+                      return_value=SimpleNamespace(source_instance=self.source, source_binding_confirmed=True,
+                      source_binding_revision=1, endpoint=None, api_token='', timeout_seconds=1)), \
+                patch.object(migration, '_request_rate', return_value=1):
+            reader.return_value.project_reference_states.return_value = {20001:'DELETED'}
+            frappe.db.set_value('HERO Integration Link', link.name, {'sync_status':'Conflict','conflict_detail':'local status'})
+            deferred.resolve_one(pending)
+            self.assertEqual(frappe.db.get_value('HERO Integration Link',link.name,'conflict_detail'), 'local status')
+            self.assertEqual(frappe.db.get_value(deferred.MAIN, pending, 'status'), 'Waiting')
+            frappe.db.set_value('HERO Integration Link',link.name,'sync_status','Synchronized')
+            deferred.resolve_one(pending)
+            reader.return_value.project_reference_states.assert_called_once_with({20001})
+        self.assertEqual(frappe.db.get_value(deferred.MAIN, pending, 'status'), 'Resolved')
+        self.assertEqual(frappe.db.get_value('Task', task, 'modified'), before)
+        self.assertFalse(migration._link('project','20001',self.source))
+
+    def test_review_receipts_keep_changed_decisions_and_reuse_the_latest_equal_one(self):
+        from hero_integration.services.integration_events import record_output
+        def receipt(detail):
+            return record_output(run=self.run.name, source_type='Task', source_id=10001,
+                action='task_assignment_review', result='PENDING_REVIEW', detail=detail)
+        original = receipt('missing recipient')
+        token = deferred._replaying.set(True)
+        try:
+            self.assertEqual(receipt('missing recipient'), original)
+            changed = receipt('local review')
+            self.assertNotEqual(changed, original)
+            self.assertEqual(receipt('local review'), changed)
+            reverted = receipt('missing recipient')
+            self.assertNotIn(reverted, (original, changed))
+            self.assertEqual(receipt('missing recipient'), reverted)
+        finally:
+            deferred._replaying.reset(token)
+        self.assertEqual(frappe.db.count('HERO Integration Record', {'run':self.run.name}), 3)
+
+    def test_partial_completion_preserves_cancelled_picture_and_only_reconciles_eight_origins(self):
+        from hero_integration.services import file_migration as fm
+        from hero_integration.services.migration_waves import WAVES
+        def run(action, state):
+            return frappe.get_doc({'doctype':'HERO Integration Run', 'action':action, 'state':state,
+                'mode':'Execute', 'source_instance':self.source, 'source_binding_revision':1}).insert()
+        parent = run(fm.FULL_ACTION, 'Blocked')
+        children = {action: run(action, 'Cancelled' if action=='Picture Migration' else 'Completed With Conflicts').name
+                    for action in fm.NEW_FULL_STEPS}
+        for child in children.values():
+            frappe.db.set_default(fm.CHILD_KEY.format(child), parent.name)
+        picture = children['Picture Migration']
+        wave = {action:children[action] for action in WAVES[6]}
+        fm._save_full(parent.name, dict(steps=list(fm.NEW_FULL_STEPS), step=6, child='', parallel_areas=True,
+            project_product_wave=False, notes=[], wave_children=wave, completed_children=[
+                child for action, child in children.items() if action not in wave]))
+        with patch.object(fm, 'bound_configuration', return_value=SimpleNamespace(source_instance=self.source)), \
+                patch('hero_integration.services.run_reservation.admit_migration'), patch.object(fm, '_enqueue') as enqueue:
+            with self.assertRaises(fm.SourceBindingError):
+                fm.retry_full_relationships(parent.name, omit_cancelled_picture=children['Service Migration'])
+            enqueue.assert_not_called()
+            fm.retry_full_relationships(parent.name, omit_cancelled_picture=picture)
+            fm.retry_full_relationships(parent.name, omit_cancelled_picture=picture)
+            enqueue.assert_called_once_with(parent.name)
+            saved = fm._full(parent.name)
+            self.assertEqual(set(saved['completed_children']), set(children.values()) - {picture})
+            self.assertEqual(saved['omitted_children'], {'Picture Migration':picture})
+            self.assertEqual((saved['parallel_areas'],saved['project_product_wave']), (True,False))
+            with patch.object(fm, 'on_run_finished') as finished, patch.object(fm, '_start_step') as start, \
+                    patch.object(deferred, '_dedicated_workers', return_value=False), patch.object(frappe.db, 'commit'):
+                for _ in range(len(deferred.FINAL_RELATION_ORDER) + 1):
+                    fm._advance_full_locked(parent.name)
+                start.assert_not_called()
+                finished.assert_called_once_with(parent.name)
+                parent.reload()
+                self.assertEqual(parent.state, 'Completed With Conflicts')
+                self.assertIn(picture, parent.error_message)
+            self.assertEqual(frappe.db.get_value('HERO Integration Run', picture, 'state'), 'Cancelled')
+
     def test_success_notification_realizes_only_the_completed_origin_area(self):
         task_name, pending = self._task_and_pending()
         origin = self.run
@@ -392,6 +519,7 @@ class TestSyntheticDeferredMariaDB(TestCase):
             'company':os.environ['HERO_SYNTHETIC_COMPANY']},'Project','project_name',self.plan.mapping_version,
             self.run,source_instance=self.source)
         self.assertEqual(result.code,'CREATED')
+        self._bind_fixture_target('Project', result.target_name, row['id'])
         with patch.object(migration,'_mapping_plan_for_run',return_value=self.plan):
             deferred.remember(self.run,'project',row,result)
         pending=deferred.observation_key(self.source,'HeroProjectMatches','20002',self.run.name)
@@ -400,6 +528,161 @@ class TestSyntheticDeferredMariaDB(TestCase):
             self._resolve(pending)
         self.assertEqual(frappe.get_doc('Project',result.target_name).customer,customer.name)
         self.assertEqual(frappe.db.get_value(deferred.MAIN,pending,'status'),'Resolved')
+
+    def _parallel_wagegroup_calculations(self, *, stale_snapshot=False, separate_sources=False,
+                                        isolation='REPEATABLE READ', winner_after_lookup=False):
+        from concurrent.futures import ThreadPoolExecutor
+        from threading import Barrier, Event, local
+        from hero_integration.services import service_migration as services
+        from hero_integration.services.change_detection import managed_target_update
+
+        suffix = uuid4().hex[:10]
+        component = {'__typename':'WageGroup', 'id':'wage-'+suffix, 'name':'Synthetic wage '+suffix,
+                     'quantity':1, 'wage_per_hour':60, 'wage_cost_price':40}
+        group = frappe.get_all('Item Group', filters={'is_group':0}, pluck='name', limit=1)[0]
+        uom = frappe.get_all('UOM', pluck='name', limit=1)[0]
+        items = [frappe.get_doc({'doctype':'Item', 'item_code':'WAGE-RACE-'+suffix+'-'+str(index),
+                  'item_name':'Synthetic wage service', 'is_stock_item':0, 'item_group':group,
+                  'stock_uom':uom}).insert().name for index in range(2)]
+        site, sites_path = frappe.local.site, frappe.local.sites_path
+        snapshot_ready, winner_committed = Event(), Event()
+        start = Barrier(2)
+        source = self.source
+        attempts = []
+        connection_ids = []
+        worker_index = local()
+        original_link = services.scoped_link
+
+        def scoped_link(*args):
+            result = original_link(*args)
+            if winner_after_lookup and worker_index.value == 0 and result is None:
+                snapshot_ready.set()
+                if not winner_committed.wait(20):
+                    raise AssertionError('Concurrent binding did not arrive after the initial lookup.')
+            return result
+
+        def realize_fixture(item_name):
+            index = items.index(item_name)
+            row = {**component, 'id':component['id']+'-other' if separate_sources and index else component['id']}
+            lines = services.composition([row], source)
+            item = frappe.get_doc('Item', item_name)
+            item.set(services.CALCULATION, lines)
+            with managed_target_update('Item', item_name, None):
+                item.save(ignore_permissions=True)
+            attempts.append(item_name)
+
+        def worker(index):
+            frappe.init(site=site, sites_path=sites_path)
+            frappe.connect()
+            frappe.set_user('Administrator')
+            worker_index.value = index
+            try:
+                connection_ids.append(frappe.db.sql('SELECT CONNECTION_ID()')[0][0])
+                frappe.db.sql('SET SESSION innodb_snapshot_isolation=OFF')
+                frappe.db.sql('SET SESSION TRANSACTION ISOLATION LEVEL ' + isolation)
+                if stale_snapshot:
+                    if index == 0:
+                        frappe.get_all('HERO Integration Link', filters={'source_system':'HERO',
+                            'source_instance':source, 'source_type':'WageGroup',
+                            'source_id':component['id']}, pluck='name')
+                        snapshot_ready.set()
+                        if not winner_committed.wait(20):
+                            raise AssertionError('Concurrent winner did not commit.')
+                    elif not snapshot_ready.wait(20):
+                        raise AssertionError('Older transaction did not establish its snapshot.')
+                elif winner_after_lookup:
+                    if index == 1 and not snapshot_ready.wait(20):
+                        raise AssertionError('Initial absent binding was not observed.')
+                else:
+                    start.wait(timeout=20)
+                deferred._resolve_committed(items[index])
+                return None
+            except Exception as error:
+                frappe.db.rollback()
+                return type(error).__name__
+            finally:
+                if index == 1:
+                    winner_committed.set()
+                frappe.destroy()
+
+        # Separate native MariaDB connections use the production transaction
+        # retry around their real composition and Item writes.
+        frappe.db.commit()
+        try:
+            with patch.object(deferred, 'resolve_one', side_effect=realize_fixture), \
+                    patch.object(services, 'scoped_link', side_effect=scoped_link):
+                with ThreadPoolExecutor(max_workers=2) as pool:
+                    futures = [pool.submit(worker, index) for index in range(2)]
+                    results = [future.result(timeout=40) for future in futures]
+            self.assertEqual(len(set(connection_ids)), 2)
+            frappe.db.rollback()
+            links = frappe.get_all('HERO Integration Link', filters={'source_system':'HERO',
+                'source_instance':source, 'source_type':'WageGroup'}, fields=['name','source_id','target_name'])
+            self.assertEqual(len(links), 1)
+            self.assertEqual(frappe.db.count('Activity Type', {'name':component['name']}), 1)
+            if separate_sources:
+                self.assertEqual(sorted(str(result) for result in results), ['None','ServiceBlocked'])
+                self.assertEqual(len(attempts), 1)
+            else:
+                self.assertEqual(results, [None, None])
+                self.assertEqual(len(attempts), 2)
+                for item_name in items:
+                    calculation = frappe.get_doc('Item', item_name).get(services.CALCULATION)
+                    self.assertEqual(len(calculation), 1)
+                    self.assertEqual(calculation[0].activity_type, links[0].target_name)
+                writes = []
+                original_sql = frappe.db.sql
+                def observe_sql(query, *args, **kwargs):
+                    if str(query).lstrip().upper().startswith(('INSERT ', 'UPDATE ', 'DELETE ')):
+                        writes.append(str(query).split()[0])
+                    return original_sql(query, *args, **kwargs)
+                before = frappe.db.get_value('HERO Integration Link', links[0].name, ['modified','last_synced_on'])
+                with patch.object(frappe.db, 'sql', side_effect=observe_sql):
+                    for _ in range(2):
+                        self.assertEqual(services.composition([component], source)[0]['activity_type'],
+                                         links[0].target_name)
+                self.assertEqual(writes, [])
+                self.assertEqual(frappe.db.get_value('HERO Integration Link', links[0].name,
+                                                   ['modified','last_synced_on']), before)
+        finally:
+            frappe.db.rollback()
+            frappe.db.delete('HERO Integration Link', {'source_instance':source, 'source_type':'WageGroup'})
+            for item_name in items:
+                frappe.delete_doc('Item', item_name, force=True, ignore_permissions=True)
+            if frappe.db.exists('Activity Type', component['name']):
+                frappe.delete_doc('Activity Type', component['name'], force=True, ignore_permissions=True)
+            frappe.db.delete('HERO Integration Run', {'source_instance':source})
+            frappe.db.commit()
+
+    def test_wagegroup_reuses_binding_committed_after_older_snapshot(self):
+        self._parallel_wagegroup_calculations(stale_snapshot=True)
+
+    def test_parallel_wagegroup_creation_reuses_one_target_in_read_committed(self):
+        self._parallel_wagegroup_calculations(isolation='READ COMMITTED')
+
+    def test_wagegroup_rechecks_binding_created_between_lookup_and_target_check(self):
+        self._parallel_wagegroup_calculations(winner_after_lookup=True, isolation='READ COMMITTED')
+
+    def test_parallel_wagegroup_creation_reuses_one_target_in_repeatable_read(self):
+        self._parallel_wagegroup_calculations()
+
+    def test_parallel_different_wagegroup_identities_do_not_share_a_named_target(self):
+        self._parallel_wagegroup_calculations(separate_sources=True, isolation='READ COMMITTED')
+
+    def test_wagegroup_reuse_preserves_local_edits_and_conflicting_source_rates(self):
+        from hero_integration.services import service_migration as services
+        suffix = uuid4().hex[:10]
+        component = {'id':'wage-'+suffix, 'name':'Synthetic rate '+suffix, 'wage_per_hour':60}
+        target = services.activity(component, self.source)
+        with self.assertRaisesRegex(services.ServiceBlocked, 'billing rates differ'):
+            services.activity({**component, 'wage_per_hour':70}, self.source)
+        self.assertEqual(frappe.db.get_value('Activity Type', target, 'billing_rate'), 60)
+        frappe.db.set_value('Activity Type', target, 'billing_rate', 77)
+        with self.assertRaisesRegex(services.ServiceBlocked, 'edited locally'):
+            services.activity(component, self.source)
+        self.assertEqual(frappe.db.get_value('Activity Type', target, 'billing_rate'), 77)
+        self.assertEqual(frappe.db.count('HERO Integration Link', {'source_system':'HERO',
+            'source_instance':self.source, 'source_type':'WageGroup'}), 1)
 
     def _service_observation(self, file_upload=None):
         from hero_integration.services import service_migration as services, direct_runtime
@@ -421,6 +704,7 @@ class TestSyntheticDeferredMariaDB(TestCase):
         values = services.normalized(item, {'item_name',services.CALCULATION})
         services.write_link(None, self.source, services.SOURCE_TYPE, '82001', item,
             'frozen-service-observation', values)
+        self._bind_fixture_target('Item', item.name, row['id'])
         frappe.db.set_value('HERO Integration Run', self.run.name, 'state', 'Running')
         company = os.environ['HERO_SYNTHETIC_COMPANY']
         services.remember_relationships(self.run.name, self.source, company, read, row, detail, 'added')
@@ -443,7 +727,9 @@ class TestSyntheticDeferredMariaDB(TestCase):
             self._resolve(pending)
 
     def test_service_material_and_labor_links_wait_for_successful_origin(self):
+        import json
         services, read, item, positions, pending, company = self._service_observation()
+        observation = json.loads(frappe.get_doc(deferred.MAIN, pending).record_json)
         material = self._service_material(item, positions[0]['id'])
         self._resolve_service(services, read, pending, company)
         item.reload()
@@ -458,6 +744,17 @@ class TestSyntheticDeferredMariaDB(TestCase):
         self.assertEqual(frappe.db.get_value(deferred.MAIN, pending, 'status'), 'Resolved')
         self.assertEqual({(row.source_type,row.source_id) for row in frappe.get_doc(deferred.MAIN,pending).dependencies},
             {('supply_product',positions[0]['id']), ('WageGroup',positions[1]['id'])})
+        previous = item.modified, [row.name for row in rows]
+        repeat = frappe.get_doc({'doctype':'HERO Integration Run', 'action':'Service Migration', 'mode':'Execute',
+            'state':'Running', 'source_instance':self.source, 'source_binding_revision':1}).insert()
+        services.remember_relationships(repeat.name, self.source, company, read, observation['row'],
+                                       observation['detail'], 'unchanged')
+        frappe.db.set_value('HERO Integration Run', repeat.name, 'state', 'Completed')
+        next_pending = deferred.observation_key(self.source, 'HeroServices', '82001', repeat.name)
+        self._resolve_service(services, read, next_pending, company)
+        item.reload()
+        self.assertEqual(frappe.db.get_value(deferred.MAIN, next_pending, 'status'), 'Resolved')
+        self.assertEqual((item.modified, [row.name for row in item.get(services.CALCULATION)]), previous)
 
     def test_service_waits_for_missing_material_and_then_creates_owned_labor_binding(self):
         services, read, item, positions, pending, company = self._service_observation()
@@ -566,7 +863,7 @@ class TestSyntheticDeferredMariaDB(TestCase):
         read = replace(template, plan=plan, mapping='synthetic-employee-mapping')
         if not frappe.db.exists('User Type', 'Website User'):
             frappe.get_doc({'doctype':'User Type', 'name':'Website User', 'is_standard':1}).insert()
-        user_name = os.environ.get('HERO_SYNTHETIC_USER', 'synthetic@example.invalid')
+        user_name = f'employee-{self.source}@example.invalid'
         row = {'id':70001, 'user_id':71001, 'first_name':'Synthetic', 'last_name':'Deferred Employee',
             'full_name':'Synthetic Deferred Employee', 'status':'active', 'phone':'+49301234567',
             'user':{'id':71001, 'email':user_name}}
@@ -656,6 +953,7 @@ class TestSyntheticDeferredMariaDB(TestCase):
         with patch.object(migration, '_mapping_plan_for_run', return_value=self.plan):
             result = migration._migrate_customer(record, self.run)
             self.assertEqual(result.code, 'CREATED', result.detail)
+            self._bind_fixture_target('Customer', result.target_name, record['id'])
             deferred.remember(self.run, 'customer', record, result)
         customer = frappe.get_doc('Customer', result.target_name)
         self.assertFalse(customer.customer_primary_contact)
@@ -684,6 +982,7 @@ class TestSyntheticDeferredMariaDB(TestCase):
         with patch.object(migration, '_mapping_plan_for_run', return_value=self.plan):
             result = migration._migrate_customer(record, self.run)
             self.assertEqual(result.code, 'CREATED', result.detail)
+            self._bind_fixture_target('Customer', result.target_name, record['id'])
             deferred.remember(self.run, 'customer', record, result)
         customer = frappe.get_doc('Customer', result.target_name)
         self.assertFalse(customer.customer_primary_address)
@@ -706,6 +1005,177 @@ class TestSyntheticDeferredMariaDB(TestCase):
         customer.create_primary_contact()
         self.assertTrue(customer.customer_primary_contact)
 
+    def test_reference_project_tasks_bind_to_their_original_project_topology(self):
+        import hashlib
+        import json
+        from pathlib import Path
+        from zipfile import ZipFile
+        from hero_integration.tests.test_sync_reference_replay import ARCHIVE_DIGEST
+
+        archive_path = os.environ.get("HERO_SYNC_REFERENCE_ARCHIVE")
+        if not archive_path:
+            self.skipTest("Separately retained project archive required")
+        self.assertEqual(hashlib.sha256(Path(archive_path).read_bytes()).hexdigest(), ARCHIVE_DIGEST)
+        pending_targets = []
+        with ZipFile(archive_path) as archive:
+            identities = json.loads(archive.read("PROJECT_IDENTITIES.json"))["projects"]
+            for index, identity in enumerate(identities, 1):
+                data = json.loads(archive.read(identity["name"] + ".json"))["data"]
+                project_id = 31000 + index
+                project = self._project(project_id)
+                for task in data["tasks"]:
+                    self.assertEqual(task["target_project_match_id"], data["project_match"]["id"])
+                    row = {**self.row, "id": 71000 + len(pending_targets), "target_project_match_id": project_id,
+                           "title": "Synthetic scoped task " + uuid4().hex[:10]}
+                    result = migration._migrate_mapped_task(row, self.run, self.plan, self.scope)
+                    self.assertEqual(result.code, "CREATED")
+                    self._bind_fixture_target("Task", result.target_name, row["id"])
+                    with patch.object(migration, "_mapping_plan_for_run", return_value=self.plan):
+                        deferred.remember(self.run, "Task", row, result)
+                    pending = deferred.observation_key(self.source, "HeroTasks", str(row["id"]), self.run.name)
+                    pending_targets.append((pending, result.target_name, project.name))
+        self.assertEqual(len(pending_targets), 32)
+        self.assertEqual(len({name for _,name,_ in pending_targets}), 32)
+        with self._resolution_context():
+            for pending, task, expected in pending_targets:
+                deferred.resolve_one(pending)
+                self.assertEqual(frappe.db.get_value("Task", task, "project"), expected)
+                self.assertEqual(frappe.db.get_value(deferred.MAIN, pending, "status"), "Resolved")
+
+    def test_product_inventory_uses_native_item_identity_and_preserves_local_changes(self):
+        from dataclasses import replace
+        from hero_integration.services import direct_runtime, product_migration
+        from hero_integration.services.execution_runtime import InventoryIntake
+        from hero_integration.services.sync_engine import SyncStatus
+        read = direct_runtime.builtin_read("HeroProducts")
+        read = replace(read, plan=replace(read.plan, binding_contract=BindingContract(
+            self.source, "SupplyProductVersion", "synthetic-article-map", 1)))
+        identity = "article-" + uuid4().hex[:12]
+        scope = SimpleNamespace(site_scope=frappe.local.site, source_instance=self.source,
+                                graphql_mapping="synthetic-article-map", mapping_revision=1,
+                                schema_snapshot="synthetic-schema", graphql_service="synthetic-article-reader")
+        intake = InventoryIntake(scope, SimpleNamespace(target_operation=read.operation), 1, allow_new=True,
+                                 direct_read=read)
+        intake.origin = self.run
+        row = {"product_id":identity, "nr":identity, "is_deleted":False, "Genutzt":0, "sales_prices":[],
+               "base_data":{"name":"Synthetic article", "description":"Initial text", "unit_type":"Nos",
+                            "supply_catalog":{"name":"HERO CI Items"}}}
+        self.assertIs(intake.reconcile(row, identity, ()), True)
+        self.assertFalse(frappe.db.exists("Item", identity))
+        self.assertEqual(intake.reconcile({k:v for k,v in row.items() if k != "Genutzt"}, identity, ()), SyncStatus.PARTIAL)
+        row["Genutzt"] = 1
+        self.assertIs(intake.reconcile(row, identity, ()), True)
+        self.assertEqual(frappe.db.get_value("Item", identity, "item_name"), "Synthetic article")
+        first = product_migration._links(self.source, [identity])[identity]
+        self.assertEqual(first.target_name, identity)
+        self.assertTrue(frappe.db.exists("HERO Object Binding", {"source_instance":self.source, "external_object_id":identity}))
+        row["base_data"]["description"] = "Verified update"
+        self.assertIs(intake.reconcile(row, identity, ()), True)
+        item = frappe.get_doc("Item", identity)
+        self.assertEqual(item.description, "Verified update")
+        item.description = "Locally corrected"
+        item.save()
+        row["base_data"]["description"] = "Concurrent update"
+        self.assertEqual(intake.reconcile(row, identity, ()), SyncStatus.CONFLICT)
+        self.assertEqual(item.reload().description, "Locally corrected")
+        self.assertEqual(product_migration._links(self.source, [identity])[identity].name, first.name)
+
+    def test_inventory_row_savepoint_discards_rolled_back_worker_and_blob_callbacks(self):
+        from hero_integration.services.sync_engine import FrappeSyncLedger
+        ledger = FrappeSyncLedger(frappe)
+        calls = []
+        with self.assertRaises(frappe.ValidationError):
+            with ledger.inventory_record(lambda e: isinstance(e, frappe.ValidationError)):
+                frappe.db.set_value("HERO Integration Run", self.run.name, "processed", 7)
+                frappe.db.after_commit.add(lambda: calls.append("failed-row-commit"))
+                frappe.db.after_rollback.add(lambda: calls.append("failed-row-rollback"))
+                raise frappe.ValidationError("Synthetic rejected row")
+        self.assertNotEqual(frappe.db.get_value("HERO Integration Run", self.run.name, "processed"), 7)
+        self.assertEqual(calls, ["failed-row-rollback"])
+        with ledger.inventory_record(lambda _: False):
+            frappe.db.after_rollback.add(lambda: calls.append("admitted-row-rollback"))
+            frappe.db.after_commit.add(lambda: calls.append("admitted-row-commit"))
+        frappe.db.rollback()
+        self.assertEqual(calls, ["failed-row-rollback", "admitted-row-rollback"])
+
+    def test_inner_migration_rejection_discards_only_its_own_callbacks(self):
+        from hero_integration.services.sync_engine import FrappeSyncLedger
+        called = []
+        def reject():
+            frappe.db.after_commit.add(lambda: called.append("invalid commit"))
+            frappe.db.after_rollback.add(lambda: called.append("rejected"))
+            raise frappe.ValidationError("Synthetic native rejection")
+        with FrappeSyncLedger(frappe).inventory_record(lambda error: False):
+            frappe.db.after_rollback.add(lambda: called.append("outer rollback"))
+            frappe.db.after_commit.add(lambda: called.append("outer commit"))
+            self.assertEqual(migration._migrate_isolated(reject).code, "BLOCKED_RECORD")
+            self.assertEqual(called, ["rejected"])
+        frappe.db.rollback()
+        self.assertEqual(called, ["rejected", "outer rollback"])
+
+    def test_inventory_file_bytes_and_binding_share_the_page_rollback(self):
+        import hashlib
+        from contextlib import ExitStack
+        from dataclasses import replace
+        from pathlib import Path
+        from unittest.mock import Mock
+        from hero_integration.services import direct_runtime, file_transfer as files
+        from hero_integration.services.sync_engine import SyncStatus
+
+        read = direct_runtime.builtin_read("HeroDocuments")
+        read = replace(read, plan=replace(read.plan, binding_contract=BindingContract(
+            self.source, "FileUpload", "synthetic-file-identity", 1)))
+        content = b"Synthetic inventory PDF contents"
+        row = {"id": 50421, "uuid": uuid4().hex, "filename": "synthetic-inventory.txt",
+               "category": "text", "downloadUrl": "https://synthetic.invalid/files/test",
+               "modified": "2026-01-01 12:00:00", "size": len(content), "is_deleted": False,
+               "_hero_file_detail": {"is_deleted": False, "file_upload_matches": [{"project_match_id": 20001}],
+                                     "file_upload_links": [], "customer_document": None}}
+        def download(url, path, size):
+            Path(path).write_bytes(content)
+            return len(content), hashlib.md5(content).hexdigest()
+        fetch = Mock()
+        fetch.fetch.side_effect = download
+        with ExitStack() as stack:
+            stack.enter_context(patch.object(files, "_client_and_downloader", return_value=(None, fetch, self.source)))
+            stack.enter_context(patch.object(files, "MIN_FREE_BYTES", 0))
+            self.assertEqual(files.prepare_inventory_blobs(read,[row],self.source,Mock(),stack,allow_new=False), {})
+            staged = files.prepare_inventory_blobs(read,[row],self.source,Mock(),stack,allow_new=True)
+            self.assertIs(files.apply_inventory_file(read,row,self.run,self.source,staged["50421"]), True)
+            link = files._known_files(self.source, ["50421"])["50421"]
+            document = frappe.get_doc("File",link.target_name)
+            path = Path(document.get_full_path())
+            self.addCleanup(path.unlink, missing_ok=True)
+            self.assertTrue(document.is_private)
+            self.assertEqual(path.read_bytes(), content)
+            self.assertTrue(frappe.db.exists("HERO Object Binding", {"source_instance":self.source,
+                                         "external_object_id":"50421","target_name":document.name}))
+            self.assertEqual(files.prepare_inventory_blobs(read,[row],self.source,Mock(),stack,allow_new=True), {})
+            self.assertEqual(fetch.fetch.call_count, 1)
+            pending = deferred.observation_key(self.source, "HeroDocuments", "50421", self.run.name)
+            self.assertNotIn("downloadUrl", frappe.db.get_value(deferred.MAIN,pending,"record_json"))
+            self.assertIs(files.apply_inventory_file(read, row, self.run, self.source, None), True)
+            self.assertEqual(files.apply_inventory_file(read,{**row, "modified":"new"},self.run,self.source,None),
+                             SyncStatus.PARTIAL)
+            # Missing physical content must invalidate an otherwise identical receipt.
+            path.unlink()
+            recovered = files.prepare_inventory_blobs(read, [row], self.source, Mock(), stack, allow_new=False)
+            self.assertIn("50421", recovered)
+            size, checksum, prepared_path = recovered["50421"]
+            with self.assertRaises(files.FileConflict):
+                files.apply_inventory_file(read, row, self.run, self.source, (size, "unconfirmed-digest", prepared_path))
+            self.assertIs(files.apply_inventory_file(read, row, self.run, self.source, recovered["50421"]), True)
+            replacement = Path(document.reload().get_full_path())
+            self.addCleanup(replacement.unlink, missing_ok=True)
+            self.assertEqual(replacement.read_bytes(), content)
+            self.assertEqual(fetch.fetch.call_count, 2)
+            self.assertEqual(files._known_files(self.source, ["50421"])["50421"].target_name, document.name)
+            frappe.db.rollback()
+            self.assertFalse(replacement.exists())
+            self.assertFalse(path.exists())
+            self.assertFalse(frappe.db.exists("File",document.name))
+            self.assertFalse(frappe.db.exists("HERO Integration Link",link.name))
+
     def test_private_file_attaches_only_after_success_and_keeps_source_ids(self):
         import hashlib
         from hero_integration.services import file_transfer as files, direct_runtime
@@ -725,7 +1195,7 @@ class TestSyntheticDeferredMariaDB(TestCase):
             'target_field_hashes':files._target_baseline(document.name, fields)}).insert()
         self._bind_fixture_target('File',document.name,row['id'])
         detail = {'file_upload_matches':[{'project_match_id':20001}], 'file_upload_links':[], 'customer_document':None}
-        frappe.db.set_value('HERO Integration Run', self.run.name, 'state', 'Running')
+        frappe.db.set_value('HERO Integration Run', self.run.name, {'state':'Running', 'action':'Document Migration'})
         deferred.remember_file(self.run.name, self.source, 'HeroDocuments', read, row, detail)
         pending = deferred.observation_key(self.source, 'HeroDocuments', '50001', self.run.name)
         saved = frappe.get_doc(deferred.MAIN, pending)
@@ -733,7 +1203,7 @@ class TestSyntheticDeferredMariaDB(TestCase):
         with patch.object(direct_runtime, 'resolve_read', return_value=read):
             self._resolve(pending)
             self.assertFalse(frappe.get_doc('File', document.name).attached_to_name)
-            frappe.db.set_value('HERO Integration Run', self.run.name, 'state', 'Completed')
+            frappe.db.set_value('HERO Integration Run', self.run.name, 'state', 'Completed With Conflicts')
             self._resolve(pending)
         self.assertEqual(frappe.get_doc('File', document.name).attached_to_name, project.name)
         self.assertEqual(frappe.db.get_value(deferred.MAIN, pending, 'status'), 'Resolved')
@@ -746,6 +1216,7 @@ class TestSyntheticDeferredMariaDB(TestCase):
         project = self._project(20001)
         result = migration._migrate_native_task(self.row, self.run, self.plan, self.scope)
         self.assertEqual(result.code, 'CREATED')
+        self._bind_fixture_target('Task', result.target_name, self.row['id'])
         self.assertFalse(frappe.get_doc('Task', result.target_name).project)
         with patch.object(migration, '_mapping_plan_for_run', return_value=self.plan):
             deferred.remember(self.run, 'Task', self.row, result)
@@ -909,8 +1380,9 @@ class TestSyntheticDeferredMariaDB(TestCase):
                 self.assertFalse(deferred.reconcile_full_page(self.source,[self.run.name],state))
                 self.assertEqual(frappe.db.get_value(deferred.MAIN,pending,'status'),'Waiting')
             self.assertTrue(deferred.reconcile_full_page(self.source,[self.run.name],state))
-        self.assertEqual(state['reconciliation_conflicts'],1)
-        self.assertEqual(frappe.db.get_value(deferred.MAIN,pending,'status'),'Conflict')
+        self.assertEqual(state['reconciliation_conflicts'],0)
+        self.assertEqual(state['reconciliation_waiting'],1)
+        self.assertEqual(frappe.db.get_value(deferred.MAIN,pending,'status'),'Waiting')
         self.assertTrue(frappe.db.get_value(deferred.MAIN,pending,'record_json'))
         self.assertFalse(frappe.get_doc('Event',event).custom_hero_project)
 
@@ -948,6 +1420,80 @@ class TestSyntheticDeferredMariaDB(TestCase):
         self.assertIn('Changed in HERO &amp; ERPNext',frappe.get_doc('Comment',comment.name).content)
         lb.sync_mapped_entries(plan,record,project.name,conflicts=conflicts)
         self.assertEqual(conflicts,[])
+
+    def test_empty_logbook_receipts_belong_to_one_run_and_native_comment_is_preserved(self):
+        from hero_integration.services import integration_events, project_logbook
+        project, plan, record = self._native_logbook_fixture()
+        good = record['histories'][0]
+        empty = dict(good, id=48, custom_text='   ', custom_title='Subject only')
+        record['histories'] = [empty, good]
+        for expected in (1, 0):
+            skips = {}
+            self.assertEqual(project_logbook.sync_mapped_entries(plan, record, project.name, empty_entries=skips),
+                             expected)
+            self.assertEqual(skips, {'48': 'SKIPPED'})
+            integration_events.record_output(run=self.run.name, source_type='project_history', source_id='48',
+                result='SKIPPED', action='logbook_empty_content', target_doctype='Project', target_name=project.name,
+                event_id=migration._digest([self.run.name, self.source, record['id'], '48', 'logbook_empty_content']))
+        self.assertEqual(frappe.db.count('HERO Integration Record', {'run': self.run.name,
+            'technical_action': 'logbook_empty_content', 'source_id': '48'}), 1)
+        link, = frappe.get_all('HERO Integration Link', filters={'source_instance': self.source,
+            'source_type': 'project_history'}, fields=['name', 'target_name', 'source_payload_hash', 'target_payload_hash'])
+        comment = frappe.get_doc('Comment', link.target_name)
+        good.update(custom_text='', role_visibility='private')
+        conflicts = []
+        observations = {}
+        project_logbook.sync_mapped_entries(plan, record, project.name, empty_entries=observations, conflicts=conflicts)
+        self.assertEqual(observations, {'48': 'SKIPPED', str(good['id']): 'PENDING_REVIEW'})
+        self.assertEqual(conflicts, [link.name])
+        self.assertEqual(frappe.db.get_value('Comment', comment.name, ['content','reference_doctype','reference_name']),
+                         (comment.content, 'HERO Integration Link', link.name))
+        self.assertEqual(frappe.db.get_value('HERO Integration Link', link.name, ['source_payload_hash','target_payload_hash']),
+                         (link.source_payload_hash, link.target_payload_hash))
+
+    def test_native_replay_uses_primary_receipts_once_and_preserves_the_creation(self):
+        from hero_integration.services import integration_events, migration_replay
+        for source_id, result, target in [('1','CREATED','P1'),('1','SKIPPED','P1'),
+                                          ('2','BLOCKED_RECORD',''),('2','CREATED','Z-OLD'),
+                                          ('2','CREATED','P2'),('2','SKIPPED','P2')]:
+            integration_events.record_output(run=self.run.name, source_type='project', source_id=source_id,
+                                             result=result, action='hero_to_frappe', target_name=target)
+        integration_events.record_output(run=self.run.name, source_type='project', source_id='3',
+                                         result='PENDING_REVIEW', action='project_address_review')
+        self.run.action = 'Project Migration'
+        self.run.customer_phase_state = 'Completed'
+        self.assertEqual(migration_replay.prior_receipts(self.run,'project',['1'],changed_overlap=True),
+                         {'1':('CREATED','P1')})
+        migration_replay.begin(self.run)
+        self.assertEqual((self.run.processed,self.run.created_records,self.run.conflict_records), (2,2,0))
+        self.assertEqual((self.run.project_phase_processed,self.run.project_phase_created), (2,2))
+        self.assertEqual(migration_replay.prior_receipts(self.run,'project',['1']), {'1':('CREATED','P1')})
+        self.assertEqual(migration_replay.prior_receipts(self.run,'project',['2']), {'2':('CREATED','P2')})
+
+    def test_native_customer_bank_with_company_keeps_party_and_ambiguous_iban_is_rejected(self):
+        from hero_integration.services import mapped_relations
+        from hero_integration.tests.test_mapped_relations import BANK
+        customer = frappe.get_doc({'doctype':'Customer', 'customer_name':self.source,
+            'customer_type':'Company'}).insert()
+        bank = 'Bank ' + self.source
+        source = {'_hero_source_instance':self.source, 'accounting':{'id':41, 'bank_name':bank, 'bic':None,
+                                                                    'iban':'DE89370400440532013000'}}
+        plan = SimpleNamespace(adapter_options={'native_relations':[BANK]},mapping_version='synthetic')
+        self.assertEqual(mapped_relations.sync(plan,source,'Customer',customer.name)['created'], 1)
+        native = frappe.db.get_value('Bank Account',{'party':customer.name},'name')
+        company = os.environ['HERO_SYNTHETIC_COMPANY']
+        frappe.db.set_value('Bank Account',native,'company',company)
+        self.assertEqual(mapped_relations.sync(plan,source,'Customer',customer.name)['unchanged'],1)
+        self.assertEqual(frappe.db.get_value('Bank Account',native,['company','party','is_company_account']),
+                         (company,customer.name,0))
+        other = frappe.get_doc({'doctype':'Customer','customer_name':self.source+'-other','customer_type':'Company'}).insert()
+        source['accounting']['id'] = 42
+        # The same bound institution and IBAN are intentionally presented for another owner.
+        source['accounting']['bic'] = 'LABODEFFXXX'
+        frappe.db.set_value('Bank',bank,'swift_number','LABODEFFXXX')
+        with self.assertRaisesRegex(ValueError,'IBAN'):
+            mapped_relations.sync(plan,source,'Customer',other.name)
+        self.assertEqual(frappe.db.get_value('Bank Account',native,'party'),customer.name)
 
     def test_old_pre_save_logbook_baseline_can_be_repaired_only_for_proven_native_defaults(self):
         from hero_integration.services import project_logbook as lb
@@ -1009,8 +1555,9 @@ class TestSyntheticDeferredMariaDB(TestCase):
         record = {'id': 888, 'address': {'id': 1}, '_hero_source_instance': self.source,
             'customer_addresses': [{'is_deleted': False, 'address': {'id': 2, 'street': 'Synthetic 2',
                 'city': 'Example City', 'zipcode': '12345', 'country': {'code': 'DE'}}}]}
-        self.plan = SimpleNamespace(definitions=[], adapter_options={'native_relations': [ADDRESSES]},
+        self.plan = SimpleNamespace(target_operation='HeroCustomers', definitions=[], adapter_options={'native_relations': [ADDRESSES]},
             target_doctype='Customer', mapping_version='fixture', source_identity=lambda _: '888')
+        self._bind_fixture_target('Customer', customer.name, record['id'])
         result = migration.Result('UPDATED', 'Imported', 'Customer', customer.name)
         frappe.get_doc({'doctype':'HERO Integration Link','source_system':'HERO','source_type':'customer',
             'source_id':'888','source_instance':self.source,'target_doctype':'Customer','target_name':customer.name,
@@ -1045,7 +1592,9 @@ class TestSyntheticDeferredMariaDB(TestCase):
         record = {'id': 777, 'address': {'id': 1}, '_hero_source_instance': self.source,
                   'customer_addresses': [{'is_deleted': False, 'address': {'id': 2, 'street': 'Example 2',
                       'city': 'Example City', 'zipcode': '12345', 'country': {'code': 'DE'}}}]}
-        plan = SimpleNamespace(binding_contract=BindingContract(self.source, 'Contact', 'synthetic-map', 1),
+        self._bind_fixture_target('Customer', customer.name, record['id'])
+        plan = SimpleNamespace(target_operation='HeroCustomers',
+                               binding_contract=BindingContract(self.source, 'Customer', 'synthetic-mapping', 1),
                                definitions=[], adapter_options={'native_relations': [ADDRESSES]},
                                target_doctype='Customer', mapping_version='fixture', source_identity=lambda _: '777')
         result = migration.Result('SKIPPED', 'Customer synchronized.', 'Customer', customer.name)
@@ -1066,12 +1615,18 @@ class TestSyntheticDeferredMariaDB(TestCase):
         values = {'address_line1': 'Example 2', 'city': 'Example City', 'pincode': '12345',
                   'country': 'Germany', 'address_type': 'Other'}
         observed = collections._observed({'collection_kind': 'customer_addresses', 'document': address, 'values': values})
-        with patch.object(deferred, '_enqueue_dependency') as enqueue:
+        with patch.object(deferred, '_enqueue_dependency') as enqueue, \
+                patch.object(type(frappe.db.after_commit), 'add', autospec=True) as after_commit:
             frappe.get_doc({'doctype': 'HERO Integration Link', 'source_system': 'HERO', 'source_type': 'customer_address',
                 'source_id': '2', 'source_instance': self.source, 'target_doctype': 'Address', 'target_name': address.name,
                 'sync_status': 'Synchronized', 'source_payload_hash': collections._hash(item['values']),
                 'target_payload_hash': collections._hash(observed), 'mapping_version': 'fixture'}).insert()
-            enqueue.assert_called_once_with(self.source, 'customer_address', '2', enqueue_after_commit=True)
+            enqueue.assert_not_called()
+            address_callback = next(callback for (manager, callback), _ in after_commit.call_args_list
+                                    if manager is frappe.db.after_commit
+                                    and getattr(callback, 'func', None) is deferred._wake_committed_address)
+            address_callback()
+            enqueue.assert_called_once_with(self.source, 'customer_address', '2', test_revision=None)
         with patch('hero_integration.client.settings.get_configuration', return_value=SimpleNamespace(source_instance=self.source, source_binding_confirmed=True, source_binding_revision=1)), \
              patch.object(migration, 'validate_run_mappings'), \
              patch.object(migration, '_source_for_run', return_value=SimpleNamespace(source_instance=self.source, source_binding_confirmed=True, source_binding_revision=1)), \

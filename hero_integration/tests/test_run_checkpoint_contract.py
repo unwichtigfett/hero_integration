@@ -224,7 +224,7 @@ class TestReplayAcceptance(TestCase):
 
     def test_resume_replays_from_zero_without_rebinding_the_acknowledged_contract(self):
         from hero_integration import api
-        run = SimpleNamespace(name='RUN', state='Failed', testing_enabled=0, checkpoint_contract_json='original',
+        run = SimpleNamespace(name='RUN', action='Project Migration', state='Failed', testing_enabled=0, checkpoint_contract_json='original',
                               resume_phase='project', resume_offset=100, resume_record_index=3,
                               error_message='interrupted', save=mock.Mock())
         fake = SimpleNamespace(only_for=lambda _: None, get_doc=lambda *a: run, enqueue=mock.Mock(),

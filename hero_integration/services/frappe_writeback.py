@@ -4,6 +4,7 @@ Integration Links supply HERO identity; browser inputs cannot redefine it.
 """
 from __future__ import annotations
 
+import hashlib
 import json
 from collections.abc import Mapping
 from dataclasses import dataclass
@@ -109,7 +110,9 @@ def normalise_mapping(value: object, schema: object) -> dict[str, object]:
     }
     if any(target.get(key) != item for key, item in expected.items()):
         raise WritebackContractError("The HERO target is not the reviewed target for this Frappe field.")
-    if transform not in _TRANSFORMS:
+    if transform not in _TRANSFORMS and not (
+            transform == "HTML To Plain Text" and doctype == "Project" and field == "notes"
+            and target.get("field", target.get("field_path")) == "partner_notes"):
         raise WritebackContractError("Only Identity and Trim transformations are approved for writeback.")
     _schema_input_field(schema, contract, expected_field)
     return {
@@ -137,7 +140,9 @@ def normalise_draft_mapping(value: object, schema: object, *, temporal: bool = F
     path = target.get("field_path", target.get("field"))
     if not all(isinstance(value, str) for value in (doctype, field, operation, argument, path)):
         raise WritebackContractError("Writeback source and exact schema target are required.")
-    if transform not in _TRANSFORMS:
+    if transform not in _TRANSFORMS and not (
+            transform == "HTML To Plain Text" and doctype == "Project" and field == "notes"
+            and target.get("field", target.get("field_path")) == "partner_notes"):
         raise WritebackContractError("Only Identity and Trim transformations are approved for writeback.")
     input_type, graphql_type = _schema_draft_input_field(schema, operation, argument, path, temporal=temporal)
     return {
@@ -191,6 +196,26 @@ def build_request_checked(mapping: Mapping[str, object], schema: object, source_
     except GraphQLContractError as error:
         raise WritebackContractError("The exact HERO mutation variables are not schema-valid.") from error
     return document, variables
+
+
+def approved_field_request(snapshot, contract, service, target, logical_variables):
+    """Bind the reviewed field and identity to the variable in the approved service."""
+    from hero_integration.services.mapping_contract_v1 import materialize_saved_mutation
+
+    parsed = parse_mutation(service.query_document)
+    argument = target["argument"]
+    if (parsed.fingerprint != contract.contract_fingerprint or parsed.root_field != target["operation"]
+            or set(parsed.argument_variables) != {argument}):
+        raise WritebackContractError("The approved mutation does not bind this field operation.")
+    variable = parsed.argument_variables[argument]
+    request = materialize_saved_mutation(snapshot, service.query_document, {variable: logical_variables[argument]},
+                                         request_scope=contract.name)
+    return request.document, dict(request.variables), variable
+
+
+def object_write_scope(site, source, doctype, name):
+    return hashlib.sha256(json.dumps(["bound-update/v1", site, source, doctype, name],
+                                     ensure_ascii=False, separators=(",", ":")).encode()).hexdigest()
 
 
 def fingerprint_payload(mapping_name: str, mapping_revision: int, document_version: object, source_instance: str, source_id: object, document: str, variables: Mapping[str, object]) -> str:
@@ -318,6 +343,13 @@ def _positive_int(value: object) -> int:
 
 
 def _transform(value: object, transform: str) -> object:
+    if transform == "HTML To Plain Text":
+        from hero_integration.services.direct_mapping import plain_text_html
+        from hero_integration.services.task_send import plain_text
+        text = plain_text(value)
+        if text is None or plain_text_html(text) != value:
+            raise WritebackContractError("Project notes contain formatting outside the approved plain-text round trip.")
+        return text
     if transform == "Identity":
         return value
     if transform == "Trim" and isinstance(value, str):

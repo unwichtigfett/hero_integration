@@ -30,7 +30,7 @@ def validate_policy_payload(payload, site_scope):
     expected = {'source_instance', 'issuer', 'company', 'user_bindings', 'allow_initial', 'allow_transfer'}
     if (not isinstance(payload, dict) or not expected <= set(payload)
             or set(payload) - expected - {'native_effects', 'silent_initial', 'allow_all_active_bound_users',
-                                           'allow_all_system_managers'}
+                                           'allow_all_system_managers', 'test_task_run', 'regular_migrations_only'}
             or not isinstance(site_scope, str) or not site_scope):
         raise PolicyError('Policy requires the exact authorized scope and actions.')
     for field in ('source_instance', 'issuer', 'company'):
@@ -55,6 +55,15 @@ def validate_policy_payload(payload, site_scope):
                 or effects['date_rule'] != 'LOCAL_TODAY'
                 or type(effects['allow_notifications']) is not bool or type(effects['allow_follow']) is not bool):
             raise PolicyError('Native effects require an explicit local date and boolean notification and follow decisions.')
+    if 'regular_migrations_only' in payload and (
+            payload['regular_migrations_only'] is not True or 'test_task_run' in payload or dynamic_users
+            or not bindings or payload.get('silent_initial') is not True):
+        raise PolicyError('A regular migration requires named silent recipients and excludes test runs.')
+    if 'test_task_run' in payload:
+        name = payload['test_task_run']
+        if (not isinstance(name, str) or not name.startswith('HERO-RUN-') or not name[9:].isdigit()
+                or not bindings or payload.get('silent_initial') is not True or dynamic_users or all_managers):
+            raise PolicyError('A cohort policy requires an exact Task run and named silent recipients.')
     if 'silent_initial' in payload:
         if (type(payload['silent_initial']) is not bool or
                 payload['silent_initial'] and (payload['allow_transfer'] or payload.get('native_effects') != {
@@ -74,6 +83,10 @@ def _policy_input(value):
         result['allow_all_active_bound_users'] = value['allow_all_active_bound_users']
     if 'allow_all_system_managers' in value:
         result['allow_all_system_managers'] = value['allow_all_system_managers']
+    if 'regular_migrations_only' in value:
+        result['regular_migrations_only'] = value['regular_migrations_only']
+    if 'test_task_run' in value:
+        result['test_task_run'] = value['test_task_run']
     return result
 
 
@@ -95,16 +108,19 @@ def _check_references(payload):
         raise PolicyError('Policy issuer is unavailable or disabled.')
     if payload['issuer'] != 'Administrator' and 'System Manager' not in frappe.get_roles(payload['issuer']):
         raise PolicyError('Policy issuer is not authorized for the existing Task intake.')
+    if payload.get('test_task_run'):
+        run = frappe.get_doc('HERO Integration Run', payload['test_task_run'])
+        if (not run.testing_enabled or run.action != 'Projection Migration' or run.mode != 'Execute'
+                or run.source_instance != payload['source_instance'] or run.owner != payload['issuer']
+                or not run.execution_budget_run or run.budget_contract_version != 3):
+            raise PolicyError('The selected Task run does not own this test contract.')
     for name in sorted(payload['user_bindings']):
         if not frappe.db.exists('HERO Object Binding', name):
             raise PolicyError('Policy User binding does not exist.')
         binding = frappe.get_doc('HERO Object Binding', name, for_update=True)
-        from hero_integration.services.binding_registry import ObjectBinding
-        canonical = ObjectBinding.create(site_scope=binding.site_scope, source_instance=binding.source_instance,
-            object_type=binding.object_type, external_object_id=binding.external_object_id, target_app=binding.target_app,
-            target_doctype=binding.target_doctype, target_name=binding.target_name,
-            mapping_definition_id=binding.mapping_definition_id, mapping_revision=int(binding.mapping_revision))
-        if canonical.identity_key != binding.identity_key or name != binding.identity_key:
+        from hero_integration.services.binding_registry import FrappeBindingStorage
+        obj = FrappeBindingStorage._object(binding)
+        if obj.canonical_key(obj.identity_mapping_revision or obj.mapping_revision) != binding.identity_key or name != binding.identity_key:
             raise PolicyError('Policy User binding identity has been altered.')
         if (binding.site_scope != payload['site_scope'] or binding.source_instance != payload['source_instance']
                 or binding.object_type != 'User' or binding.target_app != 'frappe' or binding.target_doctype != 'User' or binding.lifecycle != 'VALID'
@@ -168,7 +184,24 @@ def revoke_policy(name, expected_revision):
     return doc.name
 
 
-def approved_initial_policy(source_instance, binding_name):
+def _allows_test_task(payload, run_name, task_id):
+    if payload.get('regular_migrations_only'):
+        import frappe
+        return bool(run_name and frappe.db.exists('HERO Integration Run', {
+            'name': run_name, 'source_instance': payload['source_instance'], 'testing_enabled': 0,
+            'mode': 'Execute', 'action': 'Projection Migration',
+        }))
+    if 'test_task_run' not in payload:
+        return True
+    if run_name != payload['test_task_run'] or not task_id:
+        return False
+    from hero_integration.services.execution_budget import current_budget
+    budget = current_budget()
+    return bool(budget and budget.version == 3 and budget.scope == 'migration'
+                and budget.source_instance == payload['source_instance'] and budget.allows_record('Task', task_id))
+
+
+def approved_initial_policy(source_instance, binding_name, run_name=None, task_id=None):
     """Lock and verify a unique policy; absence never grants authority."""
     import frappe
     rows = frappe.db.sql('SELECT name FROM `tabHERO Task Assignment Policy` WHERE site_scope=%s AND source_instance=%s AND state=%s FOR UPDATE',
@@ -178,6 +211,8 @@ def approved_initial_policy(source_instance, binding_name):
         doc = frappe.get_doc('HERO Task Assignment Policy', row.name, for_update=True)
         try:
             payload = json.loads(doc.policy_json)
+            if not _allows_test_task(payload, run_name, task_id):
+                continue
             manager_scope = (payload.get('allow_all_system_managers') is True and
                              (frappe.session.user == 'Administrator' or 'System Manager' in frappe.get_roles(frappe.session.user)))
             if doc.issuer != frappe.session.user and not manager_scope:

@@ -37,15 +37,26 @@ class Site:
     def __init__(self):
         self.docs = {}; self.inserted = []; self.fail_insert = ''; self.saved = {}; self.rollbacks = []; self.permissions = []
         self.db = NS(exists=lambda dt, name: (dt, name) in self.docs, set_value=self.set_value,
-                     savepoint=self.savepoint, rollback=self.rollback)
+                     savepoint=self.savepoint, rollback=self.rollback, sql=self.locked_links)
         self.utils = NS(now_datetime=lambda: '2026-01-01 00:00:00')
         self.get_meta = lambda dt: NS(get_field=lambda field: NS(fieldtype='Link', options='Address'))
         for dt, name, extra in [('Customer', 'C1', {}), ('Project', 'P1', {}), ('Project', 'P2', {}), ('Country', 'Germany', {'code': 'de'})]:
             self.docs[(dt, name)] = Doc(self, {'doctype': dt, 'name': name, **extra})
-    def get_doc(self, *args):
+    def locked_links(self, query, params, *, as_dict):
+        assert as_dict and "FROM `tabHERO Integration Link`" in query and "FOR UPDATE" in query
+        kind, source, identity = params
+        return self.get_all("HERO Integration Link", {"source_system": "HERO", "source_type": kind,
+                            "source_instance": source, "source_id": identity}, ["*"], 2)
+
+    def get_doc(self, *args, for_update=False):
         return Doc(self, args[0]) if isinstance(args[0], dict) else self.docs[(args[0], args[1])]
     def get_all(self, dt, filters, fields, limit_page_length=0):
-        rows = [doc for (kind, _), doc in self.docs.items() if kind == dt and all(doc.get(k) == v for k, v in filters.items())]
+        def matches(doc, key, value):
+            if isinstance(value, list) and value[0] == '!=':
+                return doc.get(key) != value[1]
+            return doc.get(key) == value
+        rows = [doc for (kind, _), doc in self.docs.items() if kind == dt
+                and all(matches(doc, key, value) for key, value in filters.items())]
         return rows[:limit_page_length] if limit_page_length else rows
     def has_permission(self, dt, operation, **kw): self.permissions.append((dt, operation)); return True
     def set_value(self, dt, name, fields, **kw): self.docs[(dt, name)].update(fields)
@@ -57,7 +68,14 @@ class Site:
 
 class TestNativeRelations(TestCase):
     def setUp(self):
+        lock = patch('hero_integration.hero_integration.doctype.hero_frappe_mapping.hero_frappe_mapping._lock_active_target')
+        self.bank_lock = lock.start()
+        self.addCleanup(lock.stop)
         self.site = Site()
+        fresh = patch.object(mr, '_committed_bank_accounts', side_effect=lambda iban: {
+            account.name for account in self.docs('Bank Account') if account.iban == iban})
+        fresh.start()
+        self.addCleanup(fresh.stop)
         self.bank_record = {'id': 1, '_hero_source_instance': 'source-a', 'accounting': {
             'id': 44, 'iban': 'DE89 3704 0044 0532 0130 00', 'bic': 'COBADEFFXXX', 'bank_name': 'Synthetic Bank'}}
         self.address_record = {'id': 2, '_hero_source_instance': 'source-a', 'address': {
@@ -68,6 +86,42 @@ class TestNativeRelations(TestCase):
             return mr.sync(NS(adapter_options={'native_relations': [relation]}, mapping_version='test-v1'),
                            record, parent_type, parent or ('C1' if parent_type == 'Customer' else 'P1'), preview=preview)
     def docs(self, dt): return [doc for (kind, _), doc in self.site.docs.items() if kind == dt]
+
+    def test_company_metadata_on_proven_customer_account_survives_preview_and_replay(self):
+        self.sync(BANK, self.bank_record)
+        account = self.docs('Bank Account')[0]
+        account.set('company', 'Synthetic Company')
+        self.assertEqual(self.sync(BANK, self.bank_record, preview=True)['conflicts'], 0)
+        self.assertEqual(self.sync(BANK, self.bank_record)['unchanged'], 1)
+        self.assertEqual(len(self.docs('Bank Account')), 1)
+        self.assertEqual(account.company, 'Synthetic Company')
+
+    def test_preview_leaves_iban_unlocked_and_deadlock_reaches_existing_worker_retry(self):
+        self.sync(BANK, self.bank_record, preview=True)
+        self.bank_lock.assert_not_called()
+        class Deadlock(Exception):
+            pass
+        self.site.QueryDeadlockError = Deadlock
+        with patch.object(mr, '_apply', side_effect=Deadlock('synthetic transaction rollback')):
+            with self.assertRaises(Deadlock):
+                self.sync(BANK, self.bank_record)
+        self.bank_lock.assert_called_once_with('customer-bank-account','Bank Account','DE89370400440532013000')
+        self.assertEqual(self.site.rollbacks, [])
+
+    def test_real_company_account_ledger_owner_and_duplicate_target_still_block(self):
+        self.sync(BANK, self.bank_record)
+        account = self.docs('Bank Account')[0]
+        account.set('company', 'Synthetic Company')
+        for field, value in [('is_company_account', 1), ('account', 'Bank GL'), ('party', 'C2'), ('party_type', 'Supplier')]:
+            original = account.get(field)
+            account.set(field, value)
+            with self.subTest(field=field), self.assertRaisesRegex(ValueError, 'ownership'):
+                self.sync(BANK, self.bank_record, preview=True)
+            account.set(field, original)
+        link = self.docs('HERO Integration Link')[0]
+        self.site.get_doc({**link.values, 'name': 'other-binding', 'source_id': 'other'}).insert()
+        with self.assertRaisesRegex(ValueError, 'multiple.*bindings'):
+            self.sync(BANK, self.bank_record, preview=True)
 
     def test_bank_account_import_is_native_and_repeated_without_duplicates(self):
         self.assertEqual(self.sync(BANK, self.bank_record)['created'], 1)

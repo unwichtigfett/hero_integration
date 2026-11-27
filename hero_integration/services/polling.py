@@ -30,6 +30,12 @@ class MonitorResult:
     project_next_offset: int = 0
     offset_checkpoints: dict = field(default_factory=dict)
     rows_read: int | None = None
+    observed_ids: tuple[str, ...] = ()
+    conflicting_ids: tuple[str, ...] = ()
+    reader_digest: str = ""
+    page_size: int = 0
+    fingerprints: dict = field(default_factory=dict)
+    minimum_interval: float = 0
 
 
 @dataclass(frozen=True)
@@ -85,10 +91,10 @@ def runtime_plan(settings) -> dict[str, object]:
         "retry_backoff_seconds": _bounded_value(getattr(settings, "polling_retry_backoff_seconds", 30), 0, 3600, 30),
         "timeout_seconds": _bounded_value(getattr(settings, "polling_timeout_seconds", getattr(settings, "timeout_seconds", 30)), 1, 120, 30),
         "rate_limit": _bounded_value(getattr(settings, "polling_rate_limit", 30), 1, 10000, 30),
-        "concurrency": _bounded_value(getattr(settings, "polling_concurrency", 1), 1, 1, 1),
+        "concurrency": _bounded_value(getattr(settings, "polling_concurrency", 1), 1, 10, 1),
         "notifications": bool(getattr(settings, "polling_notifications", 0)), "unsupported_sources": unsupported,
         "can_auto_sync": effective_mode(settings) == "AUTO_SYNC" and not unsupported
-        and not getattr(settings, "sync_service_paused", 0) and any(areas.values()),
+        and not getattr(settings, "sync_service_paused", 0),
         "watermarks": "Offsets resume incomplete bounded scans only; this does not claim a monotonic HERO cursor.",
         "reconciliation_policy": "Report-only; HERO absence never deletes ERPNext data.",
     }
@@ -101,7 +107,11 @@ def scheduler_due(settings, now: datetime, last_success: object = None, *, syste
     Datetime values as strings; both are normalized before comparing.
     """
     plan = runtime_plan(settings)
-    if plan["mode"] == "OFF" or plan["unsupported_sources"] or plan["paused"] or not any(plan["areas"].values()):
+    # Monitor reads only the Desk areas. Automatic plans may also contain
+    # direct readers (e.g. employees) when every core Desk area is off.
+    if plan["mode"] == "OFF" or plan["unsupported_sources"] or plan["paused"]:
+        return False
+    if plan["mode"] == "MONITOR" and not any(plan["areas"].values()):
         return False
     current = _aware(now, system_timezone)
     if current is None:
@@ -187,6 +197,153 @@ def run_monitor() -> None:
         frappe.log_error(title="HERO materialized monitoring failed")
 
 
+def _incremental_monitor_selection(frappe, budget, sample, read_page, approval):
+    from dataclasses import replace
+    from hero_integration.services.test_environment import require_environment
+    from hero_integration.services.sync_runtime_adapter import RuntimeBridgeError
+
+    stream = sample.operation
+    group = budget.monitor_checkpoint(stream)
+    if group is None:
+        selected, conflicts, offsets = [], set(), []
+        previous_id, previous_fingerprint = None, None
+        reader, rows_read, offset = None, 0, 0
+        for _ in range(MAX_FULL_INVENTORY_PAGES):
+            require_environment(frappe)
+            started = time.monotonic()
+            result = read_page(frappe_module=frappe, sample=replace(sample, offset=offset))
+            # The adapter checked and locked the plan and binding after transport.
+            # Release those locks before using the independently fenced budget connection.
+            frappe.db.rollback()
+            if result.source_instance != budget.source_instance or (reader and reader != result.reader_digest):
+                raise RuntimeBridgeError("The approved MONITOR reader changed during selection.")
+            reader = result.reader_digest
+            ids = result.observed_ids
+            if previous_id is not None and ids:
+                repeated_page = int(ids[-1]) <= int(previous_id) and result.rows_read == result.page_size
+                if int(ids[0]) < int(previous_id) or repeated_page:
+                    raise RuntimeBridgeError("The approved MONITOR identity order did not advance.")
+            rows_read += result.rows_read
+            offsets.append(offset)
+            if ids:
+                if ids[0] == previous_id and result.fingerprints[ids[0]] != previous_fingerprint:
+                    conflicts.add(ids[0])
+                previous_id = ids[-1]
+                previous_fingerprint = result.fingerprints[previous_id]
+            conflicts.update(result.conflicting_ids)
+            fresh = [key for key in budget.unobserved(stream, ids) if key not in selected]
+            selected.extend(fresh[:budget.limit - len(selected)])
+            if len(selected) == budget.limit or result.rows_read < result.page_size:
+                break
+            offset += result.rows_read
+            if delay := max(0.0, result.minimum_interval - (time.monotonic() - started)):
+                time.sleep(delay)
+        else:
+            raise RuntimeBridgeError("The bounded MONITOR scan reached its page ceiling before finding the next sample.")
+        evidence = {"approval": approval, "reader": reader, "rows_read": rows_read, "offsets": offsets,
+                    "conflicting_ids": sorted(conflicts.intersection(selected))}
+        group = budget.incremental_group(stream, stream, [selected], observation=evidence)
+    return budget.freeze(stream, group["ids"], evidence=group["observation"])
+
+
+def run_manual_monitor(frappe, *, request_id, plan_key, expected_plan_generation, expected_source_revision,
+                       stream, confirmed, expected_limit=None):
+    """Observe a bounded selection under the shared execution slot. Replay reuses its receipts."""
+    import hashlib
+    import json
+    from uuid import UUID
+    from hero_integration.services.execution_budget import ExecutionBudget
+    from hero_integration.services.migration_testing import configuration, validate_limit
+    from hero_integration.services.sync_runtime_adapter import ManualMonitorSample, RuntimeBridgeError, run_materialized_monitor
+
+    frappe.only_for("System Manager")
+    if str(confirmed) != "1":
+        raise RuntimeBridgeError("Manual MONITOR requires explicit approval.")
+    from hero_integration.services.test_environment import require_environment
+    require_environment(frappe)
+    run_id = UUID(str(request_id)).hex
+    generation, revision = int(expected_plan_generation), int(expected_source_revision)
+    settings = frappe.get_single("HERO Integration Settings")
+    source = str(settings.hero_source_instance or "default").strip()
+    event_type = "HERO Polling Event"
+    prior = frappe.db.get_value(event_type, run_id,
+        ["manual_approval", "testing_max_actions", "testing_contract_version", "status"], as_dict=True)
+    version = int(prior.testing_contract_version or 2) if prior else 3
+    if version not in (2, 3):
+        raise RuntimeBridgeError("Unsupported manual MONITOR contract version.")
+    approval = hashlib.sha256(json.dumps([version, frappe.local.site, frappe.session.user, source, plan_key,
+                                         generation, revision, stream]).encode()).hexdigest()
+    if prior:
+        if prior.manual_approval != approval:
+            raise RuntimeBridgeError("This MONITOR request belongs to a different approval.")
+        limit = prior.testing_max_actions
+        validate_limit(limit)
+    else:
+        testing = configuration(settings, frappe_module=frappe)
+        if not testing["testing_enabled"]:
+            raise RuntimeBridgeError("Enable migration testing to start a bounded manual MONITOR test.")
+        limit = testing["testing_max_actions"]
+        if stream not in POLLING_SOURCES:
+            raise RuntimeBridgeError("Select an approved MONITOR collection.")
+        if expected_limit is not None and int(expected_limit) != limit:
+            raise RuntimeBridgeError("The reviewed MONITOR test limit changed.")
+        if effective_mode(settings) != "MONITOR" or revision != int(settings.source_binding_revision or 0):
+            raise RuntimeBridgeError("A MONITOR test requires the reviewed MONITOR source revision.")
+        event = frappe.get_doc({"doctype": event_type, "mode": "MONITOR", "status": "Started",
+                                "source_instance": source, "manual_approval": approval, "testing_max_actions": limit,
+                                "testing_contract_version": version,
+                                "detail": "Reading the approved manual MONITOR sample."})
+        event.insert(ignore_permissions=True, set_name=run_id)
+        frappe.db.commit()  # Freeze the test setting before the first transport, including interrupted attempts.
+
+    budget = ExecutionBudget("monitor", run_id, source, limit, version=version,
+                             source_revision=revision if version == 3 else None)
+    try:
+        selection = budget.selection()
+        if selection is None:
+            if prior and prior.status in {"Incomplete", "Conflicts"}:
+                raise RuntimeBridgeError("The recorded MONITOR sample has lost its frozen identities.")
+            sample = ManualMonitorSample(plan_key, generation, revision, stream, limit)
+            if version == 3:
+                selection = _incremental_monitor_selection(frappe, budget, sample, run_materialized_monitor, approval)
+            else:
+                result = run_materialized_monitor(frappe_module=frappe, sample=sample)
+                if result.source_instance != source:
+                    raise RuntimeBridgeError("The approved MONITOR source changed before cohort selection.")
+                evidence = {"approval": approval, "reader": result.reader_digest, "rows_read": result.rows_read,
+                            "conflicting_ids": list(result.conflicting_ids)}
+                selection = budget.freeze(stream, result.observed_ids, evidence=evidence)
+        if selection["main_type"] != stream or selection["evidence"]["approval"] != approval:
+            raise RuntimeBridgeError("The frozen MONITOR cohort belongs to another stream or approval.")
+        evidence = selection["evidence"]
+        ids, conflicts = selection["ids"], set(evidence["conflicting_ids"])
+        if not prior or prior.status not in {"Incomplete", "Conflicts"}:
+            for identity in ids:
+                budget.reserve_record(stream, identity)
+            if version == 3:
+                from hero_integration.services.execution_budget import _check_source_revision
+                if require_environment(frappe) != selection["environment"]:
+                    raise RuntimeBridgeError("The frozen MONITOR environment changed.")
+                _check_source_revision(frappe.db, source, revision)
+            for identity in ids:
+                budget.outcome(stream, identity, "conflict" if identity in conflicts else "processed")
+            frappe.db.set_value(event_type, run_id, {
+                "status": "Conflicts" if conflicts else "Incomplete", "rows_read": evidence["rows_read"],
+                "customer_records": len(ids) if stream == "HeroCustomers" else 0,
+                "project_records": len(ids) if stream == "HeroProjectMatches" else 0,
+                "detail": "Manual MONITOR observed its frozen sample. Full change-stream coverage is unproven."})
+            frappe.db.commit()
+    except Exception:
+        frappe.db.rollback()
+        # A terminal receipt with damaged evidence must never become reusable for a fresh read.
+        if not prior or prior.status not in {"Incomplete", "Conflicts"}:
+            frappe.db.set_value(event_type, run_id, {"status": "Failed", "detail": "Manual MONITOR sample could not be confirmed."})
+            frappe.db.commit()
+        raise
+    return {"run": run_id, "coverage": "APPROVED_PAGE_ONLY" if version == 2 else "BOUNDED_ORDERED_SAMPLE", "operation": stream, "rows_read": evidence["rows_read"],
+            "status": "Conflicts" if conflicts else "Observed", **budget.report()}
+
+
 def record_scheduler_outcome(mode: str, status: str, detail: str, *, run: str = "", sync_run: str = "", source_instance: str = "") -> str | None:
     """Record each queued run; deduplicate repeated scheduler skips or failures."""
     import frappe
@@ -222,18 +379,87 @@ def _record_event(mode: str, status: str, detail: str, result: MonitorResult | N
     return event.name
 
 
+def _version_confirms_inventory(data, reader_key):
+    import json
+    from hero_integration.services.sync_engine import inventory_slice_completed
+
+    try:
+        for field, old, new in json.loads(data)["changed"]:
+            if field != "reader_states_json":
+                continue
+            previous = json.loads(old or "{}").get(reader_key) or {}
+            current = json.loads(new)[reader_key]
+            if current["status"] != "PARTIAL" or previous == current:
+                return False
+            checkpoint = json.loads(current.get("inventory_checkpoint_json") or "null")
+            if not inventory_slice_completed(current["diagnostic"], checkpoint):
+                return False
+            if checkpoint is None:
+                return True
+            prior = json.loads(previous.get("inventory_checkpoint_json") or "null") or {}
+            return checkpoint["next_offset"] > (prior.get("next_offset") or 0)
+    except (KeyError, TypeError, ValueError, AttributeError):
+        # Audit retention and older versions can leave the execution unprovable.
+        pass
+    return False
+
+
+def _archived_inventory_progress(frappe_api, instance, since):
+    """Recover older PARTIAL receipts from the final committed reader version of each run."""
+    rows = frappe_api.db.sql("""
+        SELECT event.name AS receipt, reader.read_service, reader.execution_scope, reader.state,
+               version.data AS checkpoint_change
+        FROM `tabHERO Polling Event` event
+        JOIN `tabHERO Sync Run Ledger` anchor ON anchor.name = event.sync_run
+            AND anchor.site_scope = %(site)s AND anchor.source_instance = event.source_instance
+            AND anchor.automatic = 1
+        JOIN `tabHERO Sync Run Ledger` reader ON reader.site_scope = anchor.site_scope
+            AND reader.source_instance = anchor.source_instance AND reader.automatic = 1
+            AND (reader.scheduler_cycle = NULLIF(anchor.scheduler_cycle, '') OR reader.name = anchor.name)
+        LEFT JOIN tabVersion version ON version.name = (
+            SELECT v.name FROM tabVersion v
+            WHERE reader.state = 'PARTIAL' AND reader.execution_scope = 'INVENTORY'
+                AND v.ref_doctype = 'HERO Sync State Ledger' AND v.docname = reader.site_scope
+                AND v.creation BETWEEN reader.creation AND reader.modified
+            ORDER BY v.creation DESC, v.name DESC LIMIT 1)
+        WHERE event.source_instance = %(instance)s AND event.creation >= %(since)s
+            AND event.mode = 'AUTO_SYNC' AND event.status = 'Incomplete' AND event.detail = 'PARTIAL'
+            AND COALESCE(event.run, '') = '' AND COALESCE(event.manual_approval, '') = ''
+    """, {"site": frappe_api.local.site, "instance": instance, "since": since}, as_dict=True)
+    by_receipt = {}
+    partials = set()
+    for row in rows:
+        receipt = row["receipt"]
+        completed = row["state"] in ("SUCCEEDED", "BOUNDED_COMPLETE")
+        if row["state"] == "PARTIAL" and row["execution_scope"] == "INVENTORY" and row["checkpoint_change"]:
+            key = instance + "|" + (row["read_service"] or "")
+            completed = _version_confirms_inventory(row["checkpoint_change"], key)
+            if completed:
+                partials.add(receipt)
+        by_receipt[receipt] = completed and by_receipt.get(receipt, True)
+    return sorted(receipt for receipt in partials if by_receipt[receipt])
+
+
 def execution_summary(frappe_api, instance: str, since) -> dict[str, object]:
     """Count automatic executions once, using the linked run's current state.
 
-    Start receipts stay immutable. Manual runs have no receipt; skipped scheduler
-    ticks are shown separately and are not executions.
+    Manual MONITOR samples carry their own approval. Only scheduler receipts
+    contribute here; skipped ticks are shown separately.
     """
-    rows = frappe_api.db.sql("""
+    archived = _archived_inventory_progress(frappe_api, instance, since)
+    params = {"instance": instance, "since": since}
+    params.update({f"receipt_{i}": name for i, name in enumerate(archived)})
+    placeholders = ", ".join(f"%(receipt_{i})s" for i in range(len(archived))) or "NULL"
+    rows = frappe_api.db.sql(f"""
         SELECT outcome, COUNT(*) AS count, MAX(creation) AS latest,
-               MAX(success_on) AS success_on
+               MAX(CASE WHEN outcome = 'InventoryProgress' THEN creation ELSE success_on END) AS success_on
         FROM (
             SELECT COALESCE(NULLIF(event.run, ''), event.name) AS identity,
                 CASE
+                    WHEN event.name IN ({placeholders}) THEN 'InventoryProgress'
+                    WHEN COALESCE(event.run, '') = '' AND event.mode = 'AUTO_SYNC'
+                        AND event.status = 'Succeeded' AND event.detail = 'PARTIAL'
+                        AND COALESCE(event.sync_run, '') <> '' THEN 'InventoryProgress'
                     WHEN COALESCE(event.run, '') = '' THEN event.status
                     WHEN run.state IN ('Queued', 'Running') THEN 'Running'
                     WHEN run.state = 'Completed' THEN 'Succeeded'
@@ -252,19 +478,22 @@ def execution_summary(frappe_api, instance: str, since) -> dict[str, object]:
                 ON run.name = event.run AND run.source_instance = event.source_instance
                    AND run.mode = 'Execute'
             WHERE event.source_instance = %(instance)s AND event.creation >= %(since)s
+                AND COALESCE(event.manual_approval, '') = ''
             GROUP BY identity, outcome
         ) executions
         GROUP BY outcome
-    """, {"instance": instance, "since": since}, as_dict=True)
+    """, params, as_dict=True)
     counts = {row["outcome"]: row["count"] for row in rows}
     latest = max(rows, key=lambda row: str(row["latest"]), default=None)
+    last_status = latest["outcome"] if latest else "Not started"
     return {
         "runs": sum(count for status, count in counts.items() if status != "Skipped"),
-        "pass": counts.get("Succeeded", 0), "fail": counts.get("Failed", 0),
+        "pass": counts.get("Succeeded", 0) + counts.get("InventoryProgress", 0),
+        "partial_inventory": counts.get("InventoryProgress", 0), "fail": counts.get("Failed", 0),
         "incomplete": counts.get("Incomplete", 0) + counts.get("Started", 0),
         "skipped": counts.get("Skipped", 0), "running": counts.get("Running", 0),
         "conflicts": counts.get("Conflicts", 0), "cancelled": counts.get("Cancelled", 0),
-        "last_status": latest["outcome"] if latest else "Not started",
+        "last_status": "Succeeded" if last_status == "InventoryProgress" else last_status,
         "last_successful": max((row["success_on"] for row in rows if row["success_on"]), default=None),
     }
 
@@ -373,7 +602,7 @@ def _aware(value: datetime | None, system_timezone: str | None) -> datetime | No
 NUMERIC_LIMITS = {
     "polling_interval_minutes": (1, 1440), "polling_page_size": (1, 1000), "polling_retry_limit": (0, 3),
     "polling_retry_backoff_seconds": (0, 3600), "polling_timeout_seconds": (1, 120),
-    "polling_rate_limit": (1, 10000), "polling_concurrency": (1, 1),
+    "polling_rate_limit": (1, 10000), "polling_concurrency": (1, 10),
 }
 
 

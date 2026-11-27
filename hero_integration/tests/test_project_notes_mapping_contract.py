@@ -31,6 +31,22 @@ class TestProjectNotesMappingContract(unittest.TestCase):
             metadata,
         )
 
+    def test_explicit_outbound_inverse_preserves_plain_text_roundtrip(self):
+        from hero_integration.services.frappe_writeback import _transform, WritebackContractError
+        from hero_integration.services.direct_mapping import plain_text_html
+
+        text = "HERO <tag> & note\nnext line"
+        self.assertEqual(_transform(plain_text_html(text), "HTML To Plain Text"), text)
+        with self.assertRaises(WritebackContractError):
+            _transform("<p><strong>Formatting</strong></p>", "HTML To Plain Text")
+
+    def test_authority_excludes_cross_direction_writes_and_unknown_rules(self):
+        from hero_integration.services.mapping_runtime import field_authorities, MappingPlanError
+        self.assertEqual(field_authorities({"field_authority": {"rule": "ERPNEXT"}}, ["rule"]), {"rule": "ERPNEXT"})
+        for invalid in ({"other": "HERO"}, {"rule": "OWNER"}, None, [1]):
+            with self.subTest(value=invalid), self.assertRaises(MappingPlanError):
+                field_authorities({"field_authority": invalid}, ["rule"])
+
 
 class _Metadata:
     def ensure_write(self, doctype):

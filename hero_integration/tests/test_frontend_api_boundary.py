@@ -1,11 +1,13 @@
 from __future__ import annotations
 
 import json
+from dataclasses import replace
 from types import SimpleNamespace
 import unittest
 from unittest.mock import patch
 
 from hero_integration import api
+from hero_integration.services.runtime_plan import RuntimePlan, RuntimePlanSelection, RuntimePlanState
 
 
 class _Mapping:
@@ -119,30 +121,24 @@ class _RuntimeService:
 
     def approve(self, plan_key, *, expected_revision, actor):
         self.approve_calls.append((plan_key, expected_revision, actor))
-        return SimpleNamespace(
-            plan_key=plan_key,
-            state=SimpleNamespace(value="APPROVED"),
+        return replace(
+            self.plan,
+            state=RuntimePlanState.APPROVED,
             revision=expected_revision + 1,
             generation=self.plan.generation + 1,
             approved_by=actor,
-            selection=self.plan.selection,
         )
 
 
 def _plan():
-    return SimpleNamespace(
-        plan_key="a" * 64,
-        state=SimpleNamespace(value="DRAFT"),
-        revision=4,
-        generation=7,
-        approved_by="",
-        selection=SimpleNamespace(
-            source_instance="isolated-source", graphql_service="HERO-GQL-00001", service_revision=3,
-            operation_revision=3, graphql_mapping="HERO-GQL-MAP-00001", mapping_revision=2,
-            schema_snapshot="SNAPSHOT", schema_fingerprint="f" * 64, operation_name="readThings",
-            execution_mode="AUTO_SYNC",
-        ),
+    selection = RuntimePlanSelection(
+        site_scope="b9-acceptance-41i.localhost",
+        source_instance="isolated-source", graphql_service="HERO-GQL-00001", service_revision=3,
+        operation_revision=3, graphql_mapping="HERO-GQL-MAP-00001", mapping_revision=2,
+        schema_snapshot="SNAPSHOT", schema_fingerprint="f" * 64, operation_name="readThings",
+        execution_mode="AUTO_SYNC",
     )
+    return RuntimePlan(selection.plan_key, selection, RuntimePlanState.DRAFT, revision=4, generation=7)
 
 
 class TestFrontendApiBoundary(unittest.TestCase):
@@ -220,11 +216,12 @@ class TestFrontendApiBoundary(unittest.TestCase):
             self.assertEqual(frappe.only_for_calls, ["System Manager"])
             with patch.object(api, "frappe", _Frappe(roles=(), user="Guest")), self.assertRaises(PermissionError):
                 api.runtime_plan_status("isolated-source", include_execution=1)
-            approved = api.runtime_plan_approve("a" * 64, expected_revision=4)
+            approved = api.runtime_plan_approve(service.plan.plan_key, expected_revision=4)
 
         self.assertEqual(status["state"], "DRAFT")
         self.assertEqual(status["generation"], 7)
         self.assertEqual(approved["state"], "APPROVED")
         self.assertEqual(approved["generation"], 8)
-        self.assertEqual(service.approve_calls, [("a" * 64, 4, "Administrator")])
+        self.assertEqual(status["readers"], [service.plan.selection.payload()])
+        self.assertEqual(service.approve_calls, [(service.plan.plan_key, 4, "Administrator")])
 

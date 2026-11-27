@@ -56,6 +56,9 @@ class HEROGraphQLMapping(Document):
             if not isinstance(mapping, dict):
                 raise ValueError
             if self.direction == 'QUERY_TO_FRAPPE':
+                if 'field_authority' in mapping:
+                    from hero_integration.services.mapping_runtime import field_authorities
+                    field_authorities(mapping, mapping.get('mapping_definition_ids'))
                 if mapping.get('usage') or 'send_options' in mapping:
                     raise ValueError('Send to HERO configuration requires a Mutation mapping.')
                 if 'query_adapter' in mapping:

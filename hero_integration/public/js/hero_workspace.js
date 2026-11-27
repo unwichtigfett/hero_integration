@@ -56,7 +56,7 @@
 
     const nativeMethods = new Set([
         "integration_overview", "workspace_context", "workspace_settings_get", "workspace_settings_save",
-        "workspace_testing_settings_save",
+        "workspace_testing_settings_save", "workspace_test_reset_preview", "workspace_test_reset_confirm",
         "workspace_mutation_execution_set", "workspace_sync_status", "workspace_schema_refresh",
         "sync_page_state", "sync_area_start", "sync_service_set", "sync_page_runs", "sync_page_run_detail", "sync_page_conflicts", "sync_page_conflict_report",
         "config_export", "config_import_preview", "config_import",
@@ -73,7 +73,7 @@
         return __("HERO workspace request failed. Retry the action or check the server log.");
     };
     const request = (method, args = {}) =>
-        frappe.call({method: `${API}.${method}`, args}).then((response) => {
+        frappe.call({method: `${API}.${method}`, args, ...(method === "workspace_test_reset_preview" ? {type: "GET"} : {})}).then((response) => {
             if (response?.exc) throw new Error(Array.isArray(response.exc) ? response.exc.join("\n") : String(response.exc));
             return response?.message;
         }).catch((error) => { throw new Error(errorMessage(error)); });

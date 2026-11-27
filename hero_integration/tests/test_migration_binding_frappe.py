@@ -7,7 +7,7 @@ import frappe
 from frappe.tests import IntegrationTestCase
 
 from hero_integration.services import migration
-from hero_integration.services.binding_registry import BindingRegistryService, state_fingerprint
+from hero_integration.services.binding_registry import BindingRegistryService, BindingState, NATIVE_DELETED, state_fingerprint
 from hero_integration.services.direct_mapping import MappingSpec
 from hero_integration.services.mapping_runtime import BindingContract, plan_from_definitions
 from hero_integration.services.sync_engine import FrappeBoundIndex, FrappeBoundProcessor
@@ -39,7 +39,7 @@ class TestMigrationBindingFrappe(IntegrationTestCase):
         result = self.migrate()
         self.assertEqual(result.code, "CREATED", result.detail)
         fields = FrappeBoundIndex(object_type="Contact").fields(frappe.local.site, self.source)
-        self.assertEqual([field.binding.target_field for field in fields], ["customer_details"])
+        self.assertEqual({field.binding.target_field for field in fields}, {"customer_details", "customer_name"})
         processor = FrappeBoundProcessor(1, ("test-category",), run_id=self.source, object_type="Contact",
                                         mapping_name="test-map")
         # Same previously admitted rules and transaction, synthetic provider.
@@ -58,7 +58,7 @@ class TestMigrationBindingFrappe(IntegrationTestCase):
         self.assertEqual(frappe.db.get_value("Customer", self.number, "customer_details"), "local")
         self.row["category"] = " local "
         self.assertEqual(self.migrate().code, "CONVERGED")
-        field, = FrappeBoundIndex(object_type="Contact").fields(frappe.local.site, self.source)
+        field, = FrappeBoundIndex(object_type="Contact", definition_ids=("test-category",)).fields(frappe.local.site, self.source)
         self.assertEqual(field.binding.acknowledged_source_fingerprint, state_fingerprint("local", present=True))
         self.assertEqual(self.migrate().code, "SKIPPED")
         self.assertEqual(frappe.db.count("HERO Object Binding", {"source_instance": self.source}), 1)
@@ -75,7 +75,7 @@ class TestMigrationBindingFrappe(IntegrationTestCase):
         target.tax_id = "tax-local"
         target.save()
         fields = FrappeBoundIndex(object_type="Contact").fields(frappe.local.site, self.source)
-        self.assertEqual({field.binding.target_field for field in fields}, {"tax_id", "customer_details"})
+        self.assertEqual({field.binding.target_field for field in fields}, {"tax_id", "customer_details", "customer_name"})
         processor = FrappeBoundProcessor(1, ("test-category", "test-tax"), run_id=self.source,
                                          object_type="Contact", mapping_name="test-map")
         with patch.object(processor, "_approved_plan", return_value=self.plan):
@@ -130,7 +130,8 @@ class TestMigrationBindingFrappe(IntegrationTestCase):
         from hero_integration.services.binding_registry import FrappeBindingStorage
         old = fields[0].binding
         storage = FrappeBindingStorage()
-        self.assertEqual(storage.field(frappe.local.site, old.identity_key), old)
+        self.assertEqual(storage.field(frappe.local.site, old.identity_key),
+                         replace(old, revision=old.revision + 1, state=BindingState.INACTIVE, reconciliation="DELETED"))
         self.assertEqual(storage.object(frappe.local.site, old.object_binding_key).lifecycle, "LEGACY")
         self.row["is_deleted"] = True
         self.assertEqual(self.migrate().code, "SKIPPED_SOURCE_DELETED")
@@ -229,7 +230,7 @@ class TestMigrationBindingFrappe(IntegrationTestCase):
     def test_historical_link_alone_cannot_authorize_the_next_migration(self):
         from hero_integration.services.binding_registry import FrappeBindingStorage
         self.assertEqual(self.migrate().code, "CREATED")
-        bound, = FrappeBoundIndex().fields(frappe.local.site, self.source)
+        bound, = FrappeBoundIndex(definition_ids=("test-category",)).fields(frappe.local.site, self.source)
         frappe.db.delete(FrappeBindingStorage.FIELD, {"object_binding": bound.binding.object_binding_key})
         frappe.db.delete(FrappeBindingStorage.OBJECT, {"name": bound.binding.object_binding_key})
         self.row["category"] = "remote update"
@@ -240,7 +241,7 @@ class TestMigrationBindingFrappe(IntegrationTestCase):
         from hero_integration.services.binding_registry import FrappeBindingStorage, verify_incarnation, BindingConflict
         self.assertEqual(self.migrate().code, "CREATED")
         storage = FrappeBindingStorage()
-        old, = FrappeBoundIndex().fields(frappe.local.site, self.source)
+        old, = FrappeBoundIndex(definition_ids=("test-category",)).fields(frappe.local.site, self.source)
         parent = storage.object(frappe.local.site, old.binding.object_binding_key)
         with self.assertRaises(BindingConflict):
             frappe.rename_doc("Customer", self.number, self.number + "-renamed", force=True)
@@ -257,9 +258,11 @@ class TestMigrationBindingFrappe(IntegrationTestCase):
         with self.assertRaises(BindingConflict):
             verify_incarnation(parent, fresh)
         self.row["category"] = "stale source"
-        self.assertEqual(self.migrate().code, "CONFLICT")
+        self.assertEqual(self.migrate().code, "SKIPPED_AMBIGUOUS")
         self.assertEqual(fresh.reload().customer_details, "new incarnation")
-        self.assertEqual(storage.field(frappe.local.site, old.binding.identity_key), old.binding)
+        self.assertEqual(storage.field(frappe.local.site, old.binding.identity_key),
+                         replace(old.binding, revision=old.binding.revision + 1, state=BindingState.INACTIVE,
+                                 reconciliation=NATIVE_DELETED))
         self.assertEqual(FrappeBoundIndex().fields(frappe.local.site, self.source), ())
 
     def test_reclassification_and_cross_scope_claim_protect_native_customer(self):

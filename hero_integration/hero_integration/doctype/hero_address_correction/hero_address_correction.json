@@ -1,0 +1,95 @@
+{
+ "doctype": "DocType",
+ "name": "HERO Address Correction",
+ "module": "HERO Integration",
+ "track_changes": 1,
+ "allow_rename": 0,
+ "field_order": [
+  "active",
+  "source_instance",
+  "customer_id",
+  "address_id",
+  "role",
+  "customer",
+  "address",
+  "source_fingerprint",
+  "evidence_json"
+ ],
+ "fields": [
+  {
+   "fieldname": "active",
+   "fieldtype": "Check",
+   "label": "Active",
+   "default": "1"
+  },
+  {
+   "fieldname": "source_instance",
+   "fieldtype": "Data",
+   "label": "Source Instance",
+   "reqd": 1,
+   "set_only_once": 1
+  },
+  {
+   "fieldname": "customer_id",
+   "fieldtype": "Data",
+   "label": "HERO Customer ID",
+   "reqd": 1,
+   "set_only_once": 1
+  },
+  {
+   "fieldname": "address_id",
+   "fieldtype": "Data",
+   "label": "HERO Address ID",
+   "reqd": 1,
+   "set_only_once": 1
+  },
+  {
+   "fieldname": "role",
+   "fieldtype": "Select",
+   "label": "Address Role",
+   "options": "primary\ncollection",
+   "reqd": 1,
+   "set_only_once": 1
+  },
+  {
+   "fieldname": "customer",
+   "fieldtype": "Link",
+   "label": "Customer",
+   "options": "Customer",
+   "reqd": 1,
+   "set_only_once": 1
+  },
+  {
+   "fieldname": "address",
+   "fieldtype": "Link",
+   "label": "Address",
+   "options": "Address",
+   "reqd": 1,
+   "set_only_once": 1
+  },
+  {
+   "fieldname": "source_fingerprint",
+   "fieldtype": "Data",
+   "label": "Original HERO Address Fingerprint",
+   "reqd": 1,
+   "set_only_once": 1
+  },
+  {
+   "fieldname": "evidence_json",
+   "fieldtype": "Code",
+   "label": "Verified External Address Evidence",
+   "options": "JSON",
+   "reqd": 1,
+   "set_only_once": 1
+  }
+ ],
+ "permissions": [
+  {
+   "role": "System Manager",
+   "read": 1,
+   "write": 1,
+   "report": 1,
+   "export": 1
+  }
+ ]
+}

@@ -197,6 +197,13 @@ class TestMappedCollectionsAndRelations(TestCase):
             self.assertEqual(qm.address_values(p, record)['country_name'], 'Germany')
             without_country = {**record, 'address': {**record['address'], 'country': None}}
             self.assertEqual(qm.address_values(p, without_country)['country_code'], 'de')
+            for blank in (None, '', '  '):
+                without_zipcode = {**record, 'address': {**record['address'], 'zipcode': blank}}
+                address = qm.address_values(p, without_zipcode)
+                self.assertIsNone(address['zipcode'])
+                self.assertNotIn('pincode', address['mapped_values'])
+            with self.assertRaisesRegex(qm.IncompleteMappedAddress, 'postcode was not selected'):
+                qm.address_values(p, {'address': {k: v for k, v in record['address'].items() if k != 'zipcode'}})
             with self.assertRaises(ValueError):
                 qm.address_values(p, {'address': {k: v for k, v in record['address'].items() if k != 'country'}})
 
@@ -371,6 +378,11 @@ class TestMappedMetadataExceptions(TestCase):
 
 
 class TestMappedAssignmentAdmission(TestCase):
+    def setUp(self):
+        # These assignment-only fixtures omit the optional Cockpit source field.
+        meta = NS(has_field=lambda key: False)
+        self.enterContext(patch('frappe.get_meta', return_value=meta))
+
     def test_invalid_assignee_does_not_block_task_and_is_reported_separately(self):
         from hero_integration.services import migration
         assignment = rule('assignee', 'target_user_id', 'ToDo', 'allocated_to', kind='int|null', transform='HERO User Link')

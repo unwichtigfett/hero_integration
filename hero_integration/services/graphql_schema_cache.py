@@ -53,6 +53,19 @@ def compiled_schema(value):
     return build(text)
 
 
+@lru_cache(maxsize=SCHEMA_CACHE_SIZE)
+def _checkpoint_digest(text):
+    canonical = json.dumps(json.loads(text), sort_keys=True, ensure_ascii=False, separators=(',', ':'))
+    return hashlib.sha256(canonical.encode()).hexdigest()
+
+
+def checkpoint_digest(text):
+    """Hash the entire stored JSON for migration receipts, including uncompiled metadata."""
+    digest = _checkpoint_digest if len(text) <= MAX_CACHEABLE_SCHEMA_CHARS else _checkpoint_digest.__wrapped__
+    return digest(text)
+
+
 def clear_schema_cache():
     """Clear pure compilation state, e.g. for deterministic cold-start tests."""
     _compiled.cache_clear()
+    _checkpoint_digest.cache_clear()

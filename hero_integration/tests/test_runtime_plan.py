@@ -139,6 +139,26 @@ class TestRuntimePlan(unittest.TestCase):
             ["DRAFT_CREATED", "DRAFT_UPDATED", "APPROVED", "DISABLED"],
         )
 
+    def test_reader_change_requires_fresh_approval_and_invalidates_queued_generation(self):
+        draft = self.service.create_draft(selection(), actor="manager")
+        old = self.service.approve(draft.plan_key, expected_revision=1, actor="manager")
+        change = replace(old.selection, graphql_service="reader-two", operation_name="tasks")
+        self.assertEqual(self.service.update_draft(old.plan_key, old.selection,
+                         expected_revision=2, actor="manager"), old)
+        with self.assertRaises(RuntimePlanConflict):
+            self.service.update_draft(old.plan_key, change, expected_revision=1, actor="manager")
+        changed = self.service.update_draft(old.plan_key, change, expected_revision=2, actor="manager")
+        self.assertEqual((changed.state, changed.approved_by, changed.plan_key, changed.revision,
+                          changed.generation), (RuntimePlanState.DRAFT, "", old.plan_key, 3, 3))
+        with self.assertRaises(RuntimePlanConflict):
+            self.service.resolve_executable_plan(change.site_scope, change.source_instance, 3, True, "manager")
+        approved = self.service.approve(old.plan_key, expected_revision=3, actor="manager")
+        with self.assertRaises(RuntimePlanConflict):
+            self.service.resolve_executable_plan(change.site_scope, change.source_instance, 2, True, "manager")
+        self.assertEqual(approved.selection, change)
+        self.assertEqual((approved.revision, approved.generation), (4, 4))
+        self.assertEqual([e.action for e in self.audit.events], ["DRAFT_CREATED", "APPROVED", "DRAFT_UPDATED", "APPROVED"])
+
     def test_cas_and_site_source_scope_fail_closed(self):
         first = self.service.create_draft(selection(), actor="manager")
         with self.assertRaises(RuntimePlanConflict):
@@ -191,13 +211,121 @@ class TestRuntimePlan(unittest.TestCase):
         self.assertEqual(self.storage.read(draft.plan_key).state, RuntimePlanState.DRAFT)
         self.assertEqual([event.action for event in self.audit.events], ["DRAFT_CREATED"])
 
-    def test_only_a_draft_may_be_edited_or_approved(self):
+    def test_revision_change_requires_new_approval(self):
         draft = self.service.create_draft(selection(), actor="manager")
         approved = self.service.approve(draft.plan_key, expected_revision=1, actor="manager")
-        with self.assertRaises(RuntimePlanConflict):
-            self.service.update_draft(approved.plan_key, selection(mapping_revision=2), expected_revision=2, actor="manager")
+        changed = self.service.update_draft(approved.plan_key, selection(mapping_revision=2), expected_revision=2, actor="manager")
+        self.assertEqual(changed.state, RuntimePlanState.DRAFT)
+        self.assertEqual(changed.generation, approved.generation + 1)
         with self.assertRaises(RuntimePlanConflict):
             self.service.approve(approved.plan_key, expected_revision=2, actor="manager")
+
+    def test_multi_reader_approval_and_scope(self):
+        from hero_integration.services.runtime_plan import FrappeRuntimePlanStorage as Storage
+        first = selection()
+        other = replace(first, graphql_service="reader-two", graphql_mapping="map-two")
+        plan = self.service.create_draft(first, additional_readers=[other], actor="manager")
+        plan = self.service.approve(plan.plan_key, expected_revision=1, actor="manager")
+        self.assertEqual(self.references.checked, [first, other])
+        self.assertEqual(Storage._decode(SimpleNamespace(**Storage._payload(plan))), plan)
+        def resolve(reader):
+            return self.service.resolve_executable_plan(first.site_scope, first.source_instance, 2, True, "manager", reader=reader)
+        self.assertEqual(resolve(other.graphql_service).selection, other)
+        with self.assertRaises(RuntimePlanConflict):
+            resolve("unapproved")
+        for wrong in [first, replace(other, source_instance="other")]:
+            with self.assertRaises(RuntimePlanError):
+                self.service.update_draft(plan.plan_key, first, additional_readers=[wrong], expected_revision=2, actor="manager")
+        self.assertEqual(self.storage.read(plan.plan_key), plan)
+
+    def test_reader_failure_does_not_spend_another_readers_quota(self):
+        from unittest.mock import Mock, patch
+        from hero_integration.services import sync_runtime_adapter as adapter
+        readers = tuple(replace(selection(), graphql_service=f"reader-{i}") for i in range(4))
+        plan = self.service.create_draft(readers[0], additional_readers=readers[1:], actor="manager")
+        plan = self.service.approve(plan.plan_key, expected_revision=1, actor="manager")
+        fake = Mock()
+        fake.db.get_value.return_value = None
+        fake.db.get_single_value.return_value = 5
+        settings = SimpleNamespace(testing_enabled=0, allow_graphql_mutation_execution=0, source_binding_revision=5)
+        def gate(_, cfg, reader):
+            if reader == readers[2]:
+                raise adapter.ReaderDisabled("Disabled area.")
+        def run(executable, frappe, **kw):
+            if executable.selection == readers[0]:
+                raise ValueError("Simulated read failure")
+            return adapter.RuntimePreflight("PARTIAL", plan.plan_key, plan.generation, "source", "completed", True)
+        with patch.object(adapter, "_require_area_enabled", side_effect=gate), patch.object(
+                adapter, "_require_latest_validated_snapshot"), patch.object(adapter, "_run", side_effect=run) as calls, patch(
+                "hero_integration.services.polling.runtime_plan", return_value={"page_size": 4}):
+            result = adapter._run_scheduled_readers(fake, settings, self.service, plan, "manager")
+        self.assertEqual(result.status, "FAILED")
+        self.assertEqual([c.args[0].selection for c in calls.call_args_list], [readers[0], readers[1], readers[3]])
+        self.assertEqual([c.kwargs["allocation"] for c in calls.call_args_list], [2, 1, 1])
+        self.assertEqual(len({c.kwargs["cycle"] for c in calls.call_args_list}), 1)
+        fake.db.rollback.assert_called_once()
+
+    def test_disabled_primary_does_not_mask_completed_inbound_readers(self):
+        from unittest.mock import Mock, patch
+        from hero_integration.services import sync_runtime_adapter as adapter
+
+        primary = selection()
+        other = replace(primary, graphql_service="reader-two", graphql_mapping="map-two")
+        plan = self.service.create_draft(primary, additional_readers=[other], actor="manager")
+        plan = self.service.approve(plan.plan_key, expected_revision=1, actor="manager")
+        fake = Mock()
+        fake.db.get_value.return_value = None
+        fake.db.get_single_value.return_value = 5
+        settings = SimpleNamespace(testing_enabled=0, allow_graphql_mutation_execution=1, source_binding_revision=5)
+
+        def gate(_site, _settings, reader):
+            if reader == primary:
+                raise adapter.ReaderDisabled("Disabled area.")
+
+        with patch.object(adapter, "_require_area_enabled", side_effect=gate), \
+                patch.object(adapter, "_require_latest_validated_snapshot"), \
+                patch.object(adapter, "_run", return_value=SimpleNamespace(status="SUCCEEDED", run_id="completed")) as run, \
+                patch("hero_integration.services.polling.runtime_plan", return_value={"page_size": 4}), \
+                patch("hero_integration.services.automatic_writeback.enqueue") as enqueue:
+            result = adapter._run_scheduled_readers(fake, settings, self.service, plan, "manager")
+        self.assertEqual((result.status, result.run_id), ("SUCCEEDED", "completed"))
+        self.assertEqual(run.call_args.args[0].selection, other)
+        enqueue.assert_not_called()
+
+    def test_cycle_progress_requires_every_allocated_reader(self):
+        from unittest.mock import Mock, patch
+        from hero_integration.services import sync_runtime_adapter as adapter
+        first = selection()
+        other = replace(first, graphql_service="reader-two", graphql_mapping="map-two")
+        plan = self.service.create_draft(first, additional_readers=[other], actor="manager")
+        plan = self.service.approve(plan.plan_key, expected_revision=1, actor="manager")
+        fake = Mock()
+        fake.db.get_value.return_value = None
+        fake.db.get_single_value.return_value = 5
+        settings = SimpleNamespace(testing_enabled=0, allow_graphql_mutation_execution=0, source_binding_revision=5)
+        progress = adapter.RuntimePreflight("PARTIAL", plan.plan_key, plan.generation, "source", "first", True)
+        for status, proven, expected in [("PARTIAL", True, True), ("BOUNDED_COMPLETE", False, True),
+                                         ("PARTIAL", False, False), ("INCOMPLETE", False, False)]:
+            second = adapter.RuntimePreflight(status, plan.plan_key, plan.generation, "source", "second", proven)
+            with patch.object(adapter, "_require_area_enabled"), patch.object(adapter, "_require_latest_validated_snapshot"), \
+                    patch.object(adapter, "_run", side_effect=[progress, second]), \
+                    patch("hero_integration.services.polling.runtime_plan", return_value={"page_size": 4}):
+                result = adapter._run_scheduled_readers(fake, settings, self.service, plan, "manager")
+            self.assertEqual(result.inventory_progress, expected)
+
+    def test_shared_budget_and_small_budget_rotation(self):
+        from hero_integration.services.sync_runtime_adapter import reader_allocations
+        readers = [replace(selection(), graphql_service="reader-" + str(i)) for i in range(8)]
+        for limit in (1, 3, 8, 100):
+            last = None
+            totals = dict.fromkeys(readers, 0)
+            for _ in readers:
+                allocations = reader_allocations(readers, limit, last)
+                self.assertEqual(sum(n for _, n in allocations), limit)
+                for reader, n in allocations:
+                    totals[reader] += n
+                last = allocations[-1 if limit < len(readers) else max(0, limit % len(readers) - 1)][0].graphql_service
+            self.assertEqual(set(totals.values()), {limit})
 
     def test_frappe_reference_adapter_rechecks_all_saved_identities(self):
         frappe = FrappeReferences()

@@ -33,6 +33,7 @@ class ReadContract:
     adapter_options: dict | None = None
     projection_paths: tuple[str, ...] | None = None
     projection_preserve_paths: tuple[str, ...] = ()
+    field_authority: dict | None = None
 
 
 def task_materialization(snapshot, config, plan):
@@ -320,11 +321,16 @@ def _common_contract(service, mapping, snapshot) -> tuple[ReadContract, Mapping[
         raise ReadContractError("The selected read mapping requires explicit active mapping definitions.")
     if not isinstance(variables, Mapping) or not isinstance(page_size, int) or isinstance(page_size, bool) or not 1 <= page_size <= 1000:
         raise ReadContractError("The selected variables or page size are invalid.")
+    from hero_integration.services.mapping_runtime import field_authorities, MappingPlanError
+    try:
+        roles = field_authorities(config, definition_ids) or None
+    except MappingPlanError as error:
+        raise ReadContractError.from_error(error) from error
     return (
         ReadContract(
             service.name, int(service.service_revision), mapping.name,
             int(mapping.mapping_revision), target, records_path, identity_path,
-            tuple(definition_ids), dict(variables), page_size, adapter_options=config.get("query_adapter"),
+            tuple(definition_ids), dict(variables), page_size, adapter_options=config.get("query_adapter"), field_authority=roles,
         ),
         config,
     )

@@ -1,4 +1,4 @@
-"""Import every HERO article (own articles and supplier catalogs) as an ERPNext Item.
+"""Import used HERO articles (own articles and supplier catalogs) as ERPNext Items.
 
 Read-only towards HERO. Articles come from ``supply_product_versions`` in pages
 of 500; HERO ignores the offset unless the list is ordered, so the order is
@@ -23,7 +23,8 @@ import json
 import time
 
 import frappe
-from hero_integration.services.binding_registry import BindingConflict
+from hero_integration.services import migration_archive
+from hero_integration.services.binding_registry import BindingConflict, RETIRED_LINK_SYSTEM
 from hero_integration.services.file_migration import DirectContractChanged
 from hero_integration.services.execution_budget import BudgetReached, current_budget, mapped_dependencies
 
@@ -91,13 +92,54 @@ def digest(value) -> str:
     return hashlib.sha256(json.dumps(value, sort_keys=True, default=str).encode()).hexdigest()
 
 
+def _owned_values(doc, fields):
+    from hero_integration.services.change_detection import native_table_rows
+    return {field: rows if (rows := native_table_rows(doc, field)) is not None else doc.get(field) for field in fields}
+
+
 def owned_digest(doc, owned=OWNED) -> str:
-    return digest({field: doc.get(field) or None for field in owned})
+    return digest(_owned_values(doc, owned))
+
+
+def field_digest(value):
+    # Old baselines hashed all falsy values as null. A tagged hash lets us
+    # retain independent evidence for a confirmed null, empty string, zero or false.
+    return digest(["native-field-v2", value]) if not value else digest(value)
+
+
+def _proven_legacy_empty(doc, field, local, incoming):
+    # The native Item.disabled Check always represents 0/1. Other formerly
+    # collapsed values need an identical typed source value before promotion.
+    from hero_integration.services.change_detection import migration_storage_value
+    projected = migration_storage_value(doc, field, incoming[field]) if field in incoming else None
+    return (field == "disabled" and type(local) is int and local == 0
+            or field in incoming and any(type(local) is type(value) and local == value
+                                         for value in (incoming[field], projected)))
+
+
+def verified_field_digests(doc, stored, incoming):
+    from hero_integration.services.change_detection import mapped_table_matches, native_table_rows
+    current = owned_field_digests(doc, stored)
+    for field, previous in stored.items():
+        if previous == current[field]:
+            continue
+        rows = native_table_rows(doc, field)
+        if rows and field in incoming and mapped_table_matches(doc, field, incoming[field], complete=True):
+            # Prior versions hashed the Python representation of persisted child Documents.
+            # A complete identical projection confirms convergence without replacing native rows.
+            current[field] = previous
+            continue
+        value = doc.get(field)
+        if (not value and previous == digest(None) and _proven_legacy_empty(doc, field, value, incoming)
+                or previous == field_digest(None) and incoming.get(field, False) is None and type(value) in (int, float)
+                and _proven_legacy_empty(doc, field, value, incoming)):
+            current[field] = previous
+    return current
 
 
 def owned_field_digests(doc, owned=OWNED) -> dict[str, str]:
     """Per-field baseline, so a conflict report can name the field changed in ERPNext."""
-    return {field: digest(doc.get(field) or None) for field in owned}
+    return {field: field_digest(value) for field, value in _owned_values(doc, owned).items()}
 
 
 # ---------------------------------------------------------------- Frappe side
@@ -107,7 +149,6 @@ class _Masters:
 
     def __init__(self):
         self.seen = set()
-        self.names = {}
 
     def ensure(self, doctype: str, name: str | None, **values) -> None:
         if not name or (doctype, name) in self.seen:
@@ -128,21 +169,26 @@ class _Masters:
 
     def supplier(self, name: str) -> str:
         """The Supplier named ``name`` (created when missing); returns its document name."""
-        key = ("Supplier", name)
-        if key not in self.names:
-            existing = frappe.db.get_value("Supplier", {"supplier_name": name}, "name")
-            if not existing:
-                doc = frappe.get_doc({"doctype": "Supplier", "supplier_name": name, "supplier_type": "Company",
-                                      **({"supplier_group": SUPPLIER_GROUP} if frappe.db.exists("Supplier Group", SUPPLIER_GROUP) else {})})
-                doc.insert(ignore_permissions=True)
-                existing = doc.name
-            self.names[key] = existing
-        return self.names[key]
+        existing = _existing_supplier(name)
+        if existing:
+            return existing
+        doc = frappe.get_doc({"doctype": "Supplier", "supplier_name": name, "supplier_type": "Company",
+                              **({"supplier_group": SUPPLIER_GROUP} if frappe.db.exists("Supplier Group", SUPPLIER_GROUP) else {})})
+        doc.insert(ignore_permissions=True)
+        return doc.name
+
+
+def _existing_supplier(name: str) -> str | None:
+    matches = frappe.get_all("Supplier", filters={"supplier_name": name}, pluck="name", limit_page_length=2)
+    if len(matches) > 1:
+        raise BindingConflict("The HERO supplier name matches multiple ERPNext Suppliers.")
+    return matches[0] if matches else None
 
 
 def _links(source_instance, identities):
     return runtime.page_links(frappe, source_instance, SOURCE_TYPE, identities, [
-        "target_name", "source_payload_hash", "target_payload_hash", "target_field_hashes", "sync_status", "conflict_detail"])
+        "target_name", "source_payload_hash", "target_payload_hash", "target_field_hashes", "sync_status",
+        "conflict_detail", "mapping_version"])
 
 
 class PriceConflict(Exception):
@@ -158,6 +204,20 @@ def _link_baseline(link) -> dict:
     except (TypeError, ValueError):
         return {}
     return data if isinstance(data, dict) else {}
+
+
+def original_pending_item(link, item, plan):
+    """Recognize only an Item created by this mapped import with a pending price identity."""
+    from hero_integration.services.binding_registry import matches_incarnation
+    if not link or link.sync_status != "Pending Review" or not item:
+        return False
+    current = frappe.get_doc("HERO Integration Link", link.name, for_update=True)
+    contract = plan.binding_contract
+    return bool(contract and current.target_doctype == "Item" and current.target_name == item.name
+                and current.source_instance == contract.source_instance and current.source_type == SOURCE_TYPE
+                and current.mapping_version == f"{MAPPING_VERSION}:{plan.mapping_version}"[:140]
+                and matches_incarnation(current.target_incarnation, item.creation)
+                and _link_baseline(current).get("pending_mapping") == [contract.definition_id, contract.revision])
 
 
 def _managed_prices(link) -> dict:
@@ -189,6 +249,14 @@ def _conflict(link, source: str, detail: str) -> str:
     return "conflict"
 
 
+def _item_snapshot(item, fields):
+    from hero_integration.services.change_detection import native_table_rows
+    stored = item.get_valid_dict(ignore_virtual=True)
+    return {**{key: rows if (rows := native_table_rows(item, key)) is not None else stored.get(key) for key in fields},
+            'barcodes': [(row.get('barcode'), row.get('barcode_type')) for row in item.get('barcodes') or []],
+            'supplier_items': [(row.get('supplier'), row.get('supplier_part_no')) for row in item.get('supplier_items') or []]}
+
+
 def upsert(row: dict, link, masters: _Masters, source_instance: str, read=None, *, relation_warnings=None) -> str:
     """Create or update one Item; returns added, updated, unchanged or conflict."""
     read = read or runtime.resolve_read(OPERATION, source_instance)
@@ -210,8 +278,8 @@ def upsert(row: dict, link, masters: _Masters, source_instance: str, read=None, 
         return "unchanged"
     item = frappe.get_doc("Item", link.target_name) if link else None
     if item is None and frappe.db.exists("Item", values["item_code"]):
-        existing_links = frappe.get_all('HERO Integration Link', filters={'target_doctype': 'Item',
-            'target_name': values['item_code']}, fields=['source_type', 'source_instance', 'sync_status'], limit_page_length=2)
+        existing_links = frappe.get_all('HERO Integration Link', filters={'source_system': ['!=', RETIRED_LINK_SYSTEM],
+            'target_doctype': 'Item', 'target_name': values['item_code']}, fields=['source_type', 'source_instance', 'sync_status'], limit_page_length=2)
         if (len(existing_links) == 1 and existing_links[0].source_type == 'supply_service'
                 and existing_links[0].source_instance == source_instance
                 and existing_links[0].sync_status == 'Synchronized'):
@@ -241,10 +309,12 @@ def upsert(row: dict, link, masters: _Masters, source_instance: str, read=None, 
     if item is not None:
         # A partial Send advances only its confirmed fields. An old aggregate
         # cannot acknowledge the remaining fields, nor veto a valid partial update.
-        changed = (adapter_baseline(item, owned_field_digests(item, tuple(baseline_fields)), baseline_fields,
+        changed = (adapter_baseline(item, verified_field_digests(item, baseline_fields, values), baseline_fields,
                                     verify=True) != baseline_fields
                    if baseline_fields else bool(link.target_payload_hash)
-                   and owned_digest(item, OWNED) != link.target_payload_hash)
+                   and owned_digest(item, OWNED) != link.target_payload_hash
+                   and not (all(item.get(field) or _proven_legacy_empty(item, field, item.get(field), values) for field in OWNED)
+                            and digest({field: item.get(field) or None for field in OWNED}) == link.target_payload_hash))
         if changed:
             return _conflict(link, source, "The Item was changed in ERPNext; the newer HERO article was not applied.")
         from hero_integration.services.change_detection import new_mapped_field_conflicts
@@ -290,13 +360,19 @@ def upsert(row: dict, link, masters: _Masters, source_instance: str, read=None, 
         item.insert(ignore_permissions=True)
         result = "added"
     elif not adopted:
+        from hero_integration.services.change_detection import native_values_changed
+        fields = {key: value for key, value in fields.items() if value is not None or key not in REQUIRED_FALLBACKS}
+        before = _item_snapshot(item, fields)
+        from hero_integration.services.change_detection import mapped_table_matches
         item.update({key: value for key, value in fields.items()
-                     if value is not None or key not in REQUIRED_FALLBACKS})  # never blank a required field
+                     if not (isinstance(before.get(key), list) and mapped_table_matches(item, key, value))})
         if not item.get("barcodes"):
             _set_barcode(item, values["barcode"])
         supplier_baseline = _set_supplier(item, values["supplier"], masters) or supplier_baseline
-        item.save(ignore_permissions=True)
-        result = "updated"
+        result = 'unchanged'
+        if native_values_changed(before, _item_snapshot(item, fields)):
+            item.save(ignore_permissions=True)
+            result = 'updated'
     else:
         result = 'unchanged'
     prices = dict(managed)
@@ -315,6 +391,8 @@ def upsert(row: dict, link, masters: _Masters, source_instance: str, read=None, 
             counts = {}
         if counts.get('conflicts'):
             return _conflict(link, source, 'Mapped item prices changed locally; review before updating.') if link else 'conflict'
+        if result == 'unchanged' and (counts.get('created') or counts.get('updated')):
+            result = 'updated'
     if relation_pending and relation_warnings is not None:
         relation_warnings.append(relation_pending)
     link_values = {"sync_status": "Pending Review" if relation_pending else "Synchronized", "target_name": item.name, "source_payload_hash": source,
@@ -323,8 +401,24 @@ def upsert(row: dict, link, masters: _Masters, source_instance: str, read=None, 
                                                      **({'adopted_locally': True} if adopted else {}),
                                                      **({"supplier": supplier_baseline} if supplier_baseline else {})},
                                                      sort_keys=True),
-                   "mapping_version": f"{MAPPING_VERSION}:{read.mapping_version}"[:140],
-                   "last_synced_on": frappe.utils.now_datetime()}
+                   "mapping_version": f"{MAPPING_VERSION}:{read.mapping_version}"[:140]}
+    if relation_pending and read.plan.binding_contract:
+        contract = read.plan.binding_contract
+        if result == "added" and not link and getattr(item, "creation", None):
+            from hero_integration.services.binding_registry import incarnation
+            link_values["target_incarnation"] = incarnation(item.creation)
+            proof = [contract.definition_id, contract.revision]
+        else:
+            proof = _link_baseline(link).get("pending_mapping")
+        if proof:
+            state = json.loads(link_values["target_field_hashes"])
+            link_values["target_field_hashes"] = json.dumps({**state, "pending_mapping":proof}, sort_keys=True)
+    if link and result == 'unchanged':
+        if all((getattr(link, field, None) or '') == value for field, value in link_values.items()):
+            return result
+        if not adopted:
+            result = 'updated'
+    link_values['last_synced_on'] = frappe.utils.now_datetime()
     if link:
         frappe.db.set_value("HERO Integration Link", link.name, link_values)
     else:
@@ -365,7 +459,7 @@ def _supplier_unchanged(item, supplier: dict | None, baseline) -> bool:
         managed = [row for row in rows if row.get("supplier") == baseline["supplier"]]
         if len(managed) != 1 or (managed[0].get("supplier_part_no") or None) != baseline.get("supplier_part_no"):
             return False
-    name = frappe.db.get_value("Supplier", {"supplier_name": supplier["supplier"]}, "name")
+    name = _existing_supplier(supplier["supplier"])
     destination = [row for row in rows if row.get("supplier") == name] if name else []
     if not destination:
         return True
@@ -484,6 +578,20 @@ def fetch_page(client, offset: int, size: int = PAGE_SIZE, read=None) -> list[di
     return runtime.fetch_page(client, read, offset, size)
 
 
+def _was_used(row: dict) -> bool:
+    """Check the HERO usage counter before resolving links or writing an Item."""
+    count = row.get("Genutzt")
+    if isinstance(count, str):
+        count = count.strip()
+        if count.removeprefix("-").isdecimal():
+            count = int(count)
+    if isinstance(count, float) and count.is_integer():
+        count = int(count)
+    if type(count) is not int:
+        raise ValueError(f"HERO-Artikel {row.get('product_id')}: Das Feld „Genutzt“ fehlt oder enthält keine ganze Zahl.")
+    return count > 0
+
+
 def sync_products(client=None, *, source_instance: str | None = None, time_budget: int = TIME_BUDGET_SECONDS,
                   should_stop=None, max_pages: int = 2000, read=None, progress=None, record_limit=None, run_name=None, page_overlap=0, observe_identity=None) -> dict:
     """Process articles from the saved offset until done, stopped or the time budget ends.
@@ -501,8 +609,15 @@ def sync_products(client=None, *, source_instance: str | None = None, time_budge
     from hero_integration.services.migration_testing import bounded_rows, processed, validate_checkpoint
     from hero_integration.services.offset_pagination import advance, validate_overlap
     if page_overlap:
-        validate_overlap(page_overlap, read.page_size)
+        validate_overlap(page_overlap, read.page_size, migration=True)
     state, save = runtime.run_progress(read, run_name, _state, _save, record_limit=record_limit)
+    from hero_integration.services import product_usage
+
+    usage = product_usage.load(source_instance)
+    digest, usage_counts = usage if usage else (None, {})
+    keys = sorted(usage_counts)
+    if state and state.get('usage_digest') != digest and not (state.get('done') and not read.validate_write):
+        raise ValueError('Die Artikel-Positivliste hat sich seit dem Laufstart geändert.')
     if read.validate_write and state.get("done"):
         return state
     if record_limit is not None:
@@ -514,8 +629,12 @@ def sync_products(client=None, *, source_instance: str | None = None, time_budge
             or state.get("mapping") != read.mapping_version or state.get("page_overlap", 0) != page_overlap):
         state = {}
     state.update(source_instance=source_instance, mapping=read.mapping_version, mapping_origin=read.origin, page_overlap=page_overlap)
+    new_usage_checkpoint = usage and "usage_digest" not in state
+    state["usage_digest"] = digest
     counts = state.setdefault("counts", {})
     state.update(done=False, stopped=False, last_error=None)
+    if new_usage_checkpoint and read.validate_write:
+        save(state)
     masters = _Masters()
     deadline = time.monotonic() + time_budget
     offset = int(state.get("offset") or 0)
@@ -529,27 +648,42 @@ def sync_products(client=None, *, source_instance: str | None = None, time_budge
         page_size = min(read.page_size, record_limit - processed(counts)) if record_limit is not None else read.page_size
         if page_overlap:
             page_size = read.page_size
-        received = fetch_page(client, offset, page_size, read)
+        if usage and read.testing_rows is None:
+            page_size = min(page_size, 48)
+            received = product_usage.page(client, read, keys, offset, page_size)
+        else:
+            received = fetch_page(client, offset, page_size, read)
         counts["rows_read"] = counts.get("rows_read", 0) + len(received)
         window = None
         if page_overlap:
-            window = advance(received, offset=offset, size=page_size, overlap=page_overlap,
+            window = advance(received, offset=offset, size=page_size, overlap=page_overlap, migration=True,
                              previous=state.get("offset_window"), identity=lambda row: row.get("product_id"))
         fingerprint = hashlib.sha256(json.dumps(received, sort_keys=True, separators=(',', ':'),
                                                  default=str).encode()).hexdigest() if received else ''
         if fingerprint and state.get('last_page_fingerprint') == fingerprint:
             raise ValueError('HERO repeated a product page; pagination cannot safely continue.')
-        rows = bounded_rows(state, window.rows if window else received, record_limit)
+        candidates = window.rows if window else received
+        active_rows = [row for row in candidates if not migration_archive.excluded(OPERATION, row)]
+        if omitted := len(candidates) - len(active_rows):
+            counts["skipped_archived"] = counts.get("skipped_archived", 0) + omitted
+        rows = bounded_rows(state, active_rows, record_limit)
         counts["requests"] = counts.get("requests", 0) + 1
-        links = _links(source_instance, [str(row["product_id"]) for row in rows if row.get("product_id")]) if rows else {}
+        eligible = []
         for row in rows:
-            key = str(row.get("product_id") or "")
-            if not key:
+            if not row.get("product_id"):
                 counts["skipped_no_id"] = counts.get("skipped_no_id", 0) + 1
-                continue
+            elif usage and str(row['product_id']) not in usage_counts:
+                counts["skipped_outside_usage_export"] = counts.get("skipped_outside_usage_export", 0) + 1
+            elif usage or _was_used(row):
+                eligible.append(row)
+            else:
+                counts["skipped_unused"] = counts.get("skipped_unused", 0) + 1
+        links = _links(source_instance, [str(row["product_id"]) for row in eligible]) if eligible else {}
+        for row in eligible:
+            key = str(row["product_id"])
             if budget := current_budget():
                 scoped_row = {**row, '_hero_source_instance': source_instance}
-                budget.reserve_many([(SOURCE_TYPE, key), *mapped_dependencies(read.plan, scoped_row, 'Item')])
+                budget.reserve_record(SOURCE_TYPE, key, mapped_dependencies(read.plan, scoped_row, 'Item'))
             try:
                 warnings = []
                 result = runtime.process_record(read, row, source_instance, SOURCE_TYPE, run_name,
@@ -557,10 +691,12 @@ def sync_products(client=None, *, source_instance: str | None = None, time_budge
                 if warnings and run_name:
                     from hero_integration.services.integration_events import record_output
                     target_name = frappe.db.get_value('HERO Integration Link',
-                        {'source_type': SOURCE_TYPE, 'source_instance': source_instance, 'source_id': key}, 'target_name')
+                        {'source_system': 'HERO', 'source_type': SOURCE_TYPE, 'source_instance': source_instance, 'source_id': key}, 'target_name')
                     record_output(run=run_name, source_type=SOURCE_TYPE, source_id=key, result='PENDING_REVIEW',
                         action='product_relation_review', target_doctype='Item', target_name=target_name,
                         detail='Article imported; a related price requires a stable source identity.')
+                if budget:
+                    budget.outcome(SOURCE_TYPE, key, 'conflict' if result == 'conflict' or warnings else 'processed')
                 frappe.db.commit()
             except BudgetReached:
                 raise
@@ -575,7 +711,7 @@ def sync_products(client=None, *, source_instance: str | None = None, time_budge
                               action="product_binding_conflict", detail=str(error))
             except Exception as error:
                 frappe.db.rollback()
-                masters = _Masters()  # rollback invalidates both master existence and Supplier-name caches
+                masters = _Masters()  # rollback invalidates the master existence cache
                 result = "failed"
                 frappe.log_error(title="HERO product migration failed",
                                  message=f"HERO article {key} ({row.get('nr')}): {error}")
@@ -583,6 +719,9 @@ def sync_products(client=None, *, source_instance: str | None = None, time_budge
                     from hero_integration.services.integration_events import record_output
                     record_output(run=run_name, source_type=SOURCE_TYPE, source_id=key, result='BLOCKED_RECORD',
                         action='product_import_failed', detail=f'Article import failed ({type(error).__name__}); see Error Log.')
+            if budget and budget.version in (2, 3) and result in ('conflict', 'failed'):
+                budget.outcome(SOURCE_TYPE, key, result)
+                frappe.db.commit()
             counts[result] = counts.get(result, 0) + 1
             if observe_identity:
                 observe_identity(key, counts)
@@ -592,7 +731,7 @@ def sync_products(client=None, *, source_instance: str | None = None, time_budge
             state["offset_window"] = window.checkpoint
             offset = window.next_offset or 0
         else:
-            offset += len(rows)
+            offset += len(received)
         state["offset"] = offset
         if received:
             state['last_page_fingerprint'] = fingerprint

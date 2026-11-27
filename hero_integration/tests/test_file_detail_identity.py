@@ -14,6 +14,16 @@ class TestFileDetailIdentity(unittest.TestCase):
             with self.subTest(reply=reply), patch.object(file_transfer, "_detail_request"), self.assertRaises(file_transfer.TransferError):
                 file_transfer.details(Mock(query=Mock(return_value=reply)), rows, None, "source")
 
+    def test_missing_detail_allows_only_the_verified_sibling_to_advance(self):
+        rows = [{"id":1,"uuid":"one"},{"id":2,"uuid":"two"}]
+        with patch.object(file_transfer,"_detail_request"):
+            client = Mock(query=Mock(return_value={"file_uploads":[rows[1]]}))
+            self.assertEqual(file_transfer.details(client,rows,None,"source",allow_missing=True),{"two":rows[1]})
+            for extra in (rows[1], {"id":9,"uuid":"other"}, {"id":9,"uuid":"one"}):
+                client.query.return_value = {"file_uploads":[rows[1],extra]}
+                with self.assertRaises(file_transfer.TransferError):
+                    file_transfer.details(client,rows,None,"source",allow_missing=True)
+
     def test_matching_batch_may_arrive_in_another_order(self):
         rows = [{"id": 1, "uuid": "u1"}, {"id": 2, "uuid": "u2"}]
         with patch.object(file_transfer, "_detail_request"):

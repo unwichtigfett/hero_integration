@@ -4,6 +4,7 @@ from contextlib import nullcontext
 import json
 import os
 import threading
+from uuid import uuid4
 from unittest import TestCase
 from unittest.mock import patch
 
@@ -140,6 +141,7 @@ class TestNativeTaskEmptyOptionalFieldsOffline(TestCase):
         class Doc:
             def __init__(self, values): self.values = values; self.name = 'TASK-NEW'
             def get(self, field): return self.values.get(field)
+            def db_get(self, field): return created[self.values['doctype']].get(field)
             def insert(self):
                 created[self.values['doctype']] = self.values
                 return self
@@ -191,8 +193,18 @@ class TestNativeTaskIntake(TestCase):
             task_name = getattr(self, '_committed_test_task', None)
             if task_name:
                 frappe.db.delete('HERO Integration Record', {'target_doctype': 'Task', 'target_name': task_name})
-                frappe.db.delete('HERO Integration Link', {'source_key': 'HERO:default:Task:982012', 'target_name': task_name})
+                for parent in frappe.get_all('HERO Object Binding', filters={
+                        'target_doctype': 'Task', 'target_name': task_name}, pluck='name'):
+                    frappe.db.delete('HERO Field Binding', {'object_binding': parent})
+                    frappe.db.delete('HERO Object Binding', {'name': parent})
+                frappe.db.delete('HERO Integration Link', {'source_key': self.fixture_key, 'target_name': task_name})
                 frappe.db.delete('Task', {'name': task_name})
+            if run_name := getattr(self, "_committed_test_run", None):
+                for pending in frappe.get_all("HERO Pending Reference", filters={"origin_run":run_name}, pluck="name"):
+                    frappe.db.delete("HERO Pending Dependency", {"parent":pending})
+                    frappe.db.delete("HERO Pending Reference", pending)
+                frappe.db.delete("HERO Integration Record", {"run":run_name})
+                frappe.db.delete("HERO Integration Run", run_name)
             for doctype in ('HERO GraphQL Service', 'HERO GraphQL Mapping', 'HERO Frappe Mapping'):
                 frappe.db.delete(doctype, {'schema_snapshot': snapshot_name})
             frappe.db.delete('HERO GraphQL Schema Snapshot', {'name': snapshot_name})
@@ -310,8 +322,21 @@ class TestNativeTaskIntake(TestCase):
             'priority': 5, 'status': 'Active'}).insert()
         self.assertEqual(rule.status, 'Active')
 
+    def test_legacy_intake_preserves_a_local_status_on_late_completion(self):
+        created = self.apply(self.record)
+        self.assertEqual(created.code, 'CREATED', created.detail)
+        task = frappe.get_doc('Task', created.target_name)
+        task.status = 'Working'
+        task.save()
+        result = self.apply({**self.record, 'done_date': '2025-01-15T12:00:00+00:00'})
+        self.assertEqual(result.code, 'CONFLICT', result.detail)
+        self.assertEqual(task.reload().status, 'Working')
+        self.assertFalse(task.completed_on)
+
     def test_registered_projection_reaches_native_task_with_saved_contract(self):
         from hero_integration.tests.projection_schema_fixture import insert_projection_snapshot
+        task_id = uuid4().int % 2_000_000_000 + 1
+        self.fixture_key = f'HERO:default:Task:{task_id}'
         snapshot = insert_projection_snapshot()
         self._committed_test_snapshot = snapshot.name
         from hero_integration.api import graphql_mapping_save, workspace_service_save, workspace_service_validate, approve_read_service
@@ -365,14 +390,19 @@ class TestNativeTaskIntake(TestCase):
         class Source:
             contract = SimpleNamespace(target_operation='HeroTasks')
             source_instance = 'default'
-            row = {'id': 982012, 'title': 'Full path synthetic 32A',
+            row = {'id': task_id, 'title': 'Full path synthetic 32A',
                    'comment': 'Test', '_hero_source_instance': 'default'}
             def projection(self, offset):
                 return SimpleNamespace(records=(self.row,), next_offset=None)
 
+        origin = frappe.get_doc({"doctype":"HERO Integration Run", "action":"Projection Migration",
+            "mode":"Execute", "state":"Running", "source_instance":"default", "source_binding_revision":1,
+            "graphql_service":service.name, "service_revision":service.service_revision,
+            "graphql_mapping":mapping.name, "mapping_revision":mapping.mapping_revision}).insert()
+        self._committed_test_run = origin.name
         run = Run(graphql_mapping=mapping.name, graphql_service=service.name, service_revision=1,
             mapping_revision=1, source_instance='default', mode='Execute', resume_offset=0,
-            resume_record_index=0, state='Running', name=None, processed=0, created_records=0,
+            resume_record_index=0, state='Running', name=origin.name, processed=0, created_records=0,
             conflict_records=0, skipped_records=0)
         from hero_integration.services.migration import _mapping_plan_for_run
         identity_rule = frappe.db.get_value('HERO Frappe Mapping', {'definition_id': specs[0].definition_id}, 'name')
@@ -382,7 +412,9 @@ class TestNativeTaskIntake(TestCase):
         frappe.db.set_value('HERO Frappe Mapping', identity_rule, 'schema_fingerprint', snapshot.schema_fingerprint)
         source = Source()
         _process_projection(run, source)
-        link = frappe.get_doc('HERO Integration Link', {'source_key': 'HERO:default:Task:982012'})
+        self.assertEqual(run.created_records, 1, frappe.db.get_value('HERO Integration Record',
+            {'source_id': str(task_id), 'technical_action': 'hero_to_frappe'}, 'detail', order_by='creation desc'))
+        link = frappe.get_doc('HERO Integration Link', {'source_key': self.fixture_key})
         self.assertEqual((run.created_records, link.target_doctype), (1, 'Task'))
         self.assertEqual(frappe.get_doc('Task', link.target_name).subject, 'Full path synthetic 32A')
         self.assertFalse(frappe.get_doc('Task', link.target_name).description)
@@ -391,12 +423,12 @@ class TestNativeTaskIntake(TestCase):
         baseline = (link.source_field_hashes, link.target_field_hashes)
         run.resume_record_index = 0
         _process_projection(run, source)
-        self.assertEqual(frappe.db.count('HERO Integration Link', {'source_key': 'HERO:default:Task:982012'}), 1)
+        self.assertEqual(frappe.db.count('HERO Integration Link', {'source_key': self.fixture_key}), 1)
         task = frappe.get_doc('Task', task_name); task.subject = 'Local protected text'; task.save()
         source.row = {**source.row, 'title': 'Remote conflicting text'}
         run.resume_record_index = 0
         _process_projection(run, source)
-        source.row = {'id': 982012, '_hero_source_instance': 'default'}
+        source.row = {'id': task_id, '_hero_source_instance': 'default'}
         run.resume_record_index = 0
         _process_projection(run, source)
         link.reload()
@@ -407,7 +439,7 @@ class TestNativeTaskIntake(TestCase):
         def independent():
             frappe.init(site=os.environ['HERO_TEST_PRIVATE_SITE']); frappe.connect(); frappe.set_user('Administrator')
             try:
-                saved = frappe.get_doc('HERO Integration Link', {'source_key': 'HERO:default:Task:982012'})
+                saved = frappe.get_doc('HERO Integration Link', {'source_key': self.fixture_key})
                 readback.append((saved.target_name, frappe.get_doc('Task', saved.target_name).subject,
                                  saved.source_field_hashes, saved.target_field_hashes))
             finally: frappe.destroy()

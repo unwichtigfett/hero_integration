@@ -146,7 +146,7 @@ def sync(plan, record, parent_doctype, parent_name, *, preview=False):
     if not items: return counts
     from hero_integration.services.execution_budget import current_budget
     if budget := current_budget():
-        budget.reserve_many(source_identities(items))
+        budget.reserve_many(source_identities(items), relation='mapped_relations')
     parent = frappe.get_doc(parent_doctype, parent_name) if frappe.db.exists(parent_doctype, parent_name) else None
     frappe.has_permission(parent_doctype, 'write' if parent else 'create', doc=parent, throw=True)
     if preview:
@@ -161,42 +161,88 @@ def sync(plan, record, parent_doctype, parent_name, *, preview=False):
     frappe.db.savepoint(savepoint)
     try:
         for item in items:
-            prepared = _preflight(item, parent_doctype, parent_name, parent=parent)
+            prepared = _preflight(item, parent_doctype, parent_name, parent=parent, writing=True)
             outcome = _apply(plan, item, prepared, parent_doctype, parent_name, parent)
             counts[outcome] += 1
+    except getattr(frappe, 'QueryDeadlockError', ()):
+        # MariaDB can roll back the whole transaction (including the savepoint).
+        # The record worker must see the original error to retry on a fresh view.
+        raise
     except Exception:
         frappe.db.rollback(save_point=savepoint)
         raise
     return counts
 
 
-def _preflight(item, parent_doctype, parent_name, parent=None):
+def _committed_bank_accounts(iban):
+    """Observe the winner of the IBAN lock without taking a range lock on unrelated accounts."""
+    from hero_integration.client.settings import _configuration_connection
+    db = _configuration_connection()
+    try:
+        db.begin(read_only=True)
+        return {name for name, in db.sql('SELECT name FROM `tabBank Account` WHERE iban=%s LIMIT 2', (iban,))}
+    finally:
+        db.close()
+
+
+def _preflight(item, parent_doctype, parent_name, parent=None, *, writing=False):
     if item['config']['kind'] in collections.KINDS:
         return collections.preflight(item, parent_doctype, parent_name, parent=parent)
     kind = item['config']['kind']
-    links = frappe.get_all('HERO Integration Link', filters={'source_system': 'HERO', 'source_type': kind,
-        'source_instance': item['source_instance'], 'source_id': item['source_id']}, fields=['*'], limit_page_length=2)
+    lock_bank = writing and kind == 'customer_bank_account'
+    if lock_bank:
+        # The empty IBAN lookup must also serialize in READ COMMITTED. Keep the
+        # site-scoped lock until the domain write and its source link commit.
+        from hero_integration.hero_integration.doctype.hero_frappe_mapping.hero_frappe_mapping import _lock_active_target
+        _lock_active_target('customer-bank-account', 'Bank Account', item['values']['iban'])
+    if writing:
+        links = frappe.db.sql("""SELECT * FROM `tabHERO Integration Link`
+            WHERE source_system='HERO' AND source_type=%s AND source_instance=%s AND source_id=%s
+            LIMIT 2 FOR UPDATE""", (kind, item['source_instance'], item['source_id']), as_dict=True)
+    else:
+        links = frappe.get_all('HERO Integration Link', filters={'source_system': 'HERO', 'source_type': kind,
+            'source_instance': item['source_instance'], 'source_id': item['source_id']}, fields=['*'], limit_page_length=2)
     if len(links) > 1: raise ValueError('Native relation has ambiguous source bindings.')
     target = 'Bank Account' if kind == 'customer_bank_account' else 'Address'
     link = links[0] if links else None
     document = None
     if link:
-        if link.target_doctype != target or not frappe.db.exists(target, link.target_name):
+        if link.target_doctype != target:
             raise ValueError('Native relation binding has a missing or incompatible target.')
-        document = frappe.get_doc(target, link.target_name)
+        try:
+            document = frappe.get_doc(target, link.target_name, for_update=lock_bank)
+        except frappe.DoesNotExistError as error:
+            raise ValueError('Native relation binding has a missing or incompatible target.') from error
         frappe.has_permission(target, 'write', doc=document, throw=True)
     else:
         frappe.has_permission(target, 'create', throw=True)
     values = dict(item['values'])
     bank = None
     if kind == 'customer_bank_account':
-        bank = _bank(values, owned_bank=document.get('bank') if document else None)
         if document and (document.party_type != 'Customer' or document.party != parent_name
-                         or document.is_company_account or document.account or document.company):
+                         or document.is_company_account or document.account):
             raise ValueError('Bank account ownership differs from the mapped Customer.')
-        duplicates = frappe.get_all('Bank Account', filters={'iban': values['iban']}, fields=['name'], limit_page_length=2)
-        if any(row.name != (document.name if document else None) for row in duplicates):
+        if document:
+            # ERPNext permits Company metadata on a party account. Its ownership
+            # is defined by party, company-account flag, ledger link and binding.
+            owners = frappe.get_all('HERO Integration Link', filters={'source_system': 'HERO',
+                'source_type': kind, 'target_doctype': target, 'target_name': document.name},
+                fields=['name'], limit_page_length=2)
+            if len(owners) != 1 or owners[0].name != link.name:
+                raise ValueError('Bank account has multiple or inconsistent HERO bindings.')
+        iban = values['iban']
+        candidates = {row.name for row in frappe.get_all('Bank Account', filters={'iban': iban},
+                                                         fields=['name'], limit_page_length=2)}
+        if lock_bank:
+            committed = _committed_bank_accounts(iban)
+            # A second transaction may have committed while our repeatable-read
+            # view waited. Own uncommitted inserts remain visible on this connection.
+            if committed - candidates or any(frappe.db.get_value('Bank Account', name, 'iban', for_update=True) != iban
+                                              for name in candidates - committed):
+                raise frappe.QueryDeadlockError('Bank account changed during migration. Retry the record.')
+        if candidates - ({document.name} if document else set()):
             raise ValueError('An existing IBAN requires explicit account reconciliation; no account was adopted.')
+        bank = _bank(values, owned_bank=document.get('bank') if document else None)
         values = {'iban': values['iban'], 'party_type': 'Customer', 'party': parent_name,
                   'is_company_account': 0, 'is_default': 0}
         values['bank'] = bank.name if bank else item['values']['bank_name']
@@ -257,8 +303,13 @@ def _apply(plan, item, prepared, parent_doctype, parent_name, parent):
     if document and target == 'Address':
         before['links'] = sorted((row.link_doctype, row.link_name) for row in document.get('links', []))
     if kind == 'customer_bank_account' and prepared['bank'] is None:
-        bank = frappe.get_doc({'doctype': 'Bank', 'bank_name': item['values']['bank_name'],
-                              'swift_number': item['values']['swift_number'] or None}).insert()
+        try:
+            bank = frappe.get_doc({'doctype': 'Bank', 'bank_name': item['values']['bank_name'],
+                                  'swift_number': item['values']['swift_number'] or None}).insert()
+        except (frappe.DuplicateEntryError, frappe.UniqueValidationError) as error:
+            # Different IBANs can share a newly imported institution. Re-run the
+            # existing exact Bank/BIC proof against the winner's committed row.
+            raise frappe.QueryDeadlockError('Bank was created concurrently. Retry the record.') from error
         values['bank'] = bank.name
     if document:
         document.update(values)
@@ -268,13 +319,18 @@ def _apply(plan, item, prepared, parent_doctype, parent_name, parent):
             **({'account_name': title} if target == 'Bank Account' else {'address_title': title})})
     if target == 'Address' and not any(row.link_doctype == parent_doctype and row.link_name == parent_name for row in document.get('links', [])):
         document.append('links', {'link_doctype': parent_doctype, 'link_name': parent_name})
-    from hero_integration.services.change_detection import native_values_changed
+    from hero_integration.services.change_detection import managed_target_update, native_values_changed
     after = {field: document.get(field) for field in values}
     if target == 'Address':
         after['links'] = sorted((row.link_doctype, row.link_name) for row in document.get('links', []))
     changed = before is None or native_values_changed(before, after)
-    if link and changed: document.save()
-    elif not link: document.insert()
+    if changed:
+        with managed_target_update(target, document.name if link else None, None):
+            if link:
+                document.save()
+            else:
+                document.insert()
+        document = frappe.get_doc(target, document.name, for_update=True)
     observed = {field: document.get(field) for field in values}
     evidence = {'sync_status': 'Synchronized', 'conflict_detail': '', 'mapping_version': plan.mapping_version,
                 'source_payload_hash': _hash(item['values']), 'target_payload_hash': _hash(observed),
@@ -287,7 +343,6 @@ def _apply(plan, item, prepared, parent_doctype, parent_name, parent):
     if target == 'Address' and parent.get(item['config']['parent_field']) != document.name:
         changed = True
         parent.set(item['config']['parent_field'], document.name)
-        from hero_integration.services.change_detection import managed_target_update
         with managed_target_update(parent_doctype, parent_name, None):
             parent.save()
     return ('updated' if changed else 'unchanged') if link else 'created'

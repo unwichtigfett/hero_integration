@@ -2,7 +2,7 @@
 import json
 import unittest
 from types import SimpleNamespace
-from unittest.mock import patch
+from unittest.mock import patch, Mock
 
 from hero_integration import api
 from hero_integration.services.sync_engine import Eligibility
@@ -179,11 +179,15 @@ class TestWritebackPreviewBoundary(unittest.TestCase):
                 reserve.assert_not_called()
 
     def test_failed_writeback_reservation_never_constructs_transport(self):
-        context = {'fingerprint': 'current', 'verified_context': {'intent': SimpleNamespace(binding=None)}, 'mapping': {'target': {'operation': 'update_contact'}},
+        from hero_integration.tests.test_form_verified_writeback import TestFormVerifiedWriteback
+        verified = TestFormVerifiedWriteback().make_context()[0]['verified_context']
+        context = {'fingerprint': 'current', 'verified_context': verified, 'mapping': {'target': {'operation': 'update_contact'}},
                    'snapshot': self.snapshot, 'mapping_row': self.row}
         with patch.object(api, 'frappe', self.frappe), \
              patch.object(api, '_assert_mutation_execution_released'), \
              patch.object(api, '_writeback_context', return_value=context), \
+             patch('hero_integration.services.sync_engine.FrappeSyncLedger'), \
+             patch.object(api, '_locked_bound_context'), \
              patch.object(api, '_reserve_mutation', side_effect=RuntimeError('synthetic reservation failure')), \
              patch('hero_integration.services.sync_engine.sync_hero_eligibility', return_value=Eligibility.LOCAL_CHANGED), \
              patch.object(api, '_finalize_mutation') as finalize, \
@@ -198,21 +202,42 @@ class TestWritebackPreviewBoundary(unittest.TestCase):
         binding = SimpleNamespace(object_binding_key='object', source_instance='hero', mapping_revision=3,
                                   target_doctype='Customer', target_field='email_id', target_name='CUST-1',
                                   identity_key='binding', revision=2)
+        binding.target_app, binding.source_field, binding.mapping_definition_id = 'erpnext', 'email', 'rule'
         parent = SimpleNamespace(source_instance='hero', external_object_id='42', lifecycle='VALID', reconciliation='',
-                                 target_doctype='Customer', mapping_revision=3, target_name='CUST-1', identity_key='object', site_scope='test.local',
-                                 target_incarnation='2026-01-01T00:00:00.000000')
-        storage = SimpleNamespace(field=lambda *a: binding, object=lambda *a: parent, fields_for_object=lambda *a: [binding])
-        selection = SimpleNamespace(mapping_revision=3, schema_snapshot='S1', schema_fingerprint='fp')
+            target_app='erpnext', target_doctype='Customer', target_name='CUST-1', object_type='Contact',
+            mapping_definition_id='rule', mapping_revision=3)
+        parent.identity_key, parent.site_scope = "object", "test.local"
+        parent.target_incarnation = "2026-01-01T00:00:00.000000"
+        storage = SimpleNamespace(field=lambda *a: binding, object=lambda *a: parent, target_claim=lambda *a: parent, fields_for_object=lambda *a: [binding])
+        selection = SimpleNamespace(graphql_mapping='read-mapping', mapping_revision=3, schema_snapshot='S1', schema_fingerprint='fp')
         plan = SimpleNamespace(selection=selection, plan_key='plan', generation=4)
         service = SimpleNamespace(resolve_executable_plan=lambda *a: plan)
         self.frappe.db = SimpleNamespace(exists=lambda *a: False)
         self.frappe.local = SimpleNamespace(site='test.local')
         self.frappe.session = SimpleNamespace(user='owner')
+        self.frappe.get_single = Mock()
+        self.frappe.db = SimpleNamespace(exists=lambda *a: False, get_value=lambda *args: '{"mode":"ADMIN_INPUT"}')
+        self.snapshot.execution_contract_status = 'Ready'
+        self.service.name = 'service'
+        meta = SimpleNamespace(fieldtype='Data', is_virtual=0, fetch_from='', permlevel=0, read_only=0)
+        self.doc.meta = SimpleNamespace(get_field=lambda f: meta)
+        self.doc.get_permlevel_access = lambda mode: [0]
+        from hero_integration.services.direct_mapping import MappingSpec
+        from hero_integration.services.mapping_runtime import MappingPlan, BindingContract
+        rule = MappingSpec('HeroCustomers','email','Customer','email_id','string|null','Field','Identity',definition_id='rule')
+        read_plan = MappingPlan('HeroCustomers', (rule,), binding_contract=BindingContract('hero','Contact','rule',3))
+        readback = SimpleNamespace(sealed=SimpleNamespace(contract=SimpleNamespace(definition_ids=('rule',))))
         with patch.object(api, 'frappe', self.frappe), patch.object(api, '_validated_snapshot', return_value=(self.snapshot, schema())), \
              patch.object(binding_registry, 'FrappeBindingStorage', return_value=storage), \
              patch.object(binding_registry, 'BindingRegistryService'), \
              patch.object(sync_runtime_adapter, '_runtime_plan_service', return_value=service), \
-             patch('hero_integration.services.writeback_readback.prepare_readback', return_value=object()), \
+             patch('hero_integration.services.writeback_readback.prepare_readback', return_value=readback), \
+             patch('hero_integration.services.frappe_writeback.approved_field_request',
+                   side_effect=lambda snap, contract, service, target, logical: (service.query_document, logical, 'contact')), \
+             patch('hero_integration.services.sync_engine.FrappeBoundProcessor._approved_plan', return_value=read_plan), \
+             patch('hero_integration.services.mapping_runtime.effective_rule_fingerprint', return_value='rules'), \
+             patch('hero_integration.services.execution_runtime.locked_provenance', return_value=None), \
+             patch.object(sync_runtime_adapter, '_require_latest_validated_snapshot'), \
              patch('hero_integration.services.writeback_source.capture_source', return_value=self.source_proof):
             return api._sync_hero_context('binding', 'mapping', 4)
 
@@ -316,7 +341,7 @@ class TestMutationReservationBoundary(unittest.TestCase):
             raise ValueError(message)
 
         fake = SimpleNamespace(_=lambda message: message,
-            DuplicateEntryError=DuplicateEntryError,
+            DuplicateEntryError=DuplicateEntryError, UniqueValidationError=DuplicateEntryError,
             session=SimpleNamespace(user='synthetic'), local=SimpleNamespace(site='test.local'),
             db=SimpleNamespace(commit=commit), get_doc=Mock(return_value=audit), throw=throw,
         )

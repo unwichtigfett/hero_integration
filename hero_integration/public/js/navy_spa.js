@@ -40,6 +40,15 @@
         apply();
     };
 
+    // The Helpdesk desk-theme adapter applies the saved account preference.
+    // Keep CRM and the standalone local preference independent of this handoff.
+    root.addEventListener("hero:apply-desk-theme", ({detail}) => {
+        if (detail !== "navy" && detail !== "standard") return;
+        navy = detail === "navy";
+        page_choice = read(PAGE_KEY);
+        apply();
+    });
+
     // The page restores its saved theme while loading; that must not end Navy. A new saved
     // value means the user chose light or dark in the page itself, and that choice wins.
     const follow_page_choice = () => {
@@ -75,7 +84,10 @@
         if (footer && footer.firstElementChild) footer.firstElementChild.textContent = "Navy";
         row.setAttribute("data-hero-theme-cards", "");
         row.appendChild(card);
-        const choose = () => set_navy(true);
+        const choose = () => {
+            const request = new CustomEvent("hero:choose-navy", {cancelable: true});
+            if (root.dispatchEvent(request)) set_navy(true);
+        };
         card.addEventListener("click", choose);
         card.addEventListener("keydown", (event) => {
             if (event.key === "Enter" || event.key === " ") { event.preventDefault(); choose(); }

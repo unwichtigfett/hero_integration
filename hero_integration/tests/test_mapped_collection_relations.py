@@ -69,6 +69,26 @@ class TestMappedCollectionRelations(TestCase):
         self.assertEqual(report.call_args.kwargs['result'], 'PENDING_REVIEW')
         self.assertIn('Country missing', report.call_args.kwargs['detail'])
 
+    def test_missing_street_or_city_is_a_counted_customer_conflict(self):
+        from hero_integration.services import migration
+        plan = NS(adapter_options={'native_relations': [ADDRESSES]}, target_doctype='Customer')
+        result = migration.Result('CREATED', 'Customer imported.', 'Customer', 'C1')
+        for field in ('street', 'city'):
+            row = deepcopy(self.address)
+            row['id'] = 10
+            row['customer_addresses'][1]['address'][field] = '  '
+            for mode, realizing in [('Preview', False), ('Execute', False), ('Execute', True)]:
+                with self.subTest(field=field, mode=mode, realizing=realizing):
+                    run = NS(mode=mode, name='RUN', processed=0, conflict_records=0)
+                    with patch('hero_integration.services.deferred_references.realizing', return_value=realizing):
+                        actual = migration._sync_mapped_relations(plan, row, result, run)
+                    self.assertEqual((actual.code, actual.target_name), ('CONFLICT', 'C1'))
+                    self.assertIn('street and city', actual.detail)
+                    self.assertTrue(actual.related_field_conflict)
+                    with patch('hero_integration.services.deferred_references.remember'), patch.object(migration, 'record_output'):
+                        migration._record_result(run, 'customer', row, actual)
+                    self.assertEqual((run.processed, run.conflict_records), (1, 1))
+
     def test_address_defaults_empty_country_to_germany_but_keeps_explicit_country(self):
         record = deepcopy(self.address)
         record['customer_addresses'][1]['address']['country'] = None
@@ -124,6 +144,55 @@ class TestMappedCollectionRelations(TestCase):
         self.assertEqual(self.sync(ADDRESSES, alias)['created'], 1)
         self.assertEqual({link.source_id for link in self.docs('HERO Integration Link')}, {'2', '4', '5'})
         self.assertEqual(len(self.docs('Address')), 1)
+
+    def test_empty_postcode_needs_one_committed_complete_sibling_and_preserves_postcode(self):
+        blank = deepcopy(self.address['customer_addresses'][1])
+        blank['address'].update(id=4, zipcode=None)
+        self.address['customer_addresses'].insert(0, blank)
+        self.assertEqual(self.sync(ADDRESSES, self.address)['created'], 2)
+        self.assertEqual(self.sync(ADDRESSES, self.address)['unchanged'], 2)
+        self.assertEqual([address.pincode for address in self.docs('Address')], ['12345'])
+        other = deepcopy(self.address['customer_addresses'][2])
+        other['address'].update(id=9, zipcode='54321')
+        self.address['customer_addresses'].append(other)
+        with self.assertRaises(collection.UnboundCustomerAddress):
+            self.sync(ADDRESSES, self.address)
+        self.assertEqual([address.pincode for address in self.docs('Address')], ['12345'])
+
+    def test_location_equivalence_preserves_house_numbers_and_other_sharp_s(self):
+        text = lambda value: collection._address_text('address_line1', value, True)
+        self.assertEqual(text('Blumenstraße 21a'), text('Blumenstrasse 21a'))
+        for different in ('Blumenstraße 21', 'Blumenstraße 21b', 'Blumenstraße 21A', 'Blumenstraße 21-23'):
+            self.assertNotEqual(text('Blumenstraße 21a'), text(different))
+        self.assertNotEqual(text('Am Maße 1'), text('Am Masse 1'))
+        self.assertNotEqual(text('Südring 1'), text('Sudring 1'))
+
+    def test_complete_matching_contact_can_reuse_one_exclusively_owned_identity(self):
+        self.sync(CONTACTS, self.contacts)
+        self.site.docs = {key:doc for key,doc in self.site.docs.items() if key[0] != 'HERO Integration Link'}
+        self.assertEqual(self.sync(CONTACTS, self.contacts)['created'], 1)
+        self.assertEqual(len(self.docs('Contact')), 1)
+        self.assertEqual(self.sync(CONTACTS, self.contacts)['unchanged'], 1)
+
+    def test_shared_mailbox_does_not_merge_separately_identified_parent_and_named_child(self):
+        child = self.contacts['contacts'][0]
+        self.contacts.update(first_name='Betty', last_name='Parent', email=child['email'],
+                             phone_home=child['phone_home'], phone_mobile=child['phone_mobile'])
+        contact = Doc(self.site, {'doctype':'Contact','name':'main','first_name':'Betty','last_name':'Parent',
+            'email_ids':[NS(email_id=child['email'],is_primary=1)],
+            'phone_nos':[NS(phone=child['phone_home'],is_primary_phone=1),
+                         NS(phone=child['phone_mobile'],is_primary_mobile_no=1)],
+            'links':[{'link_doctype':'Customer','link_name':'C1'}]}).insert()
+        self.site.docs['Customer','C1'].set('customer_primary_contact', contact.name)
+        with self.assertRaisesRegex(ValueError, 'reconciliation'):
+            self.sync(CONTACTS, self.contacts)
+        Doc(self.site, {'doctype':'HERO Integration Link','source_system':'HERO','source_instance':'source-a',
+            'source_type':'customer','source_id':'100','target_doctype':'Customer','target_name':'C1',
+            'sync_status':'Synchronized'}).insert()
+        self.assertEqual(self.sync(CONTACTS, self.contacts)['created'], 1)
+        self.assertEqual(len(self.docs('Contact')), 2)
+        self.assertEqual(self.sync(CONTACTS, self.contacts)['unchanged'], 1)
+        self.assertEqual(self.site.docs['Customer','C1'].get('customer_primary_contact'), contact.name)
 
     def test_different_postcode_creates_separate_address(self):
         self.sync(ADDRESSES, self.address)
@@ -264,6 +333,13 @@ class TestMappedCollectionRelations(TestCase):
         self.assertEqual(len(contact.phone_nos),2)
         self.assertEqual(self.docs('HERO Integration Link')[0].source_type,'customer_contact')
         self.assertFalse(self.site.docs['Customer','C1'].customer_primary_contact)
+
+    def test_distinct_sibling_contacts_with_identical_names_are_repeatable(self):
+        person = self.contacts['contacts'][0]
+        self.contacts['contacts'].append({**person, 'id': person['id'] + 1, 'email': 'second@example.invalid'})
+        self.assertEqual(self.sync(CONTACTS, self.contacts)['created'], 2)
+        self.assertEqual(self.sync(CONTACTS, self.contacts)['unchanged'], 2)
+        self.assertEqual(len(self.docs('Contact')), 2)
 
     def test_contacts_reject_wrong_parent_wrong_kind_and_skip_deleted(self):
         for change in ({'parent_customer_id':999},{'is_contact_person':False}):

@@ -1,6 +1,7 @@
 """Explicit native collection bindings; no implicit price adoption or stock writes."""
 from __future__ import annotations
 
+from collections import defaultdict
 from hashlib import sha256
 import json
 import math
@@ -8,6 +9,8 @@ import re
 
 import frappe
 
+from hero_integration.services import migration_archive
+from hero_integration.services.binding_registry import RETIRED_LINK_SYSTEM
 from hero_integration.services.direct_mapping import MISSING, lookup
 
 KINDS = {'customer_addresses', 'customer_contacts', 'sales_prices'}
@@ -149,7 +152,7 @@ def prepare(relation, record, parent_doctype, parent_name):
             deleted = _read(row, relation['deleted_path'])
             if type(deleted) is not bool:
                 raise ValueError('Customer address deletion state must be an explicit Boolean.')
-            if deleted:
+            if deleted and not migration_archive.includes_archived():
                 continue  # Remote deletion never deletes or disables a local address.
         raw_identity = _read(row, relation['identity_path'])
         if kind == 'sales_prices' and _read(row, relation['fields']['price_list_rate']) is None:
@@ -168,8 +171,14 @@ def prepare(relation, record, parent_doctype, parent_name):
                 country = 'de'
             if not isinstance(country, str) or not re.fullmatch('[a-zA-Z]{2}', country):
                 raise IncompleteCustomerAddress('Customer addresses require an explicit country code.')
-            if not values['address_line1'] or not values['city']:
-                raise IncompleteCustomerAddress('Customer addresses require street and city.')
+            from hero_integration.services.query_mapping import MissingCustomerAddressLocation, require_customer_address_location
+            try:
+                require_customer_address_location(values['address_line1'], values['city'])
+            except MissingCustomerAddressLocation:
+                from hero_integration.services.address_correction import verified_address
+                if verified_address(record, identity, 'collection', expected_customer=parent_name, locked=True):
+                    continue  # This exact source identity already has its own documented native address.
+                raise
             values['country_code'] = country.lower()
             source_type, source_id = 'customer_address', identity
         elif kind=='customer_contacts':
@@ -216,7 +225,91 @@ def prepare(relation, record, parent_doctype, parent_name):
             raise ValueError('One product contains multiple prices for the same bound price list.')
         seen[identity] = item
         result.append(item)
+    if kind == 'customer_addresses' and any(not entry['values'].get('pincode') for entry in result):
+        # A missing postcode can only be corroborated by a complete sibling
+        # observed on this Customer that is itself bound to the same Address.
+        witnesses = defaultdict(lambda: defaultdict(set))
+        for entry in result:
+            values = entry['values']
+            postcode = values.get('pincode')
+            if postcode:
+                witnesses[_address_location(values)][postcode].add(entry['source_id'])
+        for entry in result:
+            if not entry['values'].get('pincode'):
+                entry['postal_witnesses'] = witnesses[_address_location(entry['values'])]
+        result.sort(key=lambda entry: not entry['values'].get('pincode'))
+    if kind == 'customer_contacts':
+        siblings = frozenset(seen)
+        for item in result:
+            item['contact_siblings'] = siblings
+            item['parent_contact'] = {field: record.get(path) for field, path in (
+                ('first_name', 'first_name'), ('last_name', 'last_name'), ('email_id', 'email'),
+                ('phone', 'phone_home'), ('mobile_no', 'phone_mobile'))}
     return result
+
+
+def _address_text(field, value, german):
+    value = str(value or '').strip()
+    if field == 'city':
+        return value.lower()
+    if field == 'address_line1':
+        number = re.search(r'\d', value)
+        boundary = number.start() if number else len(value)
+        street = value[:boundary].lower()
+        if german:
+            street = re.sub(r'straße(?=\s|$)', 'strasse', street)
+        return street + value[boundary:]
+    return value
+
+
+def _address_location(values):
+    german = values.get('country_code') == 'de'
+    return tuple((field, _address_text(field, value, german)) for field, value in sorted(values.items())
+                 if field != 'pincode')
+
+
+def _equivalent_address(item, address, values):
+    german = item['values']['country_code'] == 'de'
+    for field, value in values.items():
+        if field == 'address_type':
+            continue
+        if field == 'pincode' and not value and address.get(field):
+            witnesses = item.get('postal_witnesses', {})
+            if (not german or not re.fullmatch(r'\d{5}', str(address.get(field))) or
+                    not re.search(r'(?<!\w)\d+[A-Za-z]?(?:\s*[-/]\s*\d+[A-Za-z]?)?$', values['address_line1']) or set(witnesses) != {address.get(field)}):
+                return False
+            bindings = _rows('HERO Integration Link', {'source_system': 'HERO', 'source_instance': item['source_instance'],
+                'source_type': 'customer_address', 'target_doctype': 'Address', 'target_name': address.name,
+                'sync_status': 'Synchronized'}, ('source_id',), limit=0)
+            if not any(link.source_id in witnesses[address.get(field)] for link in bindings):
+                return False
+        elif _address_text(field, address.get(field), german) != _address_text(field, value, german):
+            return False
+    return True
+
+
+def _distinct_from_primary(item, candidate, parent):
+    # A verified parent and a separately identified nested person may explicitly
+    # share a household/company email. Preserve their separate contact records.
+    root = item.get('parent_contact') or {}
+    if (not parent or parent.get('customer_primary_contact') != candidate.name
+            or item['identity'] == item['parent_identity'] or not all(root.get(k) for k in ('first_name', 'last_name', 'email_id'))
+            or not all(item['values'].get(k) for k in ('first_name', 'last_name', 'email_id'))
+            or item['values']['email_id'] != root['email_id']
+            or any(_contact_value(candidate, field) != str(value or '').strip() for field, value in root.items())):
+        return False
+    native_names = set(re.findall(r'[^\W\d_]+', (root['first_name'] + ' ' + root['last_name']).lower()))
+    given_names = set(re.findall(r'[^\W\d_]+', item['values']['first_name'].lower()))
+    owners = candidate.get('links', [])
+    if not given_names or not native_names.isdisjoint(given_names) or len(owners) != 1 or (
+            owners[0].link_doctype, owners[0].link_name) != ('Customer', parent.name):
+        return False
+    roots = _rows('HERO Integration Link', {'source_system': 'HERO', 'source_instance': item['source_instance'],
+        'source_type': 'customer', 'source_id': item['parent_identity'], 'target_doctype': 'Customer',
+        'target_name': parent.name, 'sync_status': 'Synchronized'})
+    other = _rows('HERO Integration Link', {'source_system': ['!=', RETIRED_LINK_SYSTEM],
+        'target_doctype': 'Contact', 'target_name': candidate.name})
+    return len(roots) == 1 and not other
 
 
 def _rows(doctype, filters, fields=('name',), limit=2):
@@ -262,7 +355,7 @@ def preflight(item, parent_doctype, parent_name, parent=None):
         frappe.has_permission(target, 'write', doc=document, throw=True)
     else:
         frappe.has_permission(target, 'create', throw=True)
-    values = dict(item['values']); price_list = None
+    values = dict(item['values']); price_list = None; preserved_address = False
     if kind == 'customer_addresses':
         countries = _rows('Country', {'code': values.pop('country_code')})
         if len(countries) != 1:
@@ -272,6 +365,9 @@ def preflight(item, parent_doctype, parent_name, parent=None):
             raise ValueError('Bound customer address does not belong to the mapped Customer.')
         if document:
             values['address_type'] = document.address_type
+            preserved_address = link.get('source_field_hashes') == '{"preserved_address_alias":true}'
+            if preserved_address and (len(document.get('links', [])) != 1 or not _equivalent_address(item, document, values)):
+                raise UnboundCustomerAddress('A previously shared customer address requires explicit reconciliation.')
         # Reuse only the user's approved exact duplicate: it must already be
         # bound to this source and belong exclusively to this Customer.
         if not document:
@@ -284,9 +380,7 @@ def preflight(item, parent_doctype, parent_name, parent=None):
                     continue
                 related.append(address)
             if related:
-                exact_matches = [address for address in related
-                    if all(str(address.get(field) or '').strip() == str(value or '').strip()
-                           for field, value in values.items() if field != 'address_type')]
+                exact_matches = [address for address in related if _equivalent_address(item, address, values)]
                 if not exact_matches and values.get('pincode') and all(
                         address.get('pincode') and str(address.get('pincode')).strip() != str(values['pincode']).strip()
                         for address in related):
@@ -296,15 +390,20 @@ def preflight(item, parent_doctype, parent_name, parent=None):
             if related:
                 address = exact_matches[0]
                 owners = address.get('links', [])
-                proofs = _rows('HERO Integration Link', {'source_system': 'HERO', 'source_instance': item['source_instance'],
-                    'source_type': 'customer_address', 'target_doctype': 'Address', 'target_name': address.name,
-                    'sync_status': 'Synchronized'}, ('name',), limit=2)
-                if (not proofs or len(owners) != 1
+                proofs = _rows('HERO Integration Link', {'source_system': ['!=', RETIRED_LINK_SYSTEM],
+                    'target_doctype': 'Address', 'target_name': address.name}, ('source_system', 'source_instance',
+                    'source_type', 'sync_status'), limit=0)
+                if (not proofs or any((row.source_system, row.source_instance, row.source_type, row.sync_status) !=
+                        ('HERO', item['source_instance'], 'customer_address', 'Synchronized') for row in proofs) or len(owners) != 1
                         or owners[0].link_doctype != 'Customer' or owners[0].link_name != parent_name):
                     raise UnboundCustomerAddress('An existing customer address requires explicit source reconciliation.')
                 frappe.has_permission('Address', 'write', doc=address, throw=True)
                 document = address
                 values['address_type'] = address.address_type
+                preserved_address = True
+        if preserved_address:
+            # Keep the primary writer's exact spelling and its recorded postcode on every replay.
+            values = {field: document.get(field) for field in values}
     elif kind=='customer_contacts':
         if values.get('salutation') and not frappe.db.exists('Salutation',values['salutation']):
             raise ValueError('The explicitly bound native Salutation does not exist.')
@@ -333,6 +432,18 @@ def preflight(item, parent_doctype, parent_name, parent=None):
                     candidate=frappe.get_doc('Contact',row.parent,for_update=True)
                     same_email=values.get('email_id') and _contact_value(candidate,'email_id')==values['email_id']
                     same_name=all(_contact_value(candidate,field)==values.get(field,'') for field in ('first_name','last_name'))
+                    if same_email and not same_name and _distinct_from_primary(item, candidate, parent):
+                        continue
+                    if same_name and not same_email and len(item.get('contact_siblings', ())) > 1:
+                        bindings = _rows('HERO Integration Link', {'source_system': ['!=', RETIRED_LINK_SYSTEM], 'source_type': 'customer_contact',
+                            'target_doctype': 'Contact', 'target_name': candidate.name},
+                            ('source_system', 'source_instance', 'source_id', 'sync_status'), limit=2)
+                        if (len(bindings) == 1 and bindings[0].source_system == 'HERO'
+                                and bindings[0].source_instance == item['source_instance']
+                                and bindings[0].sync_status == 'Synchronized'
+                                and bindings[0].source_id in item['contact_siblings']
+                                and bindings[0].source_id != item['source_id']):
+                            continue  # This contact already belongs to another person in the very same source list.
                     if same_email or same_name:
                         matches.append(candidate)
                 if matches:
@@ -342,17 +453,16 @@ def preflight(item, parent_doctype, parent_name, parent=None):
                                       for field in ('phone', 'mobile_no'))
                     other_equal = all(_contact_value(candidate, field) == value for field, value in values.items()
                                       if field != 'last_name')
-                    bound = _rows('HERO Integration Link', {'source_type': 'customer_contact',
+                    bound = _rows('HERO Integration Link', {'source_system': ['!=', RETIRED_LINK_SYSTEM], 'source_type': 'customer_contact',
                         'target_doctype': 'Contact', 'target_name': candidate.name}, ('name',), limit=1)
                     if (len(matches) != 1 or not values.get('first_name') or not values.get('email_id')
                             or not values.get('last_name') or not _contact_value(candidate, 'last_name')
-                            or _contact_value(candidate, 'last_name') == values['last_name']
                             or not phone_match or not other_equal or bound or len(owners) != 1
                             or owners[0].link_doctype != 'Customer' or owners[0].link_name != parent_name):
                         raise ValueError('An existing customer contact requires explicit source reconciliation.')
                     frappe.has_permission('Contact', 'write', doc=candidate, throw=True)
                     document = candidate
-                    adopted_last_name = True
+                    adopted_last_name = _contact_value(candidate, 'last_name') != values['last_name']
         if document and link:
             try:
                 baseline = json.loads(link.source_field_hashes or '{}')
@@ -379,7 +489,8 @@ def preflight(item, parent_doctype, parent_name, parent=None):
         if any(row.name != (document.name if document else None) and not any(row.get(field) for field in PRICE_DIMENSIONS) for row in candidates):
             raise ValueError('An existing ERPNext item price requires explicit source reconciliation.')
     return {'collection_kind': kind, 'document': document, 'link': link, 'values': values, 'price_list': price_list,
-            'adopted_last_name': adopted_last_name, 'changed_adopted_last_name': changed_adopted_last_name,
+            'preserved_address': preserved_address, 'adopted_last_name': adopted_last_name,
+            'changed_adopted_last_name': changed_adopted_last_name,
             'source_instance': item['source_instance'], 'source_values_hash': _hash(item['values'])}
 
 
@@ -463,10 +574,15 @@ def apply(plan, item, prepared, parent_doctype, parent_name, parent):
         for field in ('email_id','phone','mobile_no'):
             if field in prepared['values']:_set_contact_value(document,field,prepared['values'][field])
     prepared['document'] = document
-    from hero_integration.services.change_detection import native_values_changed
+    from hero_integration.services.change_detection import managed_target_update, native_values_changed
     changed = not existed or native_values_changed(before, _observed(prepared))
-    if existed and changed: document.save()
-    elif not existed: document.insert()
+    if changed:
+        with managed_target_update(target, document.name if existed else None, None):
+            if existed:
+                document.save()
+            else:
+                document.insert()
+        document = frappe.get_doc(target, document.name, for_update=True)
     if target == 'Contact':
         for field in ('email_id', 'phone', 'mobile_no'):
             expected = prepared['values'].get(field)
@@ -474,6 +590,8 @@ def apply(plan, item, prepared, parent_doctype, parent_name, parent):
                 raise ValueError('Saved contact communication differs from the mapped source value.')
     prepared['document'] = document
     evidence = _evidence(plan, item['values'], _observed(prepared))
+    if prepared.get('preserved_address'):
+        evidence['source_field_hashes'] = '{"preserved_address_alias":true}'
     if prepared.get('adopted_last_name'):
         evidence['source_field_hashes'] = json.dumps({'preserved_contact_last_name': _hash(item['values'].get('last_name'))})
     if link:

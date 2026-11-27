@@ -19,7 +19,7 @@ class TestProductPendingMariaDB(TestCase):
             self.skipTest('Requires explicitly selected synthetic Frappe site')
         frappe.set_user('Administrator')
         self.identity = 'synthetic-' + uuid4().hex[:12]
-        self.row = {**ROW, 'product_id': self.identity, 'nr': self.identity, 'base_price': None, 'list_price': None,
+        self.row = {**ROW, 'product_id': self.identity, 'nr': self.identity, 'Genutzt': 1, 'base_price': None, 'list_price': None,
                     'sales_prices': [{'id': None, 'supply_sales_price_id': 10, 'net_price_per_unit': 12.5,
                                       'supply_sales_price': {'is_default': False}}]}
         from hero_integration.services.mapping_runtime import BindingContract

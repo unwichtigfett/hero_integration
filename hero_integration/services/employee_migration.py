@@ -27,7 +27,7 @@ VERSION = "employee-migration-v2"
 OPERATION = "HeroEmployees"
 MAX_RECORDS = 10000
 STATE_KEY = "hero_employee_migration:{}"
-_historical_users = ContextVar('hero_historical_users', default=('', frozenset()))
+_historical_users = ContextVar('hero_historical_users', default=('', frozenset(), frozenset()))
 
 
 
@@ -64,8 +64,8 @@ def _records(data, path):
 
 
 @contextmanager
-def historical_user_scope(source_instance, identities):
-    token = _historical_users.set((source_instance, frozenset(str(value) for value in identities)))
+def historical_user_scope(source_instance, identities, partners=()):
+    token = _historical_users.set((source_instance, frozenset(map(str, identities)), frozenset(map(str, partners))))
     try:
         yield
     finally:
@@ -73,8 +73,13 @@ def historical_user_scope(source_instance, identities):
 
 
 def historical_users(source_instance):
-    source, identities = _historical_users.get()
+    source, identities, _ = _historical_users.get()
     return identities if source == source_instance else frozenset()
+
+
+def historical_partners(source_instance):
+    source, _, partners = _historical_users.get()
+    return partners if source == source_instance else frozenset()
 
 
 def _historical_request(read, source_instance, path):
@@ -112,7 +117,7 @@ def _historical_identities(client, path, wanted_users, wanted_partners, *, read,
         deleted = row.get('status') == 'deleted' and consistent
         for identity in identities:
             by_user.setdefault(identity, []).append(deleted)
-        if deleted and wanted_partners is not None and str(row['id']) in wanted_partners:
+        if deleted and (wanted_partners is None or str(row['id']) in wanted_partners):
             historical_partners.add(str(row['id']))
     historical_users = {identity for identity in (wanted_users if wanted_users is not None else by_user)
                         if identity in by_user and all(by_user[identity])}
@@ -137,9 +142,43 @@ def _link(instance, source_type, source_id, target_doctype):
     return link
 
 
+def native_value(value):
+    # Data fields may store an empty string as SQL NULL. Other falsy values carry data.
+    return "" if value is None else str(value)
+
+
 def _values(doc, fields):
     # Frappe stores empty Data as either null or empty string. Compare both alike.
-    return {field: str(doc.get(field) or "") for field in fields}
+    return {field: native_value(doc.get(field)) for field in fields}
+
+
+def _table_baseline(doc, field):
+    from hero_integration.services.change_detection import native_table_rows
+    rows = native_table_rows(doc, field)
+    return "table-v1:" + _digest(rows) if rows is not None else None
+
+
+def _mapped_updates(doc, values, link):
+    from hero_integration.services.change_detection import mapped_table_matches, migration_storage_value, native_table_rows
+    known = json.loads(link.target_field_hashes or "{}") if link else {}
+    changes = {}
+    for field, proposed in values.items():
+        current = doc.get(field)
+        if current is proposed:
+            continue
+        rows = native_table_rows(doc, field)
+        if rows is None:
+            if native_value(current) != native_value(migration_storage_value(doc, field, proposed)):
+                changes[field] = proposed
+            continue
+        # A mapped child is a dict on intake and a Document after reloading.
+        # Keep the actual child records, including names and unowned columns, on equality.
+        if mapped_table_matches(doc, field, proposed):
+            continue
+        if (rows or field in known) and known.get(field) != "table-v1:" + _digest(rows):
+            raise EmployeeMigrationBlocked("The imported child table has no matching content baseline; review before replacing rows.")
+        changes[field] = proposed
+    return changes
 
 
 def _assert_unchanged(link, doc):
@@ -147,12 +186,23 @@ def _assert_unchanged(link, doc):
         return
     baseline = json.loads(link.target_field_hashes or "{}")
     from hero_integration.services.execution_runtime import adapter_baseline
-    if not baseline or _digest(adapter_baseline(doc, _values(doc, baseline), baseline, verify=True)) != link.target_payload_hash:
+    from hero_integration.services.change_detection import migration_storage_value, _same_mapped_value
+    current = _values(doc, baseline)
+    for field, previous in baseline.items():
+        if isinstance(previous, str) and previous.startswith("table-v1:"):
+            proof = _table_baseline(doc, field)
+            if proof is not None:
+                current[field] = proof
+                continue
+        if current[field] != previous and _same_mapped_value(
+                doc.get(field), migration_storage_value(doc, field, previous)):
+            current[field] = previous
+    if not baseline or _digest(adapter_baseline(doc, current, baseline, verify=True)) != link.target_payload_hash:
         raise EmployeeMigrationBlocked("The imported employee or user was changed in ERPNext; review the conflict.")
 
 
 def _assert_adoptable(doc, values):
-    if any(doc.get(field) not in (None, "") and str(doc.get(field)) != str(value or "") for field, value in values.items()):
+    if any(doc.get(field) not in (None, "") and str(doc.get(field)) != native_value(value) for field, value in values.items()):
         raise EmployeeMigrationBlocked("Existing ERPNext employee or user values differ; review before linking.")
 
 
@@ -166,7 +216,13 @@ def _assert_new_fields(link, doc, values):
 def _write_link(link, instance, source_type, source_id, doc, values, record, mapping_version, *, created_user=False):
     previous = json.loads(link.target_field_hashes or "{}") if link else {}
     from hero_integration.services.execution_runtime import adapter_baseline
-    baseline = adapter_baseline(doc, _values(doc, set(values) | set(previous)), previous)
+    fields = _values(doc, set(values) | set(previous))
+    for field in fields:
+        proof = _table_baseline(doc, field)
+        if proof is not None:
+            # A relationship-only update carries forward the existing evidence.
+            fields[field] = proof if field in values else previous[field]
+    baseline = adapter_baseline(doc, fields, previous)
     changes = {"target_doctype": doc.doctype, "target_name": doc.name, "sync_status": "Synchronized",
                "source_payload_hash": _digest(record), "target_payload_hash": _digest(baseline),
                "target_field_hashes": json.dumps(baseline, sort_keys=True), "mapping_version": mapping_version,
@@ -219,7 +275,7 @@ def _verify_user_identity(read, instance, user_id, link, user):
         raise EmployeeMigrationBlocked("The existing User has no verified native incarnation.")
 
 
-def upsert(record, instance, company, languages, read=None):
+def upsert(record, instance, company, languages, read=None, *, absences=None):
     """All checks precede writes. Caller rolls back the entire record on failure."""
     read = read or runtime.resolve_read(OPERATION, instance)
     try:
@@ -285,7 +341,8 @@ def upsert(record, instance, company, languages, read=None):
         if any(row.name != (employee_link.name if employee_link else None) for row in other_employees):
             raise EmployeeMigrationBlocked("The ERPNext employee is already bound to another HERO identity.")
     _assert_unchanged(user_link, user)
-    _assert_new_fields(user_link, user, user_values)
+    user_updates = _mapped_updates(user, {**user_values, **ids}, user_link)
+    _assert_new_fields(user_link, user, {k: v for k, v in user_updates.items() if k in user_values})
     if not user_link and not new_user:
         _assert_adoptable(user, user_values)
         raise EmployeeMigrationBlocked("An existing login requires its verified source User identity.")
@@ -293,33 +350,37 @@ def upsert(record, instance, company, languages, read=None):
         from hero_integration.services.execution_runtime import preserve_local_fields
         preserve_local_fields(employee, employee_values)
         _assert_unchanged(employee_link, employee)
-        _assert_new_fields(employee_link, employee, employee_values)
+        employee_updates = _mapped_updates(employee, employee_values, employee_link)
+        _assert_new_fields(employee_link, employee, employee_updates)
         if not employee_link:
             _assert_adoptable(employee, employee_values)
     if employee and mapped.get(("Employee", "employee_name")) and employee.get("middle_name"):
         raise EmployeeMigrationBlocked("The ERPNext employee middle name requires review before importing the HERO name.")
     # Include every mapped field in the baseline even when the upstream record
     # stays unchanged, so a local edit is reported rather than silently skipped.
+    from hero_integration.services.source_history import store_absences
     if employee_link and user_link and employee_link.source_payload_hash == _digest(record) and user_link.source_payload_hash == _digest(record) and (
             getattr(employee_link, "mapping_version", "") == read.mapping_version and
             getattr(user_link, "mapping_version", "") == read.mapping_version and
-            _values(employee, employee_values) == {key: str(value or "") for key, value in employee_values.items()} and
-            _values(user, user_values) == {key: str(value or "") for key, value in user_values.items()}):
+            not employee_updates and not user_updates):
+        for link, doc, values, kind, identity in (
+            (employee_link, employee, employee_values, "partner", record["id"]),
+            (user_link, user, user_values, "User", user_id),
+        ):
+            previous = json.loads(link.target_field_hashes or "{}")
+            if any((proof := _table_baseline(doc, field)) is not None and proof != previous.get(field) for field in values):
+                _write_link(link, instance, kind, identity, doc, values, record, read.mapping_version)
         if realizing() and _ensure_user_object_binding(read, instance, user_id, user_name):
             from hero_integration.services.deferred_references import binding_updated
             binding_updated(user_link)
-        return "unchanged"
+        return "updated" if absences and store_absences(employee, absences, instance) else "unchanged"
     is_new = employee is None
-    user_changed = new_user or _values(user, {**user_values, **ids}) != {
-        key: str(value or '') for key, value in {**user_values, **ids}.items()}
-    employee_changed = is_new or _values(employee, employee_values) != {
-        key: str(value or '') for key, value in employee_values.items()}
     if is_new:
         employee_values["employee_number"] = f"HERO-{_digest(instance)[:8]}-{record['id']}"
         employee = frappe.get_doc({"doctype": "Employee", "create_user_permission": 0, "create_user_automatically": 0, **employee_values})
     else:
-        employee.update(employee_values)
-    user.update({**user_values, **ids})
+        employee.update(employee_updates)
+    user.update(user_updates)
     from hero_integration.services.change_detection import managed_target_update
     # Employee.on_update also saves its User. Both owned links must stay managed
     # across that nested native save, after the baseline checks above succeeded.
@@ -327,12 +388,14 @@ def upsert(record, instance, company, languages, read=None):
          managed_target_update('Employee', employee.name, employee_link.name if employee_link else None):
         if new_user:
             user.insert(ignore_permissions=True)
-        elif user_changed:
+        elif user_updates:
             user.save(ignore_permissions=True)
         if is_new:
             employee.insert(ignore_permissions=True)
-        elif employee_changed:
+        elif employee_updates:
             employee.save(ignore_permissions=True)
+        if absences:
+            store_absences(employee, absences, instance)
     _write_link(user_link, instance, "User", user_id, user, user_values, record, read.mapping_version,
                 created_user=bool(read.mapping and new_user))
     _write_link(employee_link, instance, "partner", record["id"], employee, employee_values, record, read.mapping_version)
@@ -418,7 +481,7 @@ def realize_relationships(pending, *, read=None):
     return runtime.realize_record(read, record, pending, "partner", link_user)
 
 
-def sync_employees(client, *, source_instance, run_name, should_stop=None, progress=None, time_budget=1200, verify_source=None, record_limit=None, continue_on_conflict=False, cohort_user_ids=None, cohort_partner_ids=None, read=None):
+def sync_employees(client, *, source_instance, run_name, should_stop=None, progress=None, time_budget=1200, verify_source=None, record_limit=None, continue_on_conflict=False, cohort_user_ids=None, cohort_partner_ids=None, read=None, frozen_employees=None):
     from hero_integration.services.migration_testing import validate_limit
     validate_limit(record_limit)
     frappe.only_for("System Manager")
@@ -460,6 +523,15 @@ def sync_employees(client, *, source_instance, run_name, should_stop=None, progr
             if state.get('testing_cohort_partner_ids', partner_ids) != partner_ids:
                 raise EmployeeMigrationBlocked('The frozen related project sample changed; start a new run.')
             state['testing_cohort_partner_ids'] = partner_ids
+        if frozen_employees is not None:
+            matched = {str(row['id']): sorted({str(value) for value in (row.get('user_id'), (row.get('user') or {}).get('id'))
+                       if type(value) is int and value > 0}) for row in rows if str(row['id']) in frozen_employees}
+            if matched != frozen_employees:
+                raise EmployeeMigrationBlocked('An employee or User relationship changed after the project cohort was frozen.')
+            chosen = [row['id'] for row in rows if str(row['id']) in frozen_employees]
+            if state.get('testing_selected_ids', chosen) != chosen:
+                raise EmployeeMigrationBlocked('The employee checkpoint differs from the frozen project sample.')
+            state['testing_selected_ids'] = chosen
         selected = state.get('testing_selected_ids')
         if selected is None:
             selected = [row['id'] for row in rows[:record_limit]]
@@ -522,6 +594,14 @@ def sync_employees(client, *, source_instance, run_name, should_stop=None, progr
     from hero_integration.services.query_mapping import required_source_paths
 
     paths = required_source_paths(read.plan) if rows else ()
+    from hero_integration.services.source_history import enabled, read_absences
+    absence_map = None
+    if enabled(read, 'partner_absences'):
+        from hero_integration.services.source_history import ABSENCE_FIELD
+        field = frappe.get_meta('Employee').get_field(ABSENCE_FIELD)
+        if not field or field.fieldtype != 'Table' or field.options != 'HERO Source Absence' or field.permlevel != 1:
+            raise EmployeeMigrationBlocked('The protected Employee absence history field is unavailable.')
+        absence_map = read_absences(client, read, source_instance, [row['id'] for row in rows], verify_source)
     confirmed = state.setdefault("source_fingerprints", {})
     rejected = state.setdefault("rejected_fingerprints", {})
     errors = state.setdefault("errors", {})
@@ -532,6 +612,10 @@ def sync_employees(client, *, source_instance, run_name, should_stop=None, progr
         identity = str(record["id"])
         fingerprint = _digest({path: value for path in paths
                                if (value := lookup(record, path)) is not MISSING})
+        extra = {}
+        if absence_map is not None:
+            extra['absences'] = absence_map[record['id']]
+            fingerprint = _digest([fingerprint, extra['absences']])
         # Legacy done_ids carry no version evidence. Recheck them through upsert.
         if record["id"] in done_ids and (
             (identity not in errors and confirmed.get(identity) == fingerprint)
@@ -547,14 +631,11 @@ def sync_employees(client, *, source_instance, run_name, should_stop=None, progr
         if verify_source:
             verify_source()
         if budget := current_budget():
-            identities = [('partner', record['id'])]
             user = record.get('user_id') or (record.get('user') or {}).get('id')
-            if user:
-                identities.append(('User', user))
-            budget.reserve_many(identities)
+            budget.reserve_record('partner', record['id'], [('User', user)] if user else [])
         try:
             result = runtime.process_record(read, record, source_instance, "partner", run_name,
-                lambda: upsert(record, source_instance, company, languages, read=read))
+                lambda: upsert(record, source_instance, company, languages, read=read, **extra))
             remember_relationships(run_name, source_instance, company, read, record)
         except DirectContractChanged:
             raise
@@ -582,6 +663,8 @@ def sync_employees(client, *, source_instance, run_name, should_stop=None, progr
         outcomes[identity] = result
         state["counts"][result] = state["counts"].get(result, 0) + 1
         state["counts"]["unique_processed"] = len(outcomes)
+        if budget:
+            budget.outcome('partner', identity, result if result in ('conflict', 'failed') else 'processed')
         save_progress(state)
         if progress:
             progress(state["counts"])

@@ -162,6 +162,8 @@ class TestGraphQLClientBudget(unittest.TestCase):
         self.assertEqual(result, {"viewer": None})
 
     def test_mutation_timeout_is_never_retried(self):
+        # Exercise networking after an independently tested authorization boundary.
+        self.enterContext(mock.patch("hero_integration.client.mutation_guard.authorize", return_value="synthetic"))
         opener = _Opener(TimeoutError("synthetic"), {"data": {}})
         client = HeroMutationClient(self.endpoint, lambda: "synthetic")
         with mock.patch("hero_integration.client.graphql.urllib.request.build_opener", return_value=opener), \
@@ -172,6 +174,8 @@ class TestGraphQLClientBudget(unittest.TestCase):
         sleep.assert_not_called()
 
     def test_mutation_response_read_failure_closes_stream_without_retry(self):
+        # Exercise networking after an independently tested authorization boundary.
+        self.enterContext(mock.patch("hero_integration.client.mutation_guard.authorize", return_value="synthetic"))
         class FailedRead(_Response):
             def read(self, size=-1):
                 raise OSError("synthetic response read failure")
@@ -190,6 +194,8 @@ class TestGraphQLClientBudget(unittest.TestCase):
         sleep.assert_not_called()
 
     def test_mutation_retryable_http_errors_never_trigger_a_second_send(self):
+        # Exercise networking after an independently tested authorization boundary.
+        self.enterContext(mock.patch("hero_integration.client.mutation_guard.authorize", return_value="synthetic"))
         for status in (429, 500, 503):
             with self.subTest(status=status):
                 failure = _http_error(status, "7")

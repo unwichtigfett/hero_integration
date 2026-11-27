@@ -205,10 +205,20 @@ class TestSync(unittest.TestCase):
   with self.assertRaises(SyncConflict): engine.pending_sync(SyncRun("m3","site","admin",999,False))
  def test_b7_b2_mismatch_is_rejected_without_second_compiler(self):
   with self.assertRaises(SyncError): MaterializedReadPlan(plan().sealed,object(),"hero")
+ def acknowledge(self):
+  self.binding = self.bindings.record_verified_acknowledgment(self.binding, expected_revision=1,
+      mapping_definition_id="d", mapping_revision=1, source_fingerprint="f"*64,
+      target_fingerprint="f"*64, evidence_id="initial", version=1)
+ def test_outbound_cannot_overwrite_a_remote_field_without_both_baselines(self):
+  intent = OutboundIntent(self.binding, 1, FP, "b" * 64, True, "mutation", {})
+  actual = sync_hero_eligibility(intent)
+  self.assertEqual(actual, Eligibility.RECONCILIATION_REQUIRED)
+
  def test_sync_hero_eligibility_acknowledgment_and_reenable_after_change(self):
+  self.acknowledge()
   intent=OutboundIntent(self.binding,1,FP,"b"*64,True,"mutation X { x { id } }",{})
   self.assertEqual(sync_hero_eligibility(intent),Eligibility.LOCAL_CHANGED)
-  approval=OutboundApproval(True,True,True,True,True,1); ack=OutboundAck(True,"evidence","a"*64,"b"*64)
+  approval=OutboundApproval(True,True,True,True,True,2); ack=OutboundAck(True,"evidence","a"*64,"b"*64)
   updated=execute_sync_hero(intent,approval,Transport(ack),self.bindings); done=OutboundIntent(updated,1,FP,"b"*64,True,"m",{})
   self.assertEqual(sync_hero_eligibility(done),Eligibility.NOT_ELIGIBLE)
   changed=OutboundIntent(updated,1,FP,"new-local",True,"m",{}); self.assertEqual(sync_hero_eligibility(changed),Eligibility.LOCAL_CHANGED)
@@ -218,11 +228,13 @@ class TestSync(unittest.TestCase):
   fake.session.user="manager"; fake.get_roles=lambda: ("System Manager",)
   self.assertIs(FrappeSyncLedger(fake)._scope("site"),fake)
  def test_outbound_rejects_unauthorized_unverified_or_implicit_write(self):
+  self.acknowledge()
   intent=OutboundIntent(self.binding,1,FP,"local",True,"mutation X { x { id } }",{})
   with self.assertRaises(PermissionError): execute_sync_hero(intent,OutboundApproval(False,True,True,True,True,1),Transport(OutboundAck(True,"e","a"*64,"b"*64)),self.bindings)
   with self.assertRaises(SyncConflict): execute_sync_hero(intent,OutboundApproval(True,True,True,True,True,1),Transport(OutboundAck(False,"e","a"*64,"b"*64)),self.bindings)
   with self.assertRaises(SyncError): execute_sync_hero(OutboundIntent(self.binding,1,FP,"local",False,"m",{}),OutboundApproval(True,True,True,True,True,1),Transport(OutboundAck(True,"e","a"*64,"b"*64)),self.bindings)
  def test_each_missing_outbound_approval_blocks_transport(self):
+  self.acknowledge()
   from dataclasses import replace
   intent=OutboundIntent(self.binding,1,FP,"local",True,"mutation X { x { id } }",{})
   approval=OutboundApproval(True,True,True,True,True,1)

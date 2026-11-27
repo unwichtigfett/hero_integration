@@ -18,6 +18,8 @@ class TestInstallContract(unittest.TestCase):
         categories = environment.modules["hero_integration.services.project_image_categories"]
         self.assertEqual(categories.install_defaults.call_count, 1)
         self.assertEqual(categories.ensure_field.call_count, 2)
+        environment.modules['frappe'].db.add_index.assert_called_with(
+            'Bank Account', ['iban'], index_name='hero_bank_iban')
 
     def test_migration_repairs_missing_pending_storage_and_is_idempotent(self):
         environment = _InstallEnvironment(apps=['frappe', 'erpnext'], version='16.35.0')
@@ -171,7 +173,12 @@ class _InstallEnvironment:
         frappe_module = types.ModuleType("frappe")
         frappe_module._ = lambda message: message
         frappe_module.get_installed_apps = lambda: self.apps
-        frappe_module.db = types.SimpleNamespace(exists=self.exists, table_exists=lambda name: name in self.doctypes)
+        def current_columns(query, parameters):
+            assert 'information_schema.COLUMNS' in query
+            return [(name, 'varchar(140)', 'YES', None, 'utf8mb4', 'utf8mb4_nopad_bin')
+                    for name in parameters[1]]
+        frappe_module.db = types.SimpleNamespace(db_type='mariadb', sql=current_columns, add_index=mock.Mock(),
+            exists=self.exists, table_exists=lambda name: name in self.doctypes)
         def reload_doc(module, kind, name, force=False):
             self.reload_calls.append(name)
             self.doctypes.add({'hero_pending_dependency': 'HERO Pending Dependency',

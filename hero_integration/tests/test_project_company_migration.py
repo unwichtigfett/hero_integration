@@ -132,6 +132,17 @@ class TestProjectCompanyMigration(FakeFrappeMigrationHarness, unittest.TestCase)
         )
         self.assertEqual(self.frappe.links[("project", "201")].target_name, "PROJ-0001")
 
+    def test_incomplete_primary_location_preserves_customer_and_reports_conflict(self):
+        record = {"id": 301, "full_name": "Synthetic Ada", "company_name": None,
+                  "address": {"id": 5, "street": "Example 2", "zipcode": "12345", "city": ""}}
+        self.assertEqual(self.migration._migrate_customer(record, SimpleNamespace(mode="Preview")).code, "CONFLICT")
+        self.assertFalse(self.frappe.customers)
+        result = self._execute(record)
+        self.assertEqual(result.code, "CONFLICT")
+        self.assertIn("street and city", result.detail)
+        self.assertTrue(result.related_field_conflict)
+        self.assertEqual(len(self.frappe.customers), 1)
+
     def test_empty_contact_projection_of_a_company_is_no_local_change(self):
         # ERPNext projects an empty primary Contact value as '', while HERO sends null.
         record = {"id": 301, "full_name": "Synthetic Person", "company_name": "Synthetic Company", "category": "A",
@@ -524,7 +535,8 @@ class TestProjectCompanyMigration(FakeFrappeMigrationHarness, unittest.TestCase)
             ),
             {"id": "801", "street": "Synthetic Street 1", "zipcode": "77777", "city": "Synthetic City"},
         )
-        with self.assertRaises(self.migration.MappingPlanError):
+        from hero_integration.services.query_mapping import MissingCustomerAddressLocation
+        with self.assertRaises(MissingCustomerAddressLocation):
             self.migration._customer_primary_address({"address": {"id": 801, "street": "", "zipcode": "77777", "city": "Synthetic City"}})
 
     def test_project_action_always_runs_the_customer_phase_first_and_stops_at_its_gate(self):

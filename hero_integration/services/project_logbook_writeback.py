@@ -106,10 +106,14 @@ def _comment_scope(source, comment, activity_doctype='Comment'):
     return _hash(['hero-project-logbook-create-v1', frappe.local.site, source, identity])
 
 
-def _assert_not_submitted(source, comment, *, activity_doctype='Comment', exclude=None):
+def _activity_receipts(source, comment, activity_doctype):
     rows = frappe.get_all('HERO Mutation Audit', filters={'request_fingerprint': _comment_scope(source, comment, activity_doctype)},
-                          fields=['correlation_id'], limit_page_length=0)
-    if any(row.correlation_id != exclude for row in rows):
+                          fields=['name', 'correlation_id', 'delivery_stage'], limit_page_length=0)
+    return [row for row in rows if getattr(row, 'delivery_stage', None) != 'Not Sent']
+
+
+def _assert_not_submitted(source, comment, *, activity_doctype='Comment', exclude=None):
+    if any(row.correlation_id != exclude for row in _activity_receipts(source, comment, activity_doctype)):
         _fail('This activity was already submitted or has an uncertain logbook result; reconcile it before continuing.')
 
 
@@ -287,16 +291,22 @@ def _load_context(comment, *, activity_doctype='Comment', lock=False, audit=None
         _fail('The Project has an unconfirmed outbound logbook activity; reconcile it before importing its logbook.')
     read = mapped_send._load_read(content['read_service'], snapshot)
     if lock:
-        from hero_integration.services.read_contract import from_documents
+        mapped_send._lock_reader_approval(read)
         locked_service = frappe.get_doc('HERO GraphQL Service', read.service.name, for_update=True)
-        locked_mapping = frappe.get_doc('HERO GraphQL Mapping', locked_service.read_mapping, for_update=True)
-        if locked_service.schema_snapshot != snapshot.name:
-            _fail('The approved mutation contract or service changed.')
-        read = SimpleNamespace(service=locked_service, mapping=locked_mapping,
-            contract=from_documents(locked_service, locked_mapping, snapshot))
+        frappe.get_doc('HERO GraphQL Mapping', locked_service.read_mapping, for_update=True)
+        read = mapped_send._load_read(locked_service.name, snapshot)
     if (read.contract.target_operation != AREA or read.contract.identity_path != 'id'
             or not (read.contract.adapter_options or {}).get('logbook')):
         _fail('Logbook sending requires the approved Project reader including its logbook.')
+    from hero_integration.services.binding_registry import FrappeBindingStorage
+    from hero_integration.services.sync_runtime_adapter import _require_latest_validated_snapshot
+    _require_latest_validated_snapshot(frappe, frappe.get_single("HERO Integration Settings"), proof.source_instance,
+        SimpleNamespace(graphql_mapping=mapping.name, schema_snapshot=snapshot.name, schema_fingerprint=snapshot.schema_fingerprint))
+    parent = FrappeBindingStorage(frappe).target_claim(frappe.local.site, "Project", project.name, for_update=lock)
+    if parent and (parent.source_instance != proof.source_instance or parent.external_object_id != str(hero_id)
+            or parent.object_type != "ProjectMatch" or parent.lifecycle != "VALID" or parent.reconciliation
+            or parent.mapping_definition_id != read.mapping.definition_id or parent.mapping_revision != read.contract.mapping_revision):
+        _fail("The Project binding has an invalid HERO identity.")
     _require_readback_paths(read)
     contracts = frappe.get_all('HERO Mutation Contract', filters={'schema_snapshot': snapshot.name,
         'operation_name': OPERATION, 'status': 'Active'}, pluck='name', limit_page_length=2)
@@ -322,7 +332,7 @@ def _load_context(comment, *, activity_doctype='Comment', lock=False, audit=None
         _fail('The approved mutation contract or service changed.')
     return SimpleNamespace(document=document, project=project, mapping=mapping, snapshot=snapshot, content=content,
         proof=proof, link=links[0], read=read, contract=contract, service=service, parsed=parsed,
-        raw_schema=raw_schema, hero_id=str(hero_id), marker=marker)
+        raw_schema=raw_schema, hero_id=str(hero_id), marker=marker, parent_binding=parent)
 
 
 def _read_project(ctx, client):
@@ -387,8 +397,8 @@ def _fingerprint(ctx, *, text=None, delivery=False, project_modified=None):
         ctx.project.modified if project_modified is None else project_modified,
         _activity_text(ctx.document, ctx.content) if text is None else text,
         ctx.mapping.name, ctx.mapping.mapping_revision, ctx.content, ctx.proof.fingerprint,
-        link, ctx.contract.name, ctx.contract.contract_revision, ctx.contract.contract_fingerprint,
-        ctx.service.query_document, vars(ctx.read.contract), ctx.read.service.query_document])
+        link, ([ctx.parent_binding.identity_key, ctx.parent_binding.revision] if getattr(ctx, 'parent_binding', None) else None), ctx.contract.name, ctx.contract.contract_revision, ctx.contract.contract_fingerprint,
+        ctx.service.query_document, vars(ctx.read.contract), ctx.read.service.query_document, *getattr(ctx.read, "approval", ())])
 
 
 def preview(comment, *, activity_doctype='Comment', client=None, delivery_project_stamp=None):
@@ -439,8 +449,7 @@ def candidates(project, *, require_mapping=True):
             if doctype == 'Comment' and not frappe.has_permission('Comment', 'write', doc=native): continue
             if frappe.get_all('HERO Integration Link', filters={'source_system': 'HERO', 'source_type': 'project_history',
                     'target_doctype': doctype, 'target_name': row.name}, pluck='name', limit_page_length=1): continue
-            if frappe.get_all('HERO Mutation Audit', filters={'request_fingerprint': _comment_scope(source, row.name, doctype)},
-                    pluck='name', limit_page_length=1): continue
+            if _activity_receipts(source, row.name, doctype): continue
             text = _activity_text(SimpleNamespace(**dict(row), doctype=doctype), content)
             if text: result.append({'name': row.name, 'activity_doctype': doctype, 'content': text, 'creation': row.creation})
     return {'comments': sorted(result, key=lambda row: str(row['creation']), reverse=True)}
@@ -460,7 +469,6 @@ def _reserve_project(ctx, audit):
             _fail('The Project has an unconfirmed outbound logbook activity; reconcile it before importing its logbook.')
         frappe.db.set_value('HERO Integration Link', marker.name,
             {'sync_status': 'Pending Review', 'conflict_detail': audit.correlation_id}, update_modified=False)
-    frappe.db.commit()
     return marker.name
 
 
@@ -477,7 +485,6 @@ def _record_response(ctx, prepared, history_id):
         'target_doctype': ctx.document.doctype, 'target_name': ctx.document.name, 'sync_status': 'Pending Review',
         'mapping_version': OUTBOUND_VERSION, 'source_payload_hash': _hash(prepared.text),
         'target_payload_hash': _hash(_activity_raw(ctx.document))}).insert(ignore_permissions=True)
-    frappe.db.commit()
     return link.name
 
 
@@ -508,70 +515,124 @@ def _verify_response(ctx, prepared, history_id, client):
 
 
 def send(comment, *, activity_doctype='Comment', fingerprint='', confirmed=False, client=None, mutation_client=None):
-    from hero_integration.api import _assert_mutation_execution_released, _reserve_mutation, _finalize_mutation
+    from hero_integration.api import _assert_mutation_execution_released
     from hero_integration.client.graphql import HeroGraphQLClient
     from hero_integration.client.graphql_mutation import HeroMutationClient
+    from hero_integration.services.execution_runtime import deliver_bound_intent
+    from hero_integration.services.frappe_writeback import object_write_scope
+    from hero_integration.services.mapping_contract_v1 import materialize_saved_mutation
     from hero_integration.services.writeback_source import validate_source
     _assert_mutation_execution_released()
-    ctx = _load_context(comment, activity_doctype=activity_doctype); config = validate_source(ctx.proof)
-    client = client or HeroGraphQLClient(config.endpoint, lambda: config.api_token, config.timeout_seconds, max_retries=0)
-    prepared = _prepare(ctx, client)
-    if confirmed not in (True, 1, '1', 'true') or not fingerprint or fingerprint != prepared.fingerprint:
+    ctx = _load_context(comment, activity_doctype=activity_doctype)
+    config = validate_source(ctx.proof)
+    client = client or HeroGraphQLClient(config.endpoint, lambda: validate_source(ctx.proof).api_token,
+                                         config.timeout_seconds, max_retries=0)
+    if confirmed not in (True, 1, '1', 'true') or not fingerprint or fingerprint != _fingerprint(ctx):
         _fail('The activity preview changed; review and confirm it again.')
-    audit = _reserve_mutation(operation_name=OPERATION, schema_fingerprint=ctx.snapshot.schema_fingerprint,
-        mapping_revision=int(ctx.mapping.mapping_revision), request_fingerprint=_comment_scope(ctx.proof.source_instance, comment, activity_doctype))
-    marker_name = None
-    attempted = False
-    try:
-        fresh = _load_context(comment, activity_doctype=activity_doctype, lock=True, audit=audit)
-        if _prepare(fresh, client).fingerprint != prepared.fingerprint:
+    source = ctx.proof.source_instance
+    proof = {"version": 4, "site": frappe.local.site, "source": source, "doctype": "Project", "name": ctx.project.name,
+             "object": object_write_scope(frappe.local.site, source, "Project", ctx.project.name),
+             "snapshot": ctx.snapshot.schema_fingerprint, "mapping_revision": int(ctx.mapping.mapping_revision),
+             "fingerprint": fingerprint, "activity_doctype": activity_doctype, "activity_name": comment}
+
+    def current(audit=None, receipt=None, *, lock=True):
+        fresh = _load_context(comment, activity_doctype=activity_doctype, lock=lock, audit=audit, receipt=receipt)
+        if _fingerprint(fresh) != fingerprint:
             _fail('The activity preview changed; review and confirm it again.')
-        marker_name = _reserve_project(fresh, audit)
-        # Both reservation commits released database locks. Prove all authority
-        # again, then hold the same Project lock used by the logbook importer.
-        fresh = _load_context(comment, activity_doctype=activity_doctype, lock=True, audit=audit)
+        validate_source(fresh.proof)
+        return fresh
+
+    def perform(audit, dispatch, ledger):
+        ledger.commit()
+        fresh = current(audit, lock=False)
         checked = _prepare(fresh, client)
-        if checked.fingerprint != prepared.fingerprint:
+        if checked.fingerprint != fingerprint:
             _fail('The activity preview changed; review and confirm it again.')
-        _assert_mutation_execution_released(); config = validate_source(fresh.proof)
-        transport = mutation_client or HeroMutationClient(config.endpoint, lambda: config.api_token, config.timeout_seconds)
-        from hero_integration.services.mapping_contract_v1 import materialize_saved_mutation
         request = materialize_saved_mutation(fresh.snapshot, fresh.service.query_document, checked.variables,
                                              request_scope=audit.correlation_id)
-        attempted = True
+        config = validate_source(fresh.proof)
+        transport = mutation_client or HeroMutationClient(config.endpoint, lambda: validate_source(fresh.proof).api_token,
+                                                           config.timeout_seconds)
+        # The marker and Dispatching receipt become durable together. No target row is locked during HTTP.
+        dispatch(lambda: _reserve_project(current(audit), audit))
         returned = transport.execute_once(request.document, request.variables)
         record = returned.get(OPERATION) if isinstance(returned, dict) else None
         identity = record.get('id') if isinstance(record, dict) else None
         if type(identity) is not int or identity <= 0 or returned.get('errors') or str(identity) in checked.history_ids:
             _fail('HERO did not confirm a new logbook identity.')
-        validate_source(fresh.proof)
-        receipt_name = _record_response(fresh, checked, identity)
-        # Known remote identity is durable; no further branch can create it again.
-        after = _load_context(comment, activity_doctype=activity_doctype, lock=True, audit=audit, receipt=receipt_name)
-        if _fingerprint(after) != prepared.fingerprint:
-            _fail('The local activity changed during sending; reconcile the created logbook entry.')
-        validate_source(after.proof)
+        audit.remote_result_id = str(identity)
+        audit.save(ignore_permissions=True)
+        ledger.commit()
+        current(audit)
+        receipt = _record_response(fresh, checked, identity)
+        ledger.commit()
+        after = current(audit, receipt, lock=False)
         _verify_response(after, checked, identity, client)
-        validate_source(after.proof)
-        frappe.db.set_value('HERO Integration Link', receipt_name,
-            {'sync_status': 'Synchronized', 'last_synced_on': frappe.utils.now_datetime()}, update_modified=False)
-        frappe.db.set_value('HERO Integration Link', marker_name,
-            {'sync_status': 'Synchronized', 'conflict_detail': ''}, update_modified=False)
-    except Exception:
-        frappe.db.rollback()
-        if marker_name and not attempted:
-            # No call to execute_once occurred. The activity remains reserved,
-            # while unrelated Project logbook imports may safely continue.
-            frappe.get_doc('Project', ctx.project.name, for_update=True)
-            marker = project_marker(ctx.proof.source_instance, ctx.project.name, lock=True)
-            if marker and marker.conflict_detail == audit.correlation_id:
-                frappe.db.set_value('HERO Integration Link', marker_name,
-                    {'sync_status': 'Synchronized', 'conflict_detail': ''}, update_modified=False)
-        _finalize_mutation(audit, 'Failed', 'Project activity result is not confirmed. No automatic retry; reconcile HERO and its Project logbook reservation.')
-        _fail('The logbook activity could not be confirmed; no automatic retry was performed. Reconcile the Project logbook reservation.')
-    _finalize_mutation(audit, 'Succeeded', 'Project activity created once; native Comment preserved and approved logbook readback verified.')
-    return {'status': 'SENT', 'comment': comment, 'activity_doctype': activity_doctype, 'project': ctx.project.name, 'hero_id': identity}
+        ledger.commit()
+        after = current(audit, receipt)
+        _confirm_links(receipt, after.marker.name)
+        return {'status': 'SENT', 'comment': comment, 'activity_doctype': activity_doctype, 'project': after.project.name,
+                'hero_id': identity, 'correlation_id': audit.correlation_id}
 
+    _, result = deliver_bound_intent(frappe, proof, operation=OPERATION,
+        fingerprint=_comment_scope(source, comment, activity_doctype), initial_check=current, perform=perform,
+        error_type=ProjectLogbookWritebackError)
+    return result
+
+
+def _confirm_links(receipt, marker):
+    frappe.db.set_value('HERO Integration Link', receipt,
+        {'sync_status': 'Synchronized', 'last_synced_on': frappe.utils.now_datetime()}, update_modified=False)
+    frappe.db.set_value('HERO Integration Link', marker, {'sync_status': 'Synchronized', 'conflict_detail': ''},
+                        update_modified=False)
+
+
+def reconcile_delivery(audit, proof, ledger, *, client=None):
+    """Verify a returned activity on its original Project, with read-only external I/O."""
+    from hero_integration import api
+    from hero_integration.client.graphql import HeroGraphQLClient
+    from hero_integration.services.project_logbook import _digest
+    from hero_integration.services.writeback_source import validate_source
+    if not audit.remote_result_id:
+        return {'status': 'REVIEW_REQUIRED', 'correlation_id': audit.correlation_id}
+    ctx_args = {'activity_doctype': proof['activity_doctype'], 'audit': audit}
+    filters = {'source_system': 'HERO', 'source_instance': proof['source'], 'source_type': 'project_history',
+               'target_doctype': proof['activity_doctype'], 'target_name': proof['activity_name']}
+
+    def context(lock):
+        names = frappe.db.get_values('HERO Integration Link', filters, 'name', for_update=lock, limit=2)
+        if len(names) > 1:
+            _fail('The saved logbook receipt cannot be reconciled automatically.')
+        name = names[0][0] if names else None
+        ctx = _load_context(proof['activity_name'], **ctx_args, lock=lock, receipt=name)
+        if (_fingerprint(ctx) != proof['fingerprint'] or ctx.project.name != proof['name']
+                or ctx.proof.source_instance != proof['source'] or not ctx.marker
+                or ctx.marker.sync_status != 'Pending Review' or ctx.marker.conflict_detail != audit.correlation_id):
+            _fail('The saved logbook receipt cannot be reconciled automatically.')
+        if name:
+            receipt = frappe.get_doc('HERO Integration Link', name, for_update=lock)
+            expected = _digest([proof['source'], ctx.hero_id, str(audit.remote_result_id)])
+            if (receipt.source_id != expected or receipt.sync_status != 'Pending Review'
+                    or receipt.mapping_version != OUTBOUND_VERSION or receipt.target_payload_hash != _hash(_activity_raw(ctx.document))
+                    or receipt.source_payload_hash != _hash(_activity_text(ctx.document, ctx.content))):
+                _fail('The saved logbook receipt cannot be reconciled automatically.')
+        return ctx, name
+
+    ctx, _ = context(False)
+    config = validate_source(ctx.proof)
+    reader = client or HeroGraphQLClient(config.endpoint, lambda: validate_source(ctx.proof).api_token,
+                                         config.timeout_seconds, max_retries=0)
+    prepared = SimpleNamespace(text=_activity_text(ctx.document, ctx.content))
+    ledger.commit()
+    _verify_response(ctx, prepared, audit.remote_result_id, reader)
+    ledger.commit()
+    ctx, name = context(True)
+    validate_source(ctx.proof)
+    if not name:
+        name = _record_response(ctx, prepared, audit.remote_result_id)
+    _confirm_links(name, ctx.marker.name)
+    api._finalize_mutation(audit, 'Succeeded', 'Existing logbook identity verified by approved readback.', commit=ledger.commit)
+    return {'status': 'Confirmed', 'correlation_id': audit.correlation_id, 'receipt': name, 'hero_mutations': 0}
 
 
 def reconcile_receipt(receipt_name, *, client=None):
@@ -580,27 +641,57 @@ def reconcile_receipt(receipt_name, *, client=None):
     from hero_integration.client.graphql import HeroGraphQLClient
     from hero_integration.services.project_logbook import _digest
     from hero_integration.services.writeback_source import validate_source
-    receipt = frappe.get_doc('HERO Integration Link', receipt_name, for_update=True)
-    if (receipt.source_system != 'HERO' or receipt.source_type != 'project_history'
-            or receipt.mapping_version != OUTBOUND_VERSION or receipt.sync_status != 'Pending Review'
-            or receipt.target_doctype not in {'Comment', 'Version'}):
-        _fail('The saved logbook receipt cannot be reconciled automatically.')
-    scope = _comment_scope(receipt.source_instance, receipt.target_name, receipt.target_doctype)
-    names = frappe.get_all('HERO Mutation Audit', filters={'operation_name': OPERATION, 'request_fingerprint': scope},
-                           pluck='name', limit_page_length=2)
-    if len(names) != 1: _fail('The saved logbook receipt cannot be reconciled automatically.')
-    audit = frappe.get_doc('HERO Mutation Audit', names[0], for_update=True)
-    if audit.status != 'Failed' or audit.operation_name != OPERATION or audit.request_fingerprint != scope:
-        _fail('The saved logbook receipt cannot be reconciled automatically.')
-    ctx = _load_context(receipt.target_name, activity_doctype=receipt.target_doctype, lock=True,
-                        audit=audit, receipt=receipt.name)
-    if (receipt.source_instance != ctx.proof.source_instance or ctx.marker is None
-            or ctx.marker.sync_status != 'Pending Review' or ctx.marker.conflict_detail != audit.correlation_id
-            or _hash(_activity_raw(ctx.document)) != receipt.target_payload_hash):
-        _fail('The saved logbook receipt cannot be reconciled automatically.')
+    def load_receipt(lock):
+        receipt = frappe.get_doc('HERO Integration Link', receipt_name, for_update=lock)
+        if (receipt.source_system != 'HERO' or receipt.source_type != 'project_history'
+                or receipt.mapping_version != OUTBOUND_VERSION or receipt.sync_status != 'Pending Review'
+                or receipt.target_doctype not in {'Comment', 'Version'}):
+            _fail('The saved logbook receipt cannot be reconciled automatically.')
+        scope = _comment_scope(receipt.source_instance, receipt.target_name, receipt.target_doctype)
+        names = frappe.get_all('HERO Mutation Audit', filters={'operation_name': OPERATION, 'request_fingerprint': scope},
+            or_filters=[['delivery_stage', 'is', 'not set'], ['delivery_stage', '!=', 'Not Sent']],
+            pluck='name', limit_page_length=2)
+        if len(names) != 1:
+            _fail('The saved logbook receipt cannot be reconciled automatically.')
+        audit = frappe.get_doc('HERO Mutation Audit', names[0], for_update=lock)
+        if audit.operation_name != OPERATION or audit.request_fingerprint != scope:
+            _fail('The saved logbook receipt cannot be reconciled automatically.')
+        return receipt, audit
+
+    def legacy_context(receipt, audit, lock):
+        if audit.status != 'Failed' or getattr(audit, 'bound_object_key', None):
+            _fail('The saved logbook receipt cannot be reconciled automatically.')
+        ctx = _load_context(receipt.target_name, activity_doctype=receipt.target_doctype, lock=lock,
+                            audit=audit, receipt=receipt.name)
+        if (receipt.source_instance != ctx.proof.source_instance or ctx.marker is None
+                or ctx.marker.sync_status != 'Pending Review' or ctx.marker.conflict_detail != audit.correlation_id
+                or _hash(_activity_raw(ctx.document)) != receipt.target_payload_hash):
+            _fail('The saved logbook receipt cannot be reconciled automatically.')
+        # Historical receipts may refer to activities excluded by a later display profile.
+        evidence = (_fingerprint(ctx, text=receipt.source_payload_hash), ctx.marker.name, ctx.hero_id,
+                    audit.name, audit.correlation_id, receipt.source_id, receipt.source_payload_hash,
+                    receipt.target_doctype, receipt.target_name, receipt.target_payload_hash)
+        return ctx, evidence
+
+    receipt, audit = load_receipt(False)
+    if getattr(audit, 'bound_object_key', None):
+        from hero_integration.api import reconcile_bound_writeback
+        result = reconcile_bound_writeback(audit.correlation_id)
+        return {**result, 'receipt': receipt_name, 'hero_mutations': 0}
+    ctx, evidence = legacy_context(receipt, audit, False)
     config = validate_source(ctx.proof)
-    client = client or HeroGraphQLClient(config.endpoint, lambda: config.api_token, config.timeout_seconds, max_retries=0)
+    client = client or HeroGraphQLClient(config.endpoint, lambda: validate_source(ctx.proof).api_token,
+                                         config.timeout_seconds, max_retries=0)
     remote = _read_project(ctx, client)
+    from frappe.exceptions import QueryDeadlockError
+    try:
+        receipt, audit = load_receipt(True)
+        ctx, locked_evidence = legacy_context(receipt, audit, True)
+    except QueryDeadlockError as error:
+        # MariaDB rejects a locking read if the caller's snapshot saw an older row.
+        raise ProjectLogbookWritebackError('The saved logbook receipt cannot be reconciled automatically.') from error
+    if locked_evidence != evidence:
+        _fail('The saved logbook receipt cannot be reconciled automatically.')
     from hero_integration.services.read_contract import value_at
     options = ctx.read.contract.adapter_options['logbook']
     rows = value_at(remote, options['path'])
@@ -614,11 +705,7 @@ def reconcile_receipt(receipt_name, *, client=None):
         _fail('The saved logbook receipt cannot be reconciled automatically.')
     validate_source(ctx.proof)
     # No commits here: caller owns one atomic transaction for both links and audit.
-    now = frappe.utils.now_datetime()
-    frappe.db.set_value('HERO Integration Link', receipt.name,
-        {'sync_status': 'Synchronized', 'last_synced_on': now}, update_modified=False)
-    frappe.db.set_value('HERO Integration Link', ctx.marker.name,
-        {'sync_status': 'Synchronized', 'conflict_detail': ''}, update_modified=False)
+    _confirm_links(receipt.name, ctx.marker.name)
     frappe.db.set_value('HERO Mutation Audit', audit.name, {'status': 'Succeeded',
         'detail': 'Existing durable logbook receipt verified by approved readback. Initial verification failed; no external retry performed.'})
     return {'status': 'RECONCILED', 'project': ctx.project.name, 'receipt': receipt.name, 'hero_mutations': 0}

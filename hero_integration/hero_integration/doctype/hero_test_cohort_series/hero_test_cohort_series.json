@@ -1,0 +1,52 @@
+{
+  "doctype": "DocType",
+  "name": "HERO Test Cohort Series",
+  "module": "HERO Integration",
+  "engine": "InnoDB",
+  "autoname": "hash",
+  "fields": [
+    {
+      "fieldname": "environment_id",
+      "label": "Test Environment",
+      "fieldtype": "Data",
+      "read_only": 1
+    },
+    {
+      "fieldname": "migration_type",
+      "label": "Migration Type",
+      "fieldtype": "Data",
+      "read_only": 1
+    },
+    {
+      "fieldname": "source_instance",
+      "label": "Source Instance",
+      "fieldtype": "Data",
+      "read_only": 1
+    },
+    {
+      "fieldname": "source_binding_revision",
+      "label": "Source Binding Revision",
+      "fieldtype": "Int",
+      "read_only": 1
+    },
+    {
+      "fieldname": "catalog_cursor_json",
+      "label": "Catalog selection checkpoint",
+      "fieldtype": "Long Text",
+      "read_only": 1
+    }
+  ],
+  "field_order": [
+    "environment_id",
+    "migration_type",
+    "source_instance",
+    "source_binding_revision",
+    "catalog_cursor_json"
+  ],
+  "permissions": [
+    {
+      "role": "System Manager",
+      "read": 1
+    }
+  ]
+}

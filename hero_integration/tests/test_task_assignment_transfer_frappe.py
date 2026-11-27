@@ -3,7 +3,6 @@ import json
 import os
 import unittest
 import threading
-import time
 from uuid import uuid4
 from types import SimpleNamespace
 from unittest.mock import patch
@@ -326,31 +325,37 @@ class TestTaskAssignmentTransfer(unittest.TestCase):
         old = self.state().todo
         frappe.db.commit()
         assign_to.add({'doctype': 'Task', 'name': self.task, 'assign_to': [self.users[0]]})
-        ready = threading.Event(); results = []
+        contested = threading.Event()
+        released = threading.Event()
+        results = []
         def worker():
             frappe.init(site=os.environ['HERO_TEST_PRIVATE_SITE']); frappe.connect(); frappe.set_user(self.users[0])
             try:
-                ready.set()
-                self.transfer()
-                frappe.db.commit(); results.append('OK')
+                frappe.db.sql('SET SESSION innodb_lock_wait_timeout=1')
+                try:
+                    self.transfer()
+                except frappe.QueryTimeoutError:
+                    frappe.db.rollback()
+                    contested.set()
+                    if not released.wait(10):
+                        raise TimeoutError('Local assignment was not released')
+                    self.transfer()
+                frappe.db.commit()
+                results.append('OK')
             except Exception as error:
-                frappe.db.rollback(); results.append(f'{type(error).__name__}: {error}')
-            finally: frappe.destroy()
-        thread = threading.Thread(target=worker); thread.start(); self.assertTrue(ready.wait(10))
-        waiting = False
-        for _ in range(100):
-            if frappe.db.sql('SELECT COUNT(*) FROM information_schema.INNODB_LOCK_WAITS')[0][0]:
-                waiting = True
-                break
-            if not thread.is_alive():
-                break
-            time.sleep(.05)
-        frappe.db.commit(); thread.join(timeout=30)
+                frappe.db.rollback()
+                results.append(repr(error))
+            finally:
+                frappe.destroy()
+        thread = threading.Thread(target=worker)
+        thread.start()
+        waited = contested.wait(10)
+        frappe.db.commit()
+        released.set()
+        thread.join(timeout=30)
         self.assertFalse(thread.is_alive())
-        self.assertTrue(waiting or (len(results) == 1 and results[0].startswith('QueryDeadlockError:')),
-                        f'No InnoDB lock wait or deadlock observed: {results}')
-        self.assertTrue(results == ['OK'] or results[0].startswith('QueryDeadlockError:'))
-        print(f'LOCAL_TRANSFER_RACE lock_wait={int(waiting)} results={results}', flush=True)
+        self.assertTrue(waited, results)
+        self.assertEqual(results, ['OK'])
         frappe.db.rollback()
         self.assertEqual((self.state().state, self.state().todo), ('LOCAL', old))
         self.assertEqual(frappe.get_doc('ToDo', old).status, 'Open')

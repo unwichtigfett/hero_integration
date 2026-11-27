@@ -29,7 +29,7 @@ def mutation_snapshot(*, include_id=False):
     from hero_integration.services.graphql_graph import analyze_snapshot
     from hero_integration.services.mapping_contract_v1 import StoredSnapshot
     identity = 'id:Int! ' if include_id else ''
-    raw = introspection_from_schema(build_schema('type Query { contacts:[Contact] } '
+    raw = introspection_from_schema(build_schema('type Query { contacts(ids:[Int!]):[Contact] } '
         'type Contact { id:ID is_deleted:Boolean is_contact_person:Boolean full_name:String } input ContactInput { ' + identity + 'full_name:String } '
         'type Mutation { update_contact(contact:ContactInput):Contact }'))
     return StoredSnapshot('writeback', raw, analyze_snapshot(raw).fingerprint, 'hero')
@@ -41,14 +41,28 @@ def configuration(**changes):
 
 
 def context():
-    request = NS(protocol_field_name='contacts', document='query Read { contacts { id is_deleted is_contact_person full_name } }', variables={},
-                 result_bindings=[NS(selection_path=(path,)) for path in ('id','is_deleted','is_contact_person','full_name')])
-    plan = NS(request=request, source_instance='hero', sealed=NS(contract=NS(identity_path='id', records_path='contacts', definition_ids=('d',), mapping_revision=1)))
+    from hero_integration.services.mapping_contract_v1 import QueryAdapter, QueryDraft, SnapshotAdapter
+    from hero_integration.services.migration_engine import SealedRead
+    from hero_integration.services.read_contract import ReadContract
+    from hero_integration.services.sync_engine import MaterializedReadPlan
+    from hashlib import sha256
+
+    snapshot = mutation_snapshot()
+    request = QueryAdapter().materialize(SnapshotAdapter().adapt(snapshot),
+        QueryDraft("Read", "contacts", "contacts", ("id", "is_deleted", "is_contact_person", "full_name"), {}))
+    contract = ReadContract("service", 1, "mapping", 1, "HeroCustomers", "contacts", "id", ("d",), {}, 10)
+    plan = MaterializedReadPlan(SealedRead(contract, request.document, snapshot.fingerprint,
+                                           sha256(request.document.encode()).hexdigest()), request, "hero")
+    from hero_integration.services.direct_mapping import MappingSpec
+    from hero_integration.services.mapping_runtime import MappingPlan
+    rule = MappingSpec("HeroCustomers", "full_name", "Customer", "customer_name", "string|null",
+                       "Record Name", "Trim", definition_id="d")
     value = 'Expected'
-    return {'snapshot': mutation_snapshot(), 'source_context': SourceContext('hero', 7, endpoint_fingerprint('https://example.invalid/graphql', 'hero')),
+    return {'rule': rule, 'read_plan': MappingPlan("HeroCustomers", (rule,)), 'variable': 'contact', 'fieldtype': 'Data',
+            'snapshot': mutation_snapshot(), 'source_context': SourceContext('hero', 7, endpoint_fingerprint('https://example.invalid/graphql', 'hero')),
             'mapping': {'target': {'operation': 'update_contact', 'argument': 'contact', 'field': 'full_name'}},
-            'parent': NS(object_type='Contact', source_instance='hero', external_object_id='42'),
-            'binding': NS(target_doctype='Customer', source_field='full_name', acknowledged_source_fingerprint=None, mapping_definition_id='d', mapping_revision=1), 'readback_plan': plan,
+            'parent': NS(object_type='Contact', target_doctype='Customer', source_instance='hero', external_object_id='42'),
+            'binding': NS(target_doctype='Customer', source_field='full_name', acknowledged_source_fingerprint=state_fingerprint('Old', present=True), mapping_definition_id='d', mapping_revision=1), 'readback_plan': plan,
             'intent': NS(local_fingerprint=state_fingerprint(value, present=True))}
 
 
@@ -57,17 +71,17 @@ class TestVerifiedWriteback(TestCase):
         for change in ('type', 'source', 'path', 'selection'):
             c = context()
             if change == 'type': c['parent'].object_type = 'ProjectMatch'
-            if change == 'source': c['readback_plan'].source_instance = 'other'
+            if change == 'source': c['readback_plan'] = replace(c['readback_plan'], source_instance='other')
             if change == 'path': c['binding'].source_field = 'email'
-            if change == 'selection': c['readback_plan'].request.result_bindings.pop()
+            if change == 'selection': c['readback_plan'] = replace(c['readback_plan'], request=replace(c['readback_plan'].request, result_bindings=c['readback_plan'].request.result_bindings[:1]))
             with self.subTest(change=change), self.assertRaises(WritebackContractError):
                 validate_readback(c, c['readback_plan'])
 
     def test_project_requires_approved_lifecycle_projection(self):
         ctx = self._project_context()
         plan = ctx["readback_plan"]
-        plan.request.result_bindings = [path for path in plan.request.result_bindings
-                                        if path.selection_path != ("is_deleted",)]
+        plan = replace(plan, request=replace(plan.request, result_bindings=tuple(
+            path for path in plan.request.result_bindings if path.selection_path != ("is_deleted",))))
         with self.assertRaises(WritebackContractError):
             validate_readback(ctx, plan)
 
@@ -78,21 +92,28 @@ class TestVerifiedWriteback(TestCase):
 
         ctx = context()
         raw = introspection_from_schema(build_schema(
-            "type Query { project_matches:[Project] } "
+            "type Query { project_matches(ids:[Int!]):[Project] } "
             "type Project { id:ID is_deleted:Boolean partner_notes:String } "
             "input ProjectMatchInput { id:Int! partner_notes:String } "
             "type Mutation { update_project_match(project_match:ProjectMatchInput):Project }"))
         ctx["snapshot"] = StoredSnapshot("project", raw, analyze_snapshot(raw).fingerprint, "hero")
         ctx["mapping"]["target"] = {"operation": "update_project_match", "argument": "project_match",
                                     "field": "partner_notes"}
-        ctx["parent"].object_type = "ProjectMatch"
+        from hero_integration.services.mapping_contract_v1 import QueryAdapter, QueryDraft, SnapshotAdapter
+        from hero_integration.services.migration_engine import SealedRead
+        from hero_integration.services.read_contract import ReadContract
+        from hero_integration.services.sync_engine import MaterializedReadPlan
+        from hashlib import sha256
+        ctx["parent"].object_type = ctx["parent"].target_doctype = "Project"
         ctx["parent"].external_object_id = identity
         ctx["binding"].target_doctype = "Project"
         ctx["binding"].source_field = "partner_notes"
-        plan = ctx["readback_plan"]
-        plan.request.protocol_field_name = plan.sealed.contract.records_path = "project_matches"
-        plan.request.document = "query Read { project_matches { id is_deleted partner_notes } }"
-        plan.request.result_bindings = [NS(selection_path=(key,)) for key in ("id", "is_deleted", "partner_notes")]
+        request = QueryAdapter().materialize(SnapshotAdapter().adapt(ctx["snapshot"]),
+            QueryDraft("Read", "project_matches", "project_matches", ("id", "is_deleted", "partner_notes"), {}))
+        contract = ReadContract("service", 1, "mapping", 1, "HeroProjectMatches", "project_matches", "id", ("d",), {}, 10)
+        ctx["readback_plan"] = MaterializedReadPlan(SealedRead(contract, request.document, ctx["snapshot"].fingerprint,
+            sha256(request.document.encode()).hexdigest()), request, "hero")
+        ctx["variable"] = "project_match"
         return ctx
 
     def test_project_preflight_blocks_unverified_lifecycle_or_uid_before_transport(self):
@@ -140,7 +161,8 @@ class TestVerifiedWriteback(TestCase):
         reader = Mock(query=Mock(return_value={'contacts': [{'is_contact_person': False, 'is_deleted': False, 'id': '42', 'full_name': 'Expected'}]}))
         result = verify_readback(c, reader, {'contact': {'id': 42, 'full_name': 'Expected'}})
         self.assertEqual(result, state_fingerprint('Expected', present=True))
-        reader.query.assert_called_once_with(c['readback_plan'].request.document, {})
+        reader.query.assert_called_once()
+        self.assertIn("ids: [42]", reader.query.call_args.args[0])
 
     def test_null_false_and_zero_are_distinct_and_errors_are_not_success(self):
         c = context()
@@ -154,7 +176,7 @@ class TestVerifiedWriteback(TestCase):
         c = context(); del c['readback_plan']
         with patch('hero_integration.client.graphql_mutation.HeroMutationClient') as mutation:
             with self.assertRaises(RuntimeError):
-                api._SyncHeroTransport(c, NS(correlation_id='audit')).execute_once(MUTATION, {})
+                api._SyncHeroTransport(c, NS(correlation_id='audit'), before_dispatch=lambda: None).execute_once(MUTATION, {})
         mutation.assert_not_called()
 
     def test_transport_preserves_binding_when_readback_fails_and_never_retries_mutation(self):
@@ -166,7 +188,7 @@ class TestVerifiedWriteback(TestCase):
             mutation.return_value.execute_once.return_value = {'update_contact': {'id': '42'}}
             read.return_value.query.return_value = {'contacts': [{'is_contact_person': False, 'is_deleted': False, 'id': '42', 'full_name': 'Old'}]}
             with self.assertRaises(WritebackContractError):
-                api._SyncHeroTransport(c, NS(correlation_id='audit')).execute_once(MUTATION, {'contact': {'full_name': 'Expected'}})
+                api._SyncHeroTransport(c, NS(correlation_id='audit'), before_dispatch=lambda: None).execute_once(MUTATION, {'contact': {'full_name': 'Expected'}})
             mutation.return_value.execute_once.assert_called_once()
 
 
@@ -185,7 +207,7 @@ class TestVerifiedWriteback(TestCase):
                     {'contacts': [{'is_contact_person': False, 'is_deleted': False, 'id': '42', 'full_name': remote_before}]},
                     {'contacts': [{'is_contact_person': False, 'is_deleted': False, 'id': '42', 'full_name': 'Expected'}]},
                 ]
-                transport = api._SyncHeroTransport(c, NS(correlation_id='audit'))
+                transport = api._SyncHeroTransport(c, NS(correlation_id='audit'), before_dispatch=lambda: None)
                 if succeeds:
                     ack = transport.execute_once(MUTATION, {'contact': {'full_name': 'Expected'}})
                     self.assertTrue(ack.verified)
@@ -206,7 +228,7 @@ class TestVerifiedWriteback(TestCase):
                 patch('hero_integration.client.graphql.HeroGraphQLClient') as read:
             read.return_value.query.return_value = {'contacts': []}
             with self.assertRaises(WritebackContractError):
-                api._SyncHeroTransport(c, NS(correlation_id='audit')).execute_once(MUTATION, {})
+                api._SyncHeroTransport(c, NS(correlation_id='audit'), before_dispatch=lambda: None).execute_once(MUTATION, {})
             mutation.assert_not_called()
 
 
@@ -219,7 +241,7 @@ class TestVerifiedWriteback(TestCase):
                     patch('hero_integration.client.graphql_mutation.HeroMutationClient') as mutation, \
                     patch('hero_integration.client.graphql.HeroGraphQLClient') as reader:
                 with self.assertRaises(WritebackContractError):
-                    api._SyncHeroTransport(context(), NS(correlation_id='audit')).execute_once(MUTATION, {})
+                    api._SyncHeroTransport(context(), NS(correlation_id='audit'), before_dispatch=lambda: None).execute_once(MUTATION, {})
                 reader.assert_not_called(); mutation.assert_not_called()
 
 
@@ -253,6 +275,7 @@ class TestOutboundConflictGate(TestCase):
 
     def test_acknowledgment_for_a_different_local_state_is_rejected(self):
         fixture = fixtures.TestSync(); fixture.setUp()
+        fixture.acknowledge()
         intent = OutboundIntent(fixture.binding, 1, FP, 'a'*64, True, 'mutation', {})
         transport = Transport(OutboundAck(True, 'e', 'c'*64, 'b'*64))
         with self.assertRaises(SyncConflict):

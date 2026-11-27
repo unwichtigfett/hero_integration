@@ -45,12 +45,12 @@
     const add = (node, ...children) => node.append(...clean(children));
 
     function errorMessage(error) {
-        if (typeof error?.message === "string" && error.message) return diagnostic(error.message);
         try {
             const messages = JSON.parse(error?._server_messages || error?.responseJSON?._server_messages || "[]");
             const first = messages.map((item) => typeof item === "string" ? JSON.parse(item) : item).find(Boolean);
             if (first?.message) return diagnostic(first.message);
         } catch (_) { /* not JSON */ }
+        if (typeof error?.message === "string" && error.message) return diagnostic(error.message);
         return tr("The server rejected the request. Check the server log for details.");
     }
 
@@ -144,6 +144,15 @@
         return input;
     }
 
+    function monitorRequestId() {
+        if (typeof crypto.randomUUID === "function") return crypto.randomUUID();
+        const bytes = crypto.getRandomValues(new Uint8Array(16));
+        bytes[6] = (bytes[6] & 0x0f) | 0x40;
+        bytes[8] = (bytes[8] & 0x3f) | 0x80;
+        const hex = Array.from(bytes, value => value.toString(16).padStart(2, "0")).join("");
+        return [hex.slice(0, 8), hex.slice(8, 12), hex.slice(12, 16), hex.slice(16, 20), hex.slice(20)].join("-");
+    }
+
     function mount(page) {
         page.main.empty().addClass("hero-integration-ui");
         const host = page.main.get(0);
@@ -178,8 +187,18 @@
         function renderSubscription() {
             const svc = state.data.service;
             const on = svc.allowed && !svc.paused;
-            const active = on && svc.scheduler_active;
-            const label = svc.allowed && !svc.scheduler_active ? "Scheduler disabled" : !svc.allowed ? "Polling is off in Settings" : svc.mode === "MONITOR" ? "Monitor only: reads and reports, no data changes" : "Polling / Update";
+            const active = svc.running;
+            let label = "Waiting for the next scheduled run";
+            if (active) label = "Running";
+            else if (svc.orphaned_run) label = "Interrupted run awaiting recovery";
+            else if (!svc.allowed) label = "Polling is off in Settings";
+            else if (svc.paused) label = "Paused";
+            else if (!svc.scheduler_active) label = "Scheduler disabled";
+            else if (svc.plan_blocker) label = svc.plan_blocker;
+            else if (svc.unsupported && svc.unsupported.length) label = svc.unsupported.join(", ");
+            else if (svc.writeback_job === "queued") label = "Writeback queued";
+            else if (svc.writeback_job === "unavailable") label = "Worker queue unavailable";
+            else if (svc.mode === "MONITOR") label = "Monitor only: reads and reports, no data changes";
             const button = el("button", {type: "button", role: "switch", class: "hero-sync-global", "aria-checked": on ? "true" : "false", disabled: (!svc.allowed || state.busy) || undefined,
                 title: tr(svc.allowed ? "Switches automatic processing on or off. Polling settings stay unchanged." : "Choose a polling mode under Settings first."),
                 onclick: () => setService({enabled: on ? 0 : 1})}, el("span", {class: "hero-sync-dot", "aria-hidden": "true"}), tr(on ? "Sync on" : "Sync off"));
@@ -198,11 +217,11 @@
             const cards = actionAreas().map((area) => {
                 const running = Boolean(area.running_run);
                 const blockedByOther = Boolean(activeRun) && !running;
-                const waiting = Boolean(state.data.manual_prerequisite) && area.key !== "full" && area.key !== state.data.manual_prerequisite;
+                const waiting = state.data.manual_start_blockers?.[area.key];
                 const button = el("button", {type: "button", class: "hero-sync-action", "data-area": area.key,
                     disabled: (waiting || running || blockedByOther || !area.ready || state.busy) || undefined,
-                    title: waiting ? tr("Migrate Employees first and Contacts second") : running ? tr("This area is running.") : blockedByOther ? format("Run {0} is still in progress.", activeRun.name) : area.ready ? "" : tr(area.blocker),
-                    onclick: () => startArea(area)}, tr(waiting ? "Waiting" : running ? "Running …" : state.data.manual_prerequisite ? "Start" : area.button));
+                    title: waiting ? tr(waiting) : running ? tr("This area is running.") : blockedByOther ? format("Run {0} is still in progress.", activeRun.name) : area.ready ? "" : tr(area.blocker),
+                    onclick: () => startArea(area)}, tr(waiting ? "Waiting" : running ? "Running …" : area.button));
                 const scope = area.scope || {};
                 return el("article", {class: `hero-sync-card ${state.selectedArea === area.key ? "is-selected" : ""}`, "data-area": area.key},
                     el("button", {type: "button", class: "hero-sync-card-title", title: tr("Show function details"), onclick: () => { state.selectedArea = area.key; state.tab = "details"; renderManual(); renderWork(); }},
@@ -213,16 +232,16 @@
                         scope.object_count ? el("span", {text: plural(scope.field_count, "field", "fields")}) : null),
                     el("div", {class: "hero-sync-card-block"}, el("span", {class: "hero-sync-caption", text: tr("Last successful")}), el("span", {text: formatDateTime(area.last_successful)})),
                     area.ready ? null : el("p", {class: "hero-sync-card-blocker", text: tr("Not ready: approved read service missing.")}),
+                    waiting ? el("p", {class: "hero-sync-card-blocker", text: tr(waiting)}) : null,
                     button);
             });
             put(manual, 
                 el("div", {class: "hero-sync-section-head"}, el("h3", {id: "hero-sync-manual-title", text: tr("Manual Actions")}), el("span", {text: tr("Start or update migrations for individual data areas")})),
-                state.data.manual_prerequisite ? el("p", {class: "hero-sync-error", role: "status", text: tr("Migrate Employees first and Contacts second")}) : null,
                 el("div", {class: "hero-sync-cards"}, cards));
         }
 
         function startArea(area) {
-            const verb = state.data.manual_prerequisite || area.button === "Start" ? "Start" : "Update";
+            const verb = area.button === "Start" ? "Start" : "Update";
             const question = area.confirm
                 ? format("{0} {1}? {2}", tr(verb), tr(area.action_label), tr(area.description))
                 : format("{0} {1}? This migrates the object fields of the active mapping for {2} from HERO into Frappe.", tr(verb), tr(area.action_label), tr(area.label));
@@ -259,6 +278,12 @@
                 el("div", {class: "hero-sync-service-grid"},
                     el("div", {class: "hero-sync-sub hero-sync-sub-areas"}, el("h3", {text: tr("Sync Services")}), el("p", {class: "hero-sync-hint", text: tr("Enable or disable synchronization per area.")}), switches, monitorNote,
                         el("div", {class: "hero-sync-detail-actions"},
+                            svc.mode === "MONITOR" ? el("button", {type: "button", class: "hero-sync-small",
+                                "data-action": "manual-monitor-test", disabled: state.busy || !state.data.testing_enabled,
+                                title: tr(state.data.testing_enabled ? "Review the approved read stream" : "Enable testing under Settings"),
+                                onclick: reviewMonitor, text: tr("Manual MONITOR test")}) : null,
+                            svc.mode === "MONITOR" && !state.data.testing_enabled
+                                ? el("span", {class: "hero-sync-hint", text: tr("Enable testing under Settings")}) : null,
                             el("button", {type: "button", class: "hero-sync-small", onclick: showSyncEvidence, text: tr("Execution status")}),
                             svc.mode === "OFF" ? el("button", {type: "button", class: "hero-sync-small", disabled: state.busy,
                                 onclick: reviewBoundSync, text: tr("Compare bound objects once")}) : null)),
@@ -301,6 +326,33 @@
             }
         }
 
+        async function reviewMonitor() {
+            try {
+                const source = state.data.source_instance;
+                const revision = state.data.source_revision;
+                const limit = state.data.test_limit;
+                const plan = await call("runtime_plan_status", {source_instance: source, include_monitor: 1});
+                if (plan.state !== "APPROVED") throw new Error(tr("An approved runtime plan is required."));
+                if (!state.data.service.polled_sources.includes(plan.monitor_operation))
+                    throw new Error(tr("The approved MONITOR stream is not enabled."));
+                const approval = {request_id: monitorRequestId(), plan_key: plan.plan_key,
+                    expected_plan_generation: plan.generation, expected_source_revision: revision,
+                    operation: plan.monitor_operation, expected_limit: limit, confirmed: 1};
+                const details = [source, plan.monitor_operation, plan.graphql_service, plan.graphql_mapping,
+                    plan.schema_snapshot, plan.generation].map(value => frappe.utils.escape_html(String(value))).join(" · ");
+                frappe.confirm(format("Observe up to {0} previously unselected records in this MONITOR stream? {1}",
+                    limit, details), async () => {
+                    state.busy = true; renderAll();
+                    try {
+                        const result = await call("start_monitor_test", approval, "POST");
+                        say(format("MONITOR {0}: {1}/{2} selected, {3} observed, {4} conflicts. Cohort {5}.",
+                            result.run, result.selected, result.limit, result.processed, result.conflicts, result.cohort_digest));
+                    } catch (error) { say(error.message, "error"); }
+                    finally { state.busy = false; await refresh(); }
+                });
+            } catch (error) { say(error.message, "error"); }
+        }
+
         async function reviewBoundSync() {
             const source = state.data.source_instance;
             const revision = state.data.source_revision;
@@ -312,15 +364,15 @@
                 }
                 const approval = {request_id: crypto.randomUUID(), plan_key: plan.plan_key,
                     expected_plan_generation: plan.generation, expected_source_revision: revision,
-                    scope: "BOUND_OBJECTS", confirmed: 1};
+                    scope: "BOUND_OBJECTS", confirmed: 1, expected_limit: state.data.test_limit};
                 const details = [source, plan.graphql_service, plan.graphql_mapping, plan.generation]
                     .map(value => frappe.utils.escape_html(String(value))).join(" · ");
-                frappe.confirm(format("Compare and update up to 50 existing bound objects? {0}", details), async () => {
+                frappe.confirm(format("Compare and update up to {0} existing bound objects? {1}", state.data.test_limit, details), async () => {
                     state.busy = true; renderAll();
                     try {
                         const result = await call("start_sync_once", approval, "POST");
-                        say(format("Run {0}: {1}. Reserved {2}/50, processed {3}, skipped {4}.",
-                            result.run, result.status, result.reserved, result.processed, result.skipped));
+                        say(format("Run {0}: {1}. Reserved {2}/{3}, processed {4}, skipped {5}.",
+                            result.run, result.status, result.reserved, result.limit, result.processed, result.skipped));
                     } catch (error) {
                         say(error.message, "error");
                     } finally {
@@ -356,7 +408,8 @@
                     el("div", {class: "hero-sync-metrics"}, actionAreas().filter((area) => area.key in records).map((area) => metric(area.label, records[area.key])))),
                 el("div", {class: "hero-sync-states-group"},
                     el("div", {class: "hero-sync-section-head"}, el("h3", {text: tr("Polling")}), el("span", {text: format("Last {0} days", polling.period_days)})),
-                    el("div", {class: "hero-sync-metrics"}, metric("Runs", polling.runs), metric("Pass", polling.pass, "ok"), metric("Fail", polling.fail, polling.fail ? "error" : ""),
+                    el("div", {class: "hero-sync-metrics"}, metric("Runs", polling.runs), metric("Pass", polling.pass, "ok"),
+                        metric("Of which: partial inventory", polling.partial_inventory || 0), metric("Fail", polling.fail, polling.fail ? "error" : ""),
                         metric("Running", polling.running || 0), metric("Conflicts", polling.conflicts || 0),
                         metric("Cancelled", polling.cancelled || 0), metric("Incomplete", polling.incomplete), metric("Skipped", polling.skipped)),
                     readonly("Status", tr(polling.last_status || "Not started")),
@@ -367,12 +420,13 @@
         const TABS = [["history", "Runtime History"], ["details", "Function Details"], ["pending", "Pending relationships"], ["conflicts", "Conflicts"]];
         function renderWork() {
             const tabs = el("div", {class: "hero-sync-tabs", role: "tablist"}, TABS.map(([key, label]) =>
-                el("button", {type: "button", role: "tab", class: "hero-sync-tab", "aria-selected": state.tab === key ? "true" : "false",
+                el("button", {type: "button", role: "tab", class: "hero-sync-tab", "aria-selected": (state.tab === key || (key === "conflicts" && state.tab === "reviews")) ? "true" : "false",
                     onclick: () => { state.tab = key; renderWork(); loadTab(); }, text: tr(label)})));
             const main = el("div", {class: "hero-sync-work-main"}), side = el("aside", {class: "hero-sync-work-side", "aria-live": "polite"});
             if (state.tab === "history") renderHistory(main, side);
             else if (state.tab === "details") renderDetails(main, side);
             else if (state.tab === "pending") renderPending(main, side);
+            else if (state.tab === "reviews") renderReviews(main, side);
             else renderConflicts(main, side);
             put(work, tabs, el("div", {class: "hero-sync-work-body"}, main, side));
         }
@@ -443,7 +497,7 @@
                 const body = el("tbody", {}, data.rows.map((row) => el("tr", {class: row.name === state.selectedRun ? "is-selected" : ""},
                     el("td", {class: "hero-sync-mono", text: row.name}),
                     el("td", {text: tr(row.area)}),
-                    el("td", {}, statusBadge(row.state)),
+                    el("td", {}, statusBadge(row.display_state || row.state)),
                     el("td", {text: progressText(row)}),
                     el("td", {class: "is-optional", text: `${number(row.created_records)} / ${number(row.processed)}`}),
                     el("td", {text: formatDateTime(row.started_on || row.creation)}),
@@ -461,18 +515,33 @@
             if (!state.selectedRun) { add(side, el("p", {class: "hero-sync-empty", text: tr("Select a run to view details.")})); return; }
             if (!run || run.name !== state.selectedRun) { add(side, el("p", {class: "hero-sync-hint", text: tr("Loading run details …")})); return; }
             const facts = [
-                ["Action", tr(run.area)], ["Status", tr(run.state)], ["Mode", tr(run.mode)], ["Source instance", run.source_instance || "—"],
+                ["Action", tr(run.area)], ["Status", tr(run.display_state || run.state)], ["Mode", tr(run.mode)], ["Source instance", run.source_instance || "—"],
                 ["Started", formatDateTime(run.started_on)], ["Finished", formatDateTime(run.finished_on)],
                 ["Duration", run.started_on ? formatDuration(run.started_on, run.finished_on) : "—"],
                 ["Processed", number(run.processed)], ["Created", number(run.created_records)], ["Updated or unchanged", number(run.skipped_records)], ["Conflicts", number(run.conflict_records)],
                 ["Read service", run.graphql_service || "—"], ["Mapping version", run.graphql_mapping ? `${run.graphql_mapping} · rev. ${run.mapping_revision || 0}` : "—"],
             ];
+            if (run.relationships) {
+                facts.push(["Waiting for dependencies", number(run.relationships.Waiting || 0)],
+                    ["Relationship conflicts", number(run.relationships.Conflict || 0)]);
+            }
             if (run.customer_phase_state) facts.push(["Contacts phase", phaseSummary(run.customer_phase_state, run.customer_phase_processed)]);
             if (run.project_phase_state && run.action === "Project Migration") facts.push(["Projects phase", phaseSummary(run.project_phase_state, run.project_phase_processed)]);
             if (Number(run.testing_enabled)) {
                 facts.push(["Testing", testingSummary(run)]);
 
-                facts.push(...testingAreaSummaries(run));
+                if (run.cohort) {
+                    const c = run.cohort;
+                    facts.push(["Frozen cohort", c.cohort_digest || "—"], ["Primary record type", c.main_type || "—"],
+                        ["Selected primary records", number(c.selected)], ["Processed primary records", number(c.processed)],
+                        ["Failed primary records", number(c.failed)], ["Cohort conflicts", number(c.conflicts)],
+                        ["Missing relationships", number(c.missing)]);
+                    for (const [type, count] of Object.entries(c.dependencies)) {
+                        facts.push(["Dependent objects", type + " · " + number(count)]);
+                    }
+                } else {
+                    facts.push(...testingAreaSummaries(run));
+                }
             }
             const actions = el("div", {class: "hero-sync-detail-actions"},
                 run.can_cancel ? el("button", {type: "button", class: "hero-sync-small", text: tr("Cancel"), onclick: () => runAction("cancel_run", run, tr("Cancel this run at the next safe point? Records already written stay in place."))}) : null,
@@ -558,13 +627,118 @@
             state.busy = false;
             if (completed === rows.length) say(format("{0} decisions saved. Conflicts marked for recheck are checked on the next synchronization.", completed), "ok");
             await loadConflicts();
+            if (state.tab === "reviews") await loadReviews(state.reviewStart || 0);
+        }
+
+        const reviewCall = (method, args, type = "GET") => new Promise((resolve, reject) => {
+            frappe.call({method: "hero_integration.services.review_queue." + method, args, type,
+                callback: res => resolve(res.message), error: err => reject(new Error(errorMessage(err)))
+            }).catch?.(err => reject(new Error(errorMessage(err))));
+        });
+
+        async function loadReviews(start = 0) {
+            state.reviewStart = start;
+            const ticket = (state.reviewTicket || 0) + 1;
+            state.reviewTicket = ticket;
+            try {
+                const data = await reviewCall("list_open", {start, page_size: PAGE_SIZE});
+                if (ticket !== state.reviewTicket) return;
+                if (!data.rows.length && start && data.total) return loadReviews(Math.floor((data.total - 1) / PAGE_SIZE) * PAGE_SIZE);
+                state.reviews = data;
+            } catch (err) {
+                if (ticket !== state.reviewTicket) return;
+                state.reviews = null;
+                say(err.message, "error");
+            }
+            if (state.tab === "reviews") renderWork();
+        }
+
+        function renderReviews(main, side) {
+            const data = state.reviews;
+            add(main, el("h3", {text: tr("Open conflicts and relationships")}));
+            add(side, el("button", {type: "button", text: tr("Reload"), onclick: () => loadReviews(state.reviewStart || 0)}));
+            if (!data) { add(main, el("p", {text: tr("Loading …")})); return; }
+            if (!data.rows.length) { add(main, el("p", {text: tr("No open conflicts.")})); return; }
+            add(main, el("div", {class:"hero-sync-table-wrap"}, el("table", {class:"hero-sync-table"},
+                el("thead", {}, el("tr", {}, ["HERO ID","Area","Problem","Action"].map(k=>el("th",{scope:"col",text:tr(k)})))),
+                el("tbody", {}, data.rows.map(row => el("tr", {},
+                    el("td", {text:row.source_id}), el("td", {text:tr(row.operation)}),
+                    el("td", {text:diagnostic(row.detail || "Waiting for relationship")}),
+                    el("td", {}, el("button", {type:"button",class:"hero-sync-small",text:tr("Review and correct"),
+                        onclick: () => {
+                            if (row.kind === "field") return frappe.set_route("Form","HERO Sync Change Event",row.name);
+                            if (row.kind === "link") return openConflictReport(row);
+                            return openRelationship(row.name);
+                        }}))))))),
+                pager(data.start,data.total,data.rows.length,loadReviews));
+        }
+
+        async function openRelationship(name) {
+            let item;
+            try { item = await reviewCall("review",{name}); }
+            catch (err) { say(err.message,"error"); return; }
+            const dialog = el("dialog",{class:"hero-sync-report","aria-label":tr("Review and correct")});
+            const body = el("div",{class:"hero-sync-report-body"});
+            const message = el("p",{role:"status","aria-live":"polite"});
+            const actions = el("footer",{class:"hero-sync-report-actions"});
+            const close = () => dialog.close();
+            const closeBtn = el("button",{type:"button",text:tr("Close"),onclick:close});
+            dialog.addEventListener("close",()=>dialog.remove());
+            add(dialog,el("header",{class:"hero-sync-report-head"},el("h3",{text:format("Review HERO {0}",item.source_id)})),body,actions);
+            add(body, ...item.details.filter(Boolean).map(detail=>el("p",{text:diagnostic(detail)})));
+            if (item.target) add(body,el("a",{href:frappe.utils.get_form_link(item.doctype,item.target),target:"_blank",rel:"noopener",
+                text:format("Edit {0} in ERPNext",item.target)}));
+            for(const doc of item.related) {
+                add(body,el("p",{},el("a",{href:frappe.utils.get_form_link(doc.doctype,doc.name),target:"_blank",rel:"noopener",
+                    text:format("Edit {0} in ERPNext",tr(doc.doctype)+" · "+doc.name)})));
+            }
+            let submitting=false;
+            async function save(values) {
+                if(submitting) return;
+                submitting=true; dialog.querySelectorAll("button").forEach(button=>button.disabled=true);
+                try {
+                    const result=await reviewCall("reconcile",{name,expected_modified:item.review_token,...values},"POST");
+                    close(); say(tr(result.status==="Resolved" ? "Conflict resolved." : "Rechecked. This relationship still needs review."), result.status==="Resolved"?"ok":"info");
+                    await loadReviews(state.reviewStart || 0);
+                    if(result.status!=="Resolved") await openRelationship(name);
+                } catch(err) { message.textContent=err.message; message.className="hero-sync-error"; }
+                finally { submitting=false; dialog.querySelectorAll("button").forEach(button=>button.disabled=false); }
+            }
+            for(const child of item.identities) {
+                const group=el("section",{},el("h4",{text:tr(child.doctype)+" · HERO "+(child.doctype==="Bank Account"?item.source_id:child.id)}));
+                const facts=el("dl",{class:"hero-sync-facts"});
+                const labels={first_name:"First Name",last_name:"Last Name",email_id:"Email",mobile_no:"Mobile No",
+                    phone:"Phone",salutation:"Salutation",iban:"IBAN",bank_name:"Bank Name",swift_number:"SWIFT Number",
+                    address_line1:"Street",pincode:"Postal Code",city:"City",country_code:"Country Code"};
+                for(const [field,value] of Object.entries(child.values)) add(facts,el("dt",{text:tr(labels[field] || field)}),el("dd",{text:value}));
+                add(group,facts);
+                if(child.doctype==="Bank Account") add(group,el("p",{text:tr("Check the IBAN and its owner in the source and in ERPNext before importing again.")}));
+                else add(group,el("button",{type:"button",text:tr(child.doctype==="Contact"?"Create as a separate contact":"Create as a separate address"),
+                    onclick:()=>{if(window.confirm(tr("Confirm that this HERO record is distinct from the existing ERPNext record?"))) save({distinct_child:child.id});}}));
+                add(body,group);
+            }
+            for(const address of item.addresses) {
+                const form=el("form",{},el("h4",{text:format(address.role==="primary"?"Primary HERO address {0}":"Additional HERO address {0}",address.id)}));
+                const street=el("input",{value:address.street || "",required:true,maxlength:140,readonly:!!address.street?.trim()});
+                const city=el("input",{value:address.city || "",required:true,maxlength:140,readonly:!!address.city?.trim()});
+                const reuse=el("input",{type:"checkbox"});
+                add(form,el("label",{},tr("Street"),street),el("label",{},tr("City"),city),
+                    el("span",{text:address.zipcode || ""}),el("label",{},reuse,tr("Link an exactly matching address of this customer if one exists")),el("button",{type:"submit",class:"hero-sync-small is-primary",text:tr("Save address in ERPNext and recheck")}));
+                form.addEventListener("submit",event=>{event.preventDefault();if(form.reportValidity()) save({address_id:address.id,street:street.value,city:city.value,reuse_exact:reuse.checked?1:0});});
+                add(body,form);
+            }
+            add(body,message);
+            if(item.operation==="HeroCustomers") add(actions,el("button",{type:"button",text:tr("Recheck customer relationship"),onclick:()=>save({})}));
+            else add(body,el("p",{text:tr("Correct the source or target and repeat the original import.")}));
+            add(actions,closeBtn);
+            frame.append(dialog); dialog.showModal();
         }
 
         function renderConflicts(main, side) {
             const data = state.conflicts;
             add(main, el("h3", {text: tr("Importing Conflicts")}));
             add(side, el("button", {type: "button", text: tr("Review open field conflicts"),
-                onclick: () => frappe.set_route("List", "HERO Sync Change Event", {outcome: "FIELD_CONFLICT"})}));
+                onclick: () => { state.tab = "reviews"; state.reviews = null; renderWork(); loadReviews(); }}));
             if (!data) { add(main, el("p", {class: "hero-sync-hint", text: tr("Loading conflicts …")})); return; }
             if (!data.rows.length) { add(main, el("p", {class: "hero-sync-hint", text: tr("No open conflicts.")})); return; }
             const decidable = (row) => row.kind !== "record";
@@ -583,6 +757,14 @@
                         el("td", {text: !decidable(row) ? format(row.sync_status === "Import conflict" ? "Import conflict ({0})" : "Not imported ({0})", row.run) : tr(row.sync_status === "Pending Review" ? "Confirmation pending" : (row.conflict_detail || "").startsWith("Recheck requested: ") ? "Recheck requested" : "Conflict")}),
                         el("td", {}, decidable(row) ? [el("button", {type: "button", class: "hero-sync-small", text: tr("Approve"), disabled: state.busy || undefined, onclick: () => decideConflicts([row], "approve")}),
                             el("button", {type: "button", class: "hero-sync-small", text: tr("Decline"), disabled: state.busy || undefined, onclick: () => decideConflicts([row], "reject")})]
+                            : row.sync_status === "Import conflict" && row.target_doctype && row.target_name ? el("button", {type:"button",class:"hero-sync-small",text:tr("Review and correct"),
+                                onclick: async () => {
+                                    try {
+                                        const name=await reviewCall("case_for_record",{name:row.name});
+                                        if (name) return openRelationship(name);
+                                        await loadConflicts(); say(tr("This review is no longer open for this source."),"info");
+                                    } catch(err) { say(err.message,"error"); }
+                                }})
                             : row.sync_status === "Not imported" ? el("span", {class: "hero-sync-hint", text: tr("Fix in HERO; the next run imports it.")}) : "—"),
                         el("td", {}, el("button", {type: "button", class: "hero-sync-small", text: tr("Report"), "aria-haspopup": "dialog",
                             "aria-label": format("Report for {0}", decidable(row) ? row.name : `HERO ${row.source_id}`), onclick: () => openConflictReport(row)}))))))),
@@ -678,6 +860,7 @@
             if (state.tab === "history") return loadRuns();
             if (state.tab === "conflicts") return loadConflicts();
             if (state.tab === "pending") return loadPending();
+            if (state.tab === "reviews") return loadReviews(state.reviewStart || 0);
             return Promise.resolve();
         }
 

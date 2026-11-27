@@ -94,6 +94,10 @@ def refresh(actor: str) -> dict[str, object]:
     try:
         with _refresh_lock():
             result = _capture(actor)
+            if (result.get("snapshot_name") and int(getattr(settings, "source_binding_confirmed_revision", 0) or 0) == revision
+                    and revision and frappe.db.get_value(SNAPSHOT, result["snapshot_name"], "parent_snapshot")):
+                from hero_integration.services.schema_adoption import adopt
+                result["runtime_adoption"] = adopt(result["snapshot_name"], frappe.session.user)
     except SchemaRefreshError as error:
         _record(settings, "FAILED", str(error))
         raise

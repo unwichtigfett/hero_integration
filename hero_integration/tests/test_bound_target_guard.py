@@ -22,7 +22,8 @@ class TestTargetLookupIndex(unittest.TestCase):
         fake_db = SimpleNamespace(add_index=lambda doctype, fields, index_name=None: calls.append((doctype, fields, index_name)))
         with patch.object(frappe, "db", fake_db):
             hero_integration_link.on_doctype_update()
-        self.assertEqual(calls, [("HERO Integration Link", ["target_doctype", "target_name"], "target_lookup")])
+        self.assertEqual(calls, [("HERO Integration Link", ["target_doctype", "target_name"], "target_lookup"),
+                                 ("HERO Integration Link", ["source_system", "source_instance", "source_type", "source_id"], "hero_link_source")])
 
 
 class TestHeroProjectIds(unittest.TestCase):

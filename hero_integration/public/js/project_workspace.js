@@ -624,14 +624,18 @@
             content.append(note("Recurring appointments show their stored start. Use the native Calendar for recurring occurrences."));
             const info = node("aside", null, "hp-card");
             info.append(note("Select an appointment for details."));
-            content.append(table(["Appointment", "Start", "End", "Type", "Status"], rows.map(row => [
+            const showInterval = rows.some(row => row.custom_hero_recurrence_interval);
+            const intervalHeading = showInterval ? ["HERO recurrence interval"] : [];
+            content.append(table(["Appointment", "Start", "End", ...intervalHeading, "Type", "Status"], rows.map(row => [
                 button(row.subject || row.name, () => {
                     info.replaceChildren(node("h4", row.subject || row.name),
                         node("p", date(row.starts_on) + " – " + date(row.ends_on)),
                         node("p", (row.participants || []).map(person => person.name).join(", ") || "—"),
                         routeLink("Event", row.name, __("Open appointment")));
                 }, false, false),
-                date(row.starts_on), date(row.ends_on), row.event_category ? __(row.event_category) : "—", badge(row.status),
+                date(row.starts_on), date(row.ends_on),
+                ...(showInterval ? [row.custom_hero_recurrence_interval ? __(row.custom_hero_recurrence_interval) : "—"] : []),
+                row.event_category ? __(row.event_category) : "—", badge(row.status),
             ])));
             const controls = node("div", null, "hp-actions");
             controls.append(button("Previous week", () => { this.week--; this.renderRows("appointments", this.panels.get("appointments").data); }),

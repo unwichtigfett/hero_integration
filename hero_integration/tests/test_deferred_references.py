@@ -236,7 +236,7 @@ class TestDeferredReplay(TestCase):
         self.config = NS(source_instance='source-a', source_binding_revision=1, source_binding_confirmed=True,
             endpoint=NS(url='https://same-endpoint.invalid/graphql'))
         self.fake = NS(get_doc=lambda dt,name,**kw:self.pending if dt==deferred.MAIN else self.run,
-            set_user=Mock(), only_for=Mock(), db=NS(set_value=Mock()))
+            set_user=Mock(), only_for=Mock(), db=NS(set_value=Mock(), sql=Mock(return_value=[])))
         from hero_integration.tests.saved_reader_fixture import isolate_binding_storage
         isolate_binding_storage(self)
         self.enterContext(patch("hero_integration.services.file_migration._direct_reader"))
@@ -251,6 +251,125 @@ class TestDeferredReplay(TestCase):
                   patch.object(migration, '_migrate_project', self.apply),
                   patch('hero_integration.services.integration_events.record_output')):
             p.start(); self.addCleanup(p.stop)
+
+    def test_separate_bounded_project_and_employee_notifications_complete_one_task_once(self):
+        from contextlib import nullcontext
+        from hero_integration.services import test_environment
+        self.run.testing_enabled = 1
+        self.run.budget_contract_version = 3
+        self.pending.operation = 'HeroTasks'
+        self.pending.dependencies = [NS(source_type='project', source_id='8'), NS(source_type='User', source_id='9')]
+        self.plan.operation, self.plan.target_operation = 'tasks', 'HeroTasks'
+        self.plan.adapter_options, self.plan.definitions = {'version': 2}, []
+        current = set()
+        queue = []
+        self.fake.session = NS(user='Administrator')
+        self.fake.enqueue = lambda method, **kwargs: queue.append((method, kwargs))
+        self.fake.db.commit = Mock()
+        self.fake.db.sql = Mock(side_effect=lambda q, args, **kw: [NS(name='pending')])
+        self.fake.db.set_value = lambda dt, name, values, *args: (
+            self.pending.__dict__.update(values) if isinstance(values, dict) else setattr(self.pending, values, args[0]))
+        budget = Mock(scope='migration', version=3, source_instance='source-a', source_revision=1)
+        budget.selection.return_value = {'environment':'dev-fixture'}
+        write = Mock(return_value=migration.Result('UPDATED', '', 'Task', 'TASK-7'))
+        with patch.object(deferred, 'installed', return_value=True), patch.object(
+                deferred.execution_budget, 'current_budget', return_value=budget), patch.object(
+                deferred.execution_budget, 'run_scope', side_effect=lambda run: nullcontext(budget)), patch.object(
+                test_environment, 'require_environment', return_value='dev-fixture'), patch.object(
+                deferred,'available',side_effect=lambda source, kind, ident: (kind,ident) in current), patch.object(
+                migration, 'realize_mapped_bindings', write):
+            for kind, identity in [('project','8'), ('User','9'), ('User','9')]:
+                current.add((kind, identity))
+                deferred.binding_updated(NS(source_instance='source-a', source_type=kind, source_id=identity,
+                                            sync_status='Synchronized'))
+                method, job = queue.pop()
+                self.assertEqual(method.rsplit('.',1)[1], 'resolve_dependency')
+                self.assertTrue(job['enqueue_after_commit'])
+                self.assertEqual(job['test_revision'],1)
+                deferred.resolve_dependency(**{k:job[k] for k in ('source','kind','identity','test_revision')})
+                if kind == 'project':
+                    write.assert_not_called()
+                    self.assertEqual(self.pending.status,'Waiting')
+            write.assert_called_once()
+            self.assertEqual((self.pending.status,self.pending.record_json),('Resolved',''))
+            self.assertEqual(budget.reserve_record.call_args.args[:2],('Task','7'))
+            self.assertIn('r.source_binding_revision=%s',self.fake.db.sql.call_args.args[0])
+
+    def test_task_project_field_is_realized_before_the_employee_without_replaying_the_intake(self):
+        from hero_integration.services.direct_mapping import MappingSpec
+        from hero_integration.services.mapping_runtime import plan_from_definitions
+        rules = [
+            MappingSpec('HeroTasks','id','HERO Integration Link','source_id','int',
+                        'Source Identity','Positive Int To Text',definition_id='id'),
+            MappingSpec('HeroTasks','title','Task','subject','string|null','Record Name','Trim',definition_id='name'),
+            MappingSpec('HeroTasks','target_project_match_id','Task','project','int|null',
+                        'Project Relation','HERO Project Link','HERO Project Link',definition_id='project')]
+        plan = plan_from_definitions('HeroTasks',rules,target_operation='HeroTasks',adapter_options={'version':2})
+        self.pending.operation,self.pending.mapping_version = 'HeroTasks',plan.mapping_version
+        self.pending.dependencies = [NS(source_type='project',source_id='8'),NS(source_type='User',source_id='9')]
+        self.pending.record_json = json.dumps({'id':7,'title':'keep scalar','target_project_match_id':8,
+            '_hero_source_instance':'source-a','__hero_origin_binding':{'name':'origin'}})
+        self.fake.db.set_value = lambda dt,name,values,*args: (self.pending.__dict__.update(values)
+            if isinstance(values,dict) else setattr(self.pending,values,args[0]))
+        current = {('project','8')}
+        target = NS(name='TASK-7')
+        link = NS(target_name=target.name,target_doctype='Task',mapping_version=plan.mapping_version)
+        native = NS(db=NS(exists=lambda *_:True),get_doc=lambda *_,**kw:target)
+        with patch.object(migration,'frappe',native), patch.object(migration,'_link',return_value=link), patch.object(
+                migration,'_mapping_plan_for_run',return_value=plan), patch.object(
+                migration,'_project_name_or_deferred',return_value='PROJECT-8'), patch.object(
+                deferred,'available',side_effect=lambda source,kind,identity:(kind,identity) in current), patch.object(
+                migration,'_upsert',return_value=migration.Result('UPDATED','','Task',target.name)) as write:
+            deferred.resolve_one('pending',dependency=('project','8'))
+            self.assertEqual(dict(write.call_args.args[3]),{'project':'PROJECT-8'})
+            self.assertTrue(write.call_args.kwargs['preserve_unselected'])
+            self.assertEqual(self.pending.status,'Waiting')
+            current.add(('User','9'))
+            deferred.resolve_one('pending',dependency=('User','9'))
+            deferred.resolve_one('pending',dependency=('User','9'))
+            self.assertEqual(write.call_count,2)
+            self.assertEqual(self.pending.status,'Resolved')
+
+    def test_missing_required_target_waits_then_uses_full_guarded_writer_once(self):
+        self.pending.record_json = json.dumps({'id':7, '_hero_source_instance':'source-a',
+            '__hero_origin_binding':None, deferred.DEFERRED_CREATE:[['customer','8']]})
+        self.fake.db.sql = Mock()
+        self.fake.db.set_value = lambda dt, name, values, *args: (
+            self.pending.__dict__.update(values) if isinstance(values, dict) else setattr(self.pending, values, args[0]))
+        self.apply.return_value = migration.Result('CREATED','','Project','PROJECT-7')
+        self.pending.dependencies.append(NS(source_type='User',source_id='9'))
+        bound = set()
+        with patch.object(deferred,'_origin_binding',side_effect=lambda *args: {'name':'origin'} if
+                self.apply.call_count else None), patch.object(deferred,'available',
+                side_effect=lambda source,kind,identity:(kind,identity) in bound), patch.object(migration,'_migrate_with_binding',
+                wraps=migration._migrate_with_binding) as writer, patch.object(self.fake,'enqueue',create=True) as enqueue:
+            deferred.resolve_one('pending')
+            self.apply.assert_not_called()
+            bound.add(('customer','8'))
+            deferred.resolve_one('pending')
+            self.assertFalse(writer.call_args.kwargs['relationships_only'])
+            self.apply.assert_called_once()
+            self.assertEqual(self.pending.status,'Waiting')
+            self.assertNotIn(deferred.DEFERRED_CREATE,json.loads(self.pending.record_json))
+            self.assertEqual(enqueue.call_args.kwargs['name'],'pending')
+            self.assertTrue(enqueue.call_args.kwargs['enqueue_after_commit'])
+            deferred.resolve_one('pending')
+            self.apply.assert_called_once()
+            bound.add(('User','9'))
+            self.apply.return_value = migration.Result('UPDATED','','Project','PROJECT-7')
+            deferred.resolve_one('pending')
+            deferred.resolve_one('pending')
+            self.assertTrue(writer.call_args.kwargs['relationships_only'])
+            self.assertEqual(self.apply.call_count,2)
+            self.assertEqual(self.pending.status,'Resolved')
+            self.fake.db.sql.assert_called_once()
+
+    def test_deferred_creation_never_adopts_an_intervening_target(self):
+        self.pending.record_json = json.dumps({'id':7, '_hero_source_instance':'source-a',
+            '__hero_origin_binding':None, deferred.DEFERRED_CREATE:[['customer','8']]})
+        with self.assertRaisesRegex(deferred.PendingObservationError,'another writer'):
+            deferred.resolve_one('pending')
+        self.apply.assert_not_called()
 
     def test_customer_arriving_later_uses_normal_reconciliation_and_original_actor(self):
         deferred.resolve_one('pending')
@@ -299,7 +418,8 @@ class TestDeferredReplay(TestCase):
         with patch.object(deferred, 'available', return_value=False): deferred.resolve_one('pending')
         self.apply.assert_not_called()
         self.run.state = 'Cancelled'
-        with self.assertRaises(ValueError): deferred.resolve_one('pending')
+        deferred.resolve_one('pending')
+        self.assertEqual(self.pending.status, 'Waiting')
         self.apply.assert_not_called()
 
     def test_newly_bound_project_assignee_is_added_without_waiting_for_other_users(self):
@@ -460,6 +580,34 @@ class TestDeferredWakeups(TestCase):
             migration._advance_full_migration('standalone')
         notify.assert_called_once_with('standalone')
 
+    def test_incremental_standalone_finish_accepts_fifty_receipts_before_relationship_replay(self):
+        ids = [str(i) for i in range(1,51)]
+        budget = Mock(version=3)
+        budget.selection.return_value = {'main_type':'Task', 'ids':ids}
+        rows = [NS(object_type='Task', external_id=i, outcome='processed') for i in ids]
+        run = NS(name='tasks', execution_budget_run='tasks', action='Projection Migration', budget_contract_version=3)
+        with patch.object(deferred.execution_budget,'for_run',return_value=budget), patch.object(
+                deferred,'frappe',NS(get_all=Mock(return_value=rows))), patch.object(deferred,'resolve_one') as replay:
+            self.assertEqual(deferred.finish_standalone_cohort(run),'')
+            replay.assert_not_called()
+            rows.pop()
+            self.assertIn('without a writer receipt',deferred.finish_standalone_cohort(run))
+
+    def test_native_creation_waits_only_for_a_proven_missing_mandatory_link(self):
+        from hero_integration.services.mapping_runtime import MappedValues
+        rule = NS(purpose='Project Relation', transformation='HERO Project Link', target_field='project',
+                  target_doctype='Task',source_path='target_project_match_id')
+        plan = NS(target_doctype='Task',definitions=[rule])
+        run = NS(mode='Execute')
+        record = {'id':3,'target_project_match_id':8}
+        values = MappedValues(subject='Task 3')
+        migration._defer_reference_values(plan,values,run,record)
+        fake = NS(get_meta=lambda dt:NS(get_field=lambda field:NS(reqd=True)))
+        with patch.object(migration,'frappe',fake), patch.object(migration,'_link',return_value=None), patch.object(
+                migration,'_target_available',return_value=True), patch.object(deferred,'installed',return_value=True):
+            result = migration._upsert('Task','3',record,values,'Task','subject','v1',run)
+        self.assertEqual(result.code,'DEFERRED')
+
     def test_identity_updates_without_waiters_do_not_enqueue_jobs(self):
         fake = NS(db=NS(sql=Mock(return_value=[])), enqueue=Mock())
         doc = NS(source_type='project', sync_status='Synchronized', source_instance='source-a', source_id='7')
@@ -474,6 +622,59 @@ class TestDeferredWakeups(TestCase):
         self.assertEqual(fake.enqueue.call_args.kwargs['source'], 'source-a')
         self.assertEqual(fake.db.sql.call_args.args[1], (deferred.MAIN, deferred.key('source-a', 'project', '7')))
         self.assertIn("p.status='Waiting'", fake.db.sql.call_args.args[0])
+
+    def test_unchanged_synchronized_link_does_not_wake_its_own_dependency(self):
+        fields = dict(source_system='HERO', source_instance='source-a', source_type='customer_address',
+                      source_id='7', target_doctype='Address', target_name='ADDR-1',
+                      target_incarnation='first', sync_status='Synchronized', observed_target_hash='new')
+        doc = NS(**fields, get=fields.get)
+        callbacks = []
+        fake = NS(db=NS(sql=Mock(return_value=[('waiting',)]), after_commit=NS(add=callbacks.append)), enqueue=Mock())
+        with patch.object(deferred, 'frappe', fake), patch.object(deferred, 'installed', return_value=True), \
+             patch.object(deferred, 'available', return_value=True):
+            doc.get_doc_before_save = lambda: dict(fields, observed_target_hash='old')
+            deferred.binding_updated(doc, 'on_update')
+            fake.db.sql.assert_not_called()
+            fake.enqueue.assert_not_called()
+            for change in (None, {'sync_status': 'Conflict'}, {'source_id': '8'},
+                           {'target_name': 'ADDR-2'}, {'target_incarnation': 'previous'}):
+                with self.subTest(change=change):
+                    doc.get_doc_before_save = lambda: None if change is None else dict(fields, **change)
+                    deferred.binding_updated(doc, 'on_update')
+                    callbacks.pop()()
+                    fake.enqueue.assert_called_once()
+                    fake.enqueue.reset_mock()
+            doc.get_doc_before_save = lambda: fields
+            deferred.binding_updated(doc)  # Explicit provider notification, independent of link fields.
+            callbacks.pop()()
+            fake.enqueue.assert_called_once()
+            fake.enqueue.reset_mock()
+            doc.source_type = 'partner'  # Employee.user_id can change outside its integration link.
+            deferred.binding_updated(doc, 'on_update')
+            fake.enqueue.assert_called_once()
+
+    def test_rolled_back_address_insert_cannot_wake_or_replay_waiters(self):
+        callbacks = []
+        fake = NS(db=NS(sql=Mock(return_value=[('waiting',)]), after_commit=NS(add=callbacks.append)), enqueue=Mock())
+        doc = NS(source_instance='source-a', source_type='customer_address', source_id='7',
+                 sync_status='Synchronized', get_doc_before_save=lambda: None)
+        with patch.object(deferred, 'frappe', fake), patch.object(deferred, 'installed', return_value=True), \
+             patch.object(deferred, 'available', return_value=True) as committed, \
+             patch.object(deferred, '_resolve_committed') as replay:
+            deferred.binding_updated(doc, 'on_update')
+            committed.assert_not_called()
+            fake.enqueue.assert_not_called()
+            # A later sibling fails. Frappe rolls the insert back to a savepoint
+            # while retaining its callback for the outer transaction's commit.
+            committed.return_value = False
+            callbacks.pop()()
+            committed.assert_called_once_with('source-a', 'customer_address', '7')
+            fake.enqueue.assert_not_called()
+            fake.db.sql.reset_mock()
+            # Jobs queued by older code, or before a subsequent removal, also drain.
+            deferred.resolve_dependency('source-a', 'customer_address', '7')
+            fake.db.sql.assert_not_called()
+            replay.assert_not_called()
 
     def test_dependency_job_processes_one_bounded_keyset_page(self):
         rows = [NS(name=f'{n:064d}') for n in range(deferred.BATCH)]
@@ -584,11 +785,12 @@ class TestRecoveryScheduling(TestCase):
                   for name,identity in [('first','missing'),('ready','1'),('duplicate','1'),('missing','2')]]
         def get_all(doctype,**kwargs):
             return rows if doctype==deferred.MAIN else ['complete'] if doctype=='HERO Integration Run' else children
-        fake=NS(get_all=Mock(side_effect=get_all),db=NS(set_value=Mock()),
+        fake=NS(get_all=Mock(side_effect=get_all),db=NS(set_value=Mock(), sql=Mock(return_value=[])),
                 utils=NS(now_datetime=lambda:'now'),enqueue=Mock(),log_error=Mock())
         with patch.object(deferred,'frappe',fake),patch.object(deferred,'installed',return_value=True),                 patch.object(deferred,'available_many',return_value={('project','1'):True,('project','2'):False}) as bulk,                 patch.object(deferred,'resolve_one',side_effect=AssertionError('scheduler cannot write targets')):
             deferred.recover_pending()
-        self.assertEqual(fake.enqueue.call_count,2)
+        self.assertEqual(fake.enqueue.call_count,3)
+        self.assertEqual(fake.enqueue.call_args_list[2].kwargs['identity'],'2')
         self.assertEqual(fake.enqueue.call_args_list[0].kwargs['name'],'first')
         self.assertEqual(fake.enqueue.call_args_list[1].kwargs['identity'],'1')
         bulk.assert_called_once_with('a',{('project','1'),('project','2')})
@@ -597,6 +799,55 @@ class TestRecoveryScheduling(TestCase):
 
 
 class TestReferenceFailureState(TestCase):
+    def test_worker_retry_request_is_handled_locally_without_replaying_other_references(self):
+        class RetryRequest(Exception):
+            pass
+
+        db = NS(rollback=Mock(), commit=Mock(), get_value=Mock())
+        owner = NS(db=db, session=NS(user="Administrator"), set_user=Mock(), log_error=Mock(),
+                   RetryBackgroundJobError=RetryRequest)
+        with patch.object(deferred, "frappe", owner), patch.object(
+                deferred, "resolve_one", side_effect=[RetryRequest, None, None]) as resolve, \
+                patch.object(deferred.time, "sleep"):
+            deferred._realize_names(["one", "two"])
+        self.assertEqual([call.args[0] for call in resolve.call_args_list], ["one", "one", "two"])
+        self.assertEqual(db.commit.call_count, 2)
+        owner.log_error.assert_not_called()
+
+    def test_exhausted_transient_failure_preserves_waiting_and_allows_next_reference(self):
+        class RetryRequest(Exception):
+            pass
+
+        class Deadlock(Exception):
+            pass
+
+        db = NS(rollback=Mock(), commit=Mock(), get_value=Mock(return_value="Waiting"), set_value=Mock())
+        owner = NS(db=db, session=NS(user="Administrator"), set_user=Mock(), log_error=Mock(),
+                   RetryBackgroundJobError=RetryRequest, QueryDeadlockError=Deadlock)
+        transient = Deadlock("private source context")
+        with patch.object(deferred, "frappe", owner), patch.object(
+                deferred, "resolve_one", side_effect=[transient, transient, transient, None]) as resolve, \
+                patch.object(deferred.time, "sleep"):
+            deferred._realize_names(["one", "two"])
+        self.assertEqual([call.args[0] for call in resolve.call_args_list], ["one", "one", "one", "two"])
+        db.set_value.assert_not_called()
+        self.assertEqual(db.commit.call_count, 1)
+        self.assertNotIn("private source context", owner.log_error.call_args.kwargs["message"])
+
+    def test_transient_callback_after_commit_does_not_restart_completed_observation(self):
+        class RetryRequest(Exception):
+            pass
+
+        db = NS(rollback=Mock(), commit=Mock(side_effect=RetryRequest),
+                get_value=Mock(return_value="Resolved"), set_value=Mock())
+        owner = NS(db=db, session=NS(user="Administrator"), set_user=Mock(), log_error=Mock(),
+                   RetryBackgroundJobError=RetryRequest)
+        with patch.object(deferred, "frappe", owner), patch.object(deferred, "resolve_one") as resolve:
+            deferred.resolve_reference("one")
+        resolve.assert_called_once_with("one")
+        db.set_value.assert_not_called()
+        owner.log_error.assert_not_called()
+
     def test_error_after_commit_cannot_reclassify_resolved_or_superseded_rows(self):
         for status in ('Resolved','Conflict',None):
             with self.subTest(status=status):
@@ -654,7 +905,7 @@ class TestFullReferenceFinalization(TestCase):
                 patch.object(deferred,'reconcile_source_page',return_value=('page-end',False)) as page:
             for operation in deferred.FINAL_RELATION_ORDER:
                 self.assertFalse(deferred.reconcile_full_page('source',['child'],state))
-                page.assert_called_with('source','',origin_runs=['child'],operations=(operation,))
+                page.assert_called_with('source','',origin_runs=['child'],operations=(operation,), require_complete=True)
         self.assertEqual(state['reconciliation_stage'],len(deferred.FINAL_RELATION_ORDER))
         db.set_value.assert_not_called()
 
@@ -668,16 +919,16 @@ class TestFullReferenceFinalization(TestCase):
         self.assertEqual(state['reconciliation_stage'],1)
         self.assertEqual(state['reconciliation_after'],'')
 
-    def test_only_final_phase_marks_unresolved_observations_and_preserves_payload(self):
+    def test_final_phase_counts_missing_bindings_and_preserves_waiting_payload(self):
         pending=NS(status='Waiting',source_instance='source',origin_run='child',record_json='frozen')
         db=NS(sql=Mock(return_value=[NS(name='ref')]),set_value=Mock(),commit=Mock(),count=Mock(return_value=3))
         state={'reconciliation_stage':len(deferred.FINAL_RELATION_ORDER)}
         with patch.object(deferred,'frappe',NS(db=db,get_doc=Mock(return_value=pending))):
             self.assertTrue(deferred.reconcile_full_page('source',['child'],state))
-        self.assertEqual(db.sql.call_args.args[1],('source',('child',),'',deferred.BATCH))
-        self.assertEqual(db.set_value.call_args.args[2]['status'],'Conflict')
-        self.assertNotIn('record_json',db.set_value.call_args.args[2])
+        db.set_value.assert_not_called()
+        self.assertEqual(state['reconciliation_waiting'],3)
         self.assertEqual(state['reconciliation_conflicts'],3)
+        self.assertEqual(pending.status,'Waiting')
         self.assertEqual(pending.record_json,'frozen')
 
     def test_missing_child_scope_is_not_replaced_with_global_source_scan(self):

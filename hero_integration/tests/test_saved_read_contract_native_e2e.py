@@ -238,6 +238,47 @@ class TestSavedReadContractNativeE2E(IntegrationTestCase):
                          [("Contact", customer.name, mapping.definition_id)])
         self.assertNotIn(ignored.definition_id, json.loads(mapping.mapping_json)["mapping_definition_ids"])
 
+    def test_inventory_intake_reuses_the_saved_customer_adapter_and_existing_bindings(self):
+        from hero_integration.services.execution_runtime import InventoryIntake
+        from hero_integration.services.runtime_plan import RuntimePlanSelection
+        from hero_integration.services.read_contract import from_documents
+
+        service, mapping, _ = self._saved_contract()
+        contract = from_documents(service, mapping, frappe.get_doc("HERO GraphQL Schema Snapshot", service.schema_snapshot))
+        scope = RuntimePlanSelection(frappe.local.site, "synthetic", service.name, service.service_revision,
+            service.service_revision, mapping.name, mapping.mapping_revision, service.schema_snapshot,
+            service.schema_fingerprint, service.operation_name, "AUTO_SYNC")
+        row = dict(id=int(self.source_id), nr=self.token, full_name=self.token + "-customer",
+                   company_name="", category="first", is_contact_person=False, is_deleted=False)
+        with patch.object(migration, "get_configuration", return_value=self._configuration()):
+            intake = InventoryIntake(scope, contract, 0, allow_new=True)
+            try:
+                self.assertIs(intake.reconcile(row, self.source_id, ()), True)
+                new_origin = intake.origin.name
+                self.assertIs(intake.reconcile(row, self.source_id, ()), True)
+                self.assertEqual(intake.origin.name, new_origin)
+                self.assertEqual(intake.origin.processed, 1)
+                parent = frappe.db.get_value("HERO Object Binding", {"source_instance": "synthetic",
+                    "external_object_id": self.source_id}, "name")
+                missing = frappe.db.get_value("HERO Field Binding", {"object_binding": parent,
+                    "target_field": "customer_details"}, "name")
+                self.assertTrue(missing)
+                frappe.db.delete("HERO Field Binding", {"name": missing})
+                intake.allow_new = False
+                self.assertIs(intake.reconcile(row, self.source_id, ()), True)
+                self.assertTrue(frappe.db.exists("HERO Field Binding", missing))
+                self.assertEqual(intake.origin.processed, 2)
+                self.assertIs(intake.reconcile(dict(row, category="second"), self.source_id, ()), True)
+                intake.finish()
+            finally:
+                if intake.origin:
+                    self.created.setdefault("HERO Integration Run", []).append(intake.origin.name)
+        self.assertEqual(intake.origin.reload().state, "Completed")
+        self.assertEqual(frappe.db.count("HERO Object Binding", {"source_instance": "synthetic",
+                         "external_object_id": self.source_id}), 1)
+        self.assertEqual(frappe.db.get_value("Customer", {"customer_name": row["full_name"]},
+                                            "customer_details"), "second")
+
     def test_migrated_customer_can_use_its_approved_saved_reader_for_bound_polling(self):
         from hero_integration.services.b8_runtime import ApprovedBoundReader, reconstruct_materialized_read_plan
         from hero_integration.services.runtime_plan import RuntimePlanSelection

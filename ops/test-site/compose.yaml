@@ -1,0 +1,58 @@
+name: hero-test-${HERO_TEST_ENV:?environment UUID hex required}
+
+x-app: &app
+  image: ${HERO_TEST_IMAGE:?candidate image required}
+  user: frappe
+  read_only: true
+  restart: "no"
+  init: true
+  cap_drop: [ALL]
+  security_opt: [no-new-privileges:true]
+  entrypoint: []
+  working_dir: /home/frappe/frappe-bench
+  tmpfs:
+    - /tmp
+    - /home/frappe/frappe-bench/logs:uid=1000,gid=1000,mode=0750
+  environment:
+    PYTHONDONTWRITEBYTECODE: "1"
+    HOME: /tmp
+  volumes:
+    - sites:/home/frappe/frappe-bench/sites
+    - inbox:/run/hero-test-requests
+    - ${HERO_TEST_STATE:?absolute controller state directory required}/public:/run/hero-test-state:ro
+  networks: [isolated]
+
+services:
+  db:
+    image: ${HERO_TEST_DB_IMAGE:-mariadb:11.8.6}
+    restart: "no"
+    read_only: true
+    tmpfs: [/tmp, /run/mysqld]
+    environment:
+      MARIADB_ROOT_PASSWORD: ${HERO_TEST_DB_PASSWORD:?dedicated database password required}
+    command: [--character-set-server=utf8mb4, --collation-server=utf8mb4_unicode_ci]
+    volumes: [db:/var/lib/mysql]
+    networks: [isolated]
+  redis:
+    image: ${HERO_TEST_REDIS_IMAGE:-redis:8.0.2-alpine}
+    restart: "no"
+    read_only: true
+    tmpfs: [/tmp]
+    command: [redis-server, --appendonly, "yes"]
+    volumes: [redis:/data]
+    networks: [isolated]
+  backend:
+    <<: *app
+    command: ["/home/frappe/frappe-bench/env/bin/gunicorn", "--chdir=/home/frappe/frappe-bench/sites", "--bind=0.0.0.0:8000", "--workers=2", "--preload", "frappe.app:application_with_statics()"]
+  worker:
+    <<: *app
+    command: ["/usr/local/bin/bench", worker, --queue, "short,default,long"]
+
+networks:
+  isolated:
+    internal: true
+volumes:
+  db:
+  redis:
+  sites:
+  inbox:

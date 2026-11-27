@@ -70,6 +70,27 @@ test("settings save omits removed fields and preserves other controls", async ()
     assert.ok(workspace.find(el => el.textContent === "Settings saved."));
 });
 
+test("archive checkbox loads, toggles and saves independently of testing mode", async () => {
+    const settings = {polling: {}, testing: {enabled: false}, migrate_archived_records: true};
+    const api = async (method, payload) => {
+        if (method === "workspace_settings_save") {
+            assert.equal(payload.testing_enabled, false);
+            settings.migrate_archived_records = payload.migrate_archived_records;
+        }
+        return settings;
+    };
+    const window = {hero_integration_platform: {api}};
+    vm.runInNewContext(source, {window, document: {createElement: tag => new Element(tag)}});
+    const workspace = new Element("main");
+    await window.hero_integration_settings_ui.mount(workspace);
+    const label = workspace.find(el => el.tag === "label" && el.children[0]?.textContent === "Migrate archived records");
+    const checkbox = label.find(el => el.type === "checkbox");
+    assert.equal(checkbox.checked, true);
+    checkbox.checked = false;
+    await workspace.find(el => el.textContent === "Save Settings").handlers.click();
+    assert.equal(settings.migrate_archived_records, false);
+});
+
 test("settings save announces progress and disables controls until completion", async () => {
     const settings = {enabled: true, api_url: "https://example.invalid/graphql", timeout_seconds: 30,
         allowed_hero_hosts: "example.invalid", hero_source_instance: "default", api_token_status: "NOT_CONFIGURED",
@@ -323,4 +344,53 @@ test('the existing configuration confirmation explicitly announces eight active 
     assert.match(confirmation,/Mutation mappings to import and activate: 8\./);
     assert.match(confirmation,/No HERO operation will be executed/);
     assert.deepEqual(calls,['workspace_settings_get','config_import_preview']);
+});
+
+test("reset previews the current site and submits its token only on confirmation", async () => {
+    const calls = [];
+    let approve;
+    let busy = true;
+    const api = async (method, args, options) => {
+        calls.push({method, args, options});
+        if (method === "workspace_settings_get") return {polling: {}, testing: {}};
+        if (method === "workspace_test_reset_preview") return {
+            site: "sample.localhost", token: "signed-preview",
+            inventory: {
+                running_jobs: busy ? 1 : 0, waiting_jobs: busy ? 3 : 0, deletion_enabled: true,
+                deletable_records: {Task: 1}, removable_artifacts: {"HERO Integration Link": 2},
+                protected: {Task: {unclear_origin: 3}}, file_count: 1, file_bytes: 512
+            }
+        };
+        assert.equal(method, "workspace_test_reset_confirm");
+        assert.equal(args.token, "signed-preview");
+        assert.equal(args.confirmed, 1);
+        assert.equal(options.write, true);
+        return {status: "queued"};
+    };
+    const frappe = {session: {user: "Administrator"}, confirm: (text, yes) => {
+        assert.ok(text.includes("sample.localhost"));
+        assert.match(text, /Remove confirmed HERO test data/);
+        assert.match(text, /Native records: Task: 1/);
+        assert.match(text, /Test artifacts: HERO Integration Link: 2/);
+        assert.match(text, /Files: 1 \(512 bytes\)/);
+        assert.match(text, /Retained for review: Task: 3/);
+        approve = yes;
+    }};
+    const window = {frappe, hero_integration_platform: {api}};
+    vm.runInNewContext(source, {window, frappe, document: {createElement: tag => new Element(tag)}});
+    const workspace = new Element("main");
+    await window.hero_integration_settings_ui.mount(workspace);
+    const button = workspace.find(el => el.textContent === "Reset all test data");
+    assert.equal(button.hidden, false);
+    await button.handlers.click();
+    assert.deepEqual(calls.map(c => c.method), ["workspace_settings_get", "workspace_test_reset_preview"]);
+    assert.equal(approve, undefined);
+    assert.ok(workspace.find(el => el.textContent ===
+        "Turn off HERO polling and outbound delivery and wait for HERO background work to finish before resetting."));
+    busy = false;
+    await button.handlers.click();
+    assert.equal(calls.at(-1).method, "workspace_test_reset_preview");
+    assert.equal(calls.filter(c => c.method === "workspace_test_reset_confirm").length, 0);
+    await approve();
+    assert.equal(calls.at(-1).method, "workspace_test_reset_confirm");
 });

@@ -42,15 +42,18 @@ class TestConfirmedReceiptReconciliation(TestCase):
     def setUp(self):
         from hero_integration.services.project_logbook import _digest
         self.text='Notes: old → new\nSecond line'
-        self.document=NS(doctype='Version',name='V1',data='immutable version data')
+        from hero_integration.tests.test_project_logbook_writeback import approved_logbook_context
+        self.document=NS(doctype='Version',name='V1',data='immutable version data', modified='v1',
+                         ref_doctype='Project', docname='P1')
         self.receipt=NS(name='receipt',source_system='HERO',source_instance='source',source_type='project_history',
             mapping_version=wb.OUTBOUND_VERSION,sync_status='Pending Review',target_doctype='Version',target_name='V1',
             source_id=_digest(['source','7','11']),source_payload_hash=wb._hash(self.text),target_payload_hash=wb._hash(self.document.data))
         self.audit=NS(name='audit',correlation_id='correlation',status='Failed',operation_name=wb.OPERATION,
             request_fingerprint=wb._hash(['hero-project-logbook-create-v1','site','source','Version:V1']))
-        self.ctx=NS(document=self.document,proof=NS(source_instance='source'),project=NS(name='P1'),hero_id='7',
-            marker=NS(name='marker',sync_status='Pending Review',conflict_detail='correlation'),
-            read=NS(contract=NS(adapter_options={'logbook':{'path':'histories','identity_path':'id'}})))
+        self.ctx = approved_logbook_context()
+        self.ctx.document = self.document
+        self.ctx.proof.source_instance = 'source'
+        self.ctx.marker = NS(name='marker', sync_status='Pending Review', conflict_detail='correlation')
         self.entry={'id':11,'target':'project_match','target_id':7,'custom_text':self.text.replace('\n','<br />\n')}
         self.writer=Mock();self.fake=NS(only_for=Mock(),local=NS(site='site'),get_all=Mock(return_value=['audit']),
             get_doc=lambda doctype,name,**kwargs:self.receipt if doctype=='HERO Integration Link' else self.audit,

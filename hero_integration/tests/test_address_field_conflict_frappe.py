@@ -53,6 +53,30 @@ class TestAddressFieldConflict(IntegrationTestCase):
         parent = self.storage.lock_source_object(frappe.local.site, self.instance, "customer_address", "Address", source_id)
         return {f.target_field: f for f in self.storage.fields_for_object(frappe.local.site, parent.identity_key)}
 
+    def test_empty_postcode_creates_no_field_baseline_and_preserves_verified_native_postcode(self):
+        self.row['address']['zipcode'] = ''
+        self.sync_address()
+        self.sync_address()
+        link = migration._link('customer_address', '21', self.instance)
+        self.assertFalse(frappe.db.get_value('Address', link.target_name, 'pincode'))
+        self.assertNotIn('pincode', self.fields('21'))
+        self.assertNotIn('pincode', migration.decode_hashes(link.source_field_hashes))
+        self.row['address']['zipcode'] = '10115'
+        self.sync_address()
+        target = frappe.get_doc('Address', link.target_name)
+        self.assertEqual(target.pincode, '10115')
+        field = self.fields('21')['pincode']
+        target.pincode = '10117'
+        target.save()
+        self.row['address'].update(zipcode='', city='Bonn')
+        self.sync_address()
+        target.reload()
+        self.assertEqual((target.pincode, target.city), ('10117', 'Bonn'))
+        self.assertEqual(self.fields('21')['pincode'], field)
+        link.reload()
+        self.assertEqual(migration.decode_hashes(link.source_field_hashes)['pincode'],
+                         migration.field_hashes({'pincode': '10115'})['pincode'])
+
     def test_city_conflict_preserves_baseline_and_allows_independent_postcode_and_next_address(self):
         self.sync_address()
         link = migration._link("customer_address", "21", self.instance)

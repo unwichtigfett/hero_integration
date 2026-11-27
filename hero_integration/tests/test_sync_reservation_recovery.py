@@ -18,12 +18,11 @@ class WorkerExit(BaseException):
     """Simulate process exit after a committed dispatch marker."""
 
 
-class TestSyncReservationRecovery(IntegrationTestCase):
+class TestSyncReservationRecovery(fixtures.NativeCustomerSyncFixture, IntegrationTestCase):
     run_sync = fixtures.TestNativeSyncEvents.run_sync
-    clear_fixture = fixtures.TestNativeSyncEvents.clear_fixture
 
     def setUp(self):
-        fixtures.TestNativeSyncEvents.setUp(self)
+        super().setUp()
         self.doc.customer_details = "local"
         self.doc.save()
         frappe.db.commit()

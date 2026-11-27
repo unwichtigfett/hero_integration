@@ -31,6 +31,9 @@ MANUFACTURER_NR = replace(BUILTIN.plan.definitions[1], definition_id="mnr", purp
 class _Item(dict):
     __getattr__ = dict.get
 
+    def get_valid_dict(self, **kwargs):
+        return dict(self)
+
     def update(self, values):  # noqa: D401 - dict API used by the importer
         super().update(values)
 
@@ -62,7 +65,10 @@ class _Frappe:
     def set_value(self, doctype, name, values, *args):
         self.links.append(("set", name, values))
 
-    def get_all(self, *args, **kwargs):
+    def get_all(self, doctype, **kwargs):
+        if doctype == 'Supplier':
+            return [row.get('name', row['supplier_name']) for row in self.masters
+                    if row['doctype'] == doctype and row['supplier_name'] == kwargs['filters']['supplier_name']][:2]
         return []
 
     def has_permission(self, *args, **kwargs): return True
@@ -107,6 +113,24 @@ class TestOwnMapping(unittest.TestCase):
             self.assertEqual(pm.upsert(ROW, link, pm._Masters(), 'default', read=read), 'updated')
         updated = fake.links[-1][2]
         self.assertEqual((updated['sync_status'], updated['conflict_detail']), ('Synchronized', ''))
+
+    def test_unchanged_article_still_reconciles_prices_without_saving_item_or_link(self):
+        read = replace(BUILTIN, plan=replace(BUILTIN.plan, adapter_options={
+            'version': 2, 'native_relations': [{'kind': 'sales_prices'}]}))
+        fake = _Frappe()
+        with patch.object(pm, 'frappe', fake), patch('hero_integration.services.mapped_relations.sync',
+                return_value={'unchanged': 1}) as sync:
+            self.assertEqual(pm.upsert(ROW, None, pm._Masters(), 'default', read=read), 'added')
+            link = SimpleNamespace(name='LINK', **fake.links[-1][1])
+            fake.links.clear()
+            sync.reset_mock()
+            self.assertEqual(pm.upsert(ROW, link, pm._Masters(), 'default', read=read), 'unchanged')
+            self.assertFalse(fake.items['PV-1001'].saved)
+            self.assertEqual(fake.links, [])
+            self.assertEqual(sync.call_count, 2)
+            sync.side_effect = [{'conflicts': 0}, {'created': 1}]
+            self.assertEqual(pm.upsert(ROW, link, pm._Masters(), 'default', read=read), 'updated')
+            self.assertFalse(fake.items['PV-1001'].saved)
 
     def test_article_code_follows_the_selected_source_and_is_not_a_rename(self):
         original = next(spec for spec in BUILTIN.plan.definitions if spec.target_field == "item_code")
@@ -224,7 +248,7 @@ class TestProgress(unittest.TestCase):
         class Client:
             def query(self, document, variables):
                 start, size = variables["offset"], variables["first"]
-                return {"supply_product_versions": [{"product_id": f"P{i}"} for i in range(start, min(start + size, 1200))]}
+                return {"supply_product_versions": [{"product_id": f"P{i}", "Genutzt": 1} for i in range(start, min(start + size, 1200))]}
 
         with patch.object(pm, "frappe", SimpleNamespace(db=db, utils=SimpleNamespace(now_datetime=lambda: "now"),
                                                         log_error=lambda **k: None)), \

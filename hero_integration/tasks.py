@@ -60,7 +60,7 @@ def run_scheduled_sync() -> None:
     # is not retried on every one-minute tick.
     if not scheduler_due(settings, now, _sync_state("last_poll_started_on"), system_timezone=timezone):
         return
-    if _active_run_blocks():
+    if mode == "AUTO_SYNC" and _active_run_blocks():
         record_scheduler_outcome(mode, "Skipped", "A HERO run is active; polling waits for the next interval.")
         return
     try:
@@ -91,7 +91,7 @@ def _sync_state(field: str):
 
 
 def _active_run_blocks() -> bool:
-    """MONITOR and AUTO_SYNC never compete with a running migration for HERO."""
+    """Business writes wait for a migration with a live lease."""
     active = _sync_state("active_run")
     if not active:
         return False
@@ -122,6 +122,13 @@ def _run(mode: str, record_scheduler_outcome) -> None:
         record_scheduler_outcome(mode, "Failed", "See the redacted server error log.")
         return
     if mode == "AUTO_SYNC":
-        status = {"SUCCEEDED": "Succeeded", "FAILED": "Failed", "CONFLICT": "Conflicts"}.get(result.status, "Incomplete")
-        record_scheduler_outcome(mode, status, result.status, source_instance=result.source_instance,
+        status = {"SUCCEEDED": "Succeeded", "BOUNDED_COMPLETE": "Succeeded", "FAILED": "Failed",
+                  "CONFLICT": "Conflicts"}.get(result.status, "Incomplete")
+        detail = result.status
+        if result.status == "PARTIAL":
+            if result.inventory_progress:
+                status = "Succeeded"
+            else:
+                detail = "Partial execution; reader completion was not confirmed."
+        record_scheduler_outcome(mode, status, detail, source_instance=result.source_instance,
                                  sync_run=result.run_id)

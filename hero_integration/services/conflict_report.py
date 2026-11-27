@@ -229,7 +229,13 @@ def _changed_item_fields(link) -> list[str]:
     if not isinstance(baseline, dict) or not baseline or not frappe.db.exists("Item", link.target_name):
         return []  # imported before per-field baselines existed
     fields = tuple(baseline)  # the fields mapped when the baseline was taken
-    current = owned_field_digests(frappe.get_doc("Item", link.target_name), fields)
+    item = frappe.get_doc("Item", link.target_name)
+    current = owned_field_digests(item, fields)
+    from hero_integration.services.product_migration import digest
+    for field, stored in baseline.items():
+        # A legacy empty hash cannot demonstrate a local edit between falsy values.
+        if stored == digest(None) and not item.get(field):
+            current[field] = stored
     return [field for field in fields if baseline[field] != current[field]]
 
 
@@ -393,7 +399,12 @@ def _review_field(event_name, expected_modified):
     if (not rule or (rule.source_path, rule.target_field) != (binding.source_field, binding.target_field)
             or not migration_field_supported(rule, target, source_type)):
         raise frappe.ValidationError(frappe._("Field mapping changed during conflict review."))
-    remote = FrappeBoundProcessor.project_scalar(plan, rule, row, parent.source_instance)
+    from hero_integration.services import task_hierarchy
+    try:
+        business_row = task_hierarchy.clean_record(row, binding)
+    except task_hierarchy.ProjectionConflict as error:
+        raise frappe.ValidationError(str(error)) from error
+    remote = FrappeBoundProcessor.project_scalar(plan, rule, business_row, parent.source_instance)
     fieldtype = target.meta.get_field(binding.target_field).fieldtype
     local_changed = native_fingerprint(target.get(binding.target_field), fieldtype) != native_fingerprint(proof["local"], fieldtype)
     reservation = json.loads(current.resolution_json or "{}")
@@ -433,6 +444,8 @@ def _field_decision_preview(reviewed, choice, value, mutation_mapping):
     event, proof, binding, target, _, remote, fieldtype, generation, _ = reviewed
     if choice not in {"HERO", "ERPNEXT", "CUSTOM"}:
         raise frappe.ValidationError(frappe._("Select a field conflict decision."))
+    if proof.get("projection_issue"):
+        raise frappe.ValidationError(frappe._("Restore the confirmed generated section and reconcile the Task again."))
     chosen = proof["source"] if choice == "HERO" else proof["local"] if choice == "ERPNEXT" else value
     if chosen is None or isinstance(chosen, (list, dict)):
         raise frappe.ValidationError(frappe._("The mapping requires a scalar decision value."))

@@ -29,20 +29,25 @@ class TestAreas(unittest.TestCase):
             state = runs.get(filters['action'])
             return [{'state': state}] if state else []
         owner = SimpleNamespace(get_all=get_all)
-        self.assertEqual(sync_page.manual_prerequisite('source-a', owner), 'employees')
-        for state in ('Queued', 'Running', 'Failed', 'Cancelled', 'Blocked'):
+        initial = {'projects': 'Migrate Employees first', 'tasks': 'Migrate Employees first',
+                   'documents': 'Migrate Contacts first', 'pictures': 'Migrate Contacts first'}
+        for state in (None, 'Queued', 'Running', 'Failed', 'Cancelled', 'Blocked'):
             runs['Employee Migration'] = state
-            self.assertEqual(sync_page.manual_prerequisite('source-a', owner), 'employees')
-        runs['Employee Migration'] = 'Completed With Conflicts'
-        self.assertEqual(sync_page.manual_prerequisite('source-a', owner), 'contacts')
-        runs['Customer Migration'] = 'Completed'
-        self.assertEqual(sync_page.manual_prerequisite('source-a', owner), '')
-        self.assertTrue(sync_page.manual_allowed('employees', 'employees'))
-        self.assertTrue(sync_page.manual_allowed('full', 'employees'))
-        self.assertTrue(sync_page.manual_allowed('full', 'contacts'))
-        self.assertFalse(sync_page.manual_allowed('contacts', 'employees'))
-        self.assertFalse(sync_page.manual_allowed('tasks', 'contacts'))
-        self.assertTrue(sync_page.manual_allowed('tasks', ''))
+            self.assertEqual(sync_page.manual_start_blockers('source-a', owner), initial)
+        keys = ('employees', 'contacts', 'projects', 'events', 'tasks', 'documents',
+                'pictures', 'products', 'services', 'full')
+        for employee, contact in ((None, None), ('Completed', None), (None, 'Completed'),
+                                  ('Completed With Conflicts', 'Completed')):
+            runs.update({'Employee Migration': employee, 'Customer Migration': contact})
+            desk = sync_page.manual_start_blockers('source-a', owner)
+            expected = {key for key in ('projects', 'tasks') if not employee}
+            expected.update(key for key in ('documents', 'pictures') if not contact)
+            self.assertEqual(set(desk), expected)
+            for key in keys:
+                rpc = sync_page.manual_start_blockers('source-a', owner, area_key=key)
+                self.assertEqual(rpc.get(key), desk.get(key))
+            self.assertEqual(bool(sync_page.manual_start_blockers('source-a', owner, area_key='combined')),
+                             not (employee and contact))
 
     def test_offline_import_restores_frappe_and_api_module_cache(self):
         script = """\
@@ -198,7 +203,7 @@ class TestAreaStart(unittest.TestCase):
     def start(self, services, existing_runs=False):
         fake = _Frappe(_settings(hero_source_instance="main"), existing_runs)
         with patch.object(api, "frappe", fake), patch.object(api, "_configured_source_instance", return_value="main"), \
-                patch.object(sync_page, "manual_prerequisite", return_value=""), \
+                patch.object(sync_page, "manual_start_blockers", return_value={}), \
                 patch.object(api, "_sync_area_read_services", return_value=services), \
                 patch.object(api, "_start_migration", return_value={"status": "QUEUED", "run": "RUN-1"}) as start:
             return api.sync_area_start("events"), start
@@ -206,11 +211,26 @@ class TestAreaStart(unittest.TestCase):
     def test_server_rejects_start_before_prerequisites(self):
         fake = _Frappe(_settings())
         with patch.object(api, 'frappe', fake), patch.object(api, '_configured_source_instance', return_value='main'), \
-                patch.object(sync_page, 'manual_prerequisite', return_value='employees'):
+                patch.object(fake, 'get_all', return_value=[], create=True):
             with self.assertRaisesRegex(ValueError, 'Migrate Employees first'):
-                api.sync_area_start('contacts')
+                api.sync_area_start('tasks')
             with self.assertRaisesRegex(ValueError, 'Migrate Employees first'):
                 api.start_migration('Project Migration', dry_run=0, graphql_service='SERVICE')
+
+    def test_independent_starts_do_not_require_a_run_history(self):
+        from hero_integration.services import file_migration
+        fake = _Frappe(_settings())
+        with patch.object(api, 'frappe', fake), patch.object(api, '_configured_source_instance', return_value='main'), \
+                patch.object(file_migration, 'start', return_value='RUN') as submit:
+            for key in ('services', 'products', 'employees', 'services', 'full'):
+                result = api.sync_area_start(key)
+                self.assertEqual((result['run'], result['area']), ('RUN', key))
+                submit.assert_called_with(file_migration.AREA_KEYS[key])
+        with patch.object(api, 'frappe', fake), patch.object(api, '_configured_source_instance', return_value='main'), \
+                patch.object(api, '_start_migration', return_value={'status': 'QUEUED'}) as submit:
+            for action in ('Customer Migration', 'Schedule Migration'):
+                self.assertEqual(api.start_migration(action, dry_run=0, graphql_service='READER')['status'], 'QUEUED')
+                submit.assert_called_with(action=action, dry_run=0, scheduled=False, graphql_service='READER')
 
     def test_missing_service_explanation_uses_current_language_and_keeps_source(self):
         source = ('{0} needs an approved read service with an active mapping for {1} '

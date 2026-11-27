@@ -26,6 +26,23 @@ class TestGraphQLSchemaCache(TestCase):
         self.addCleanup(cache.clear_schema_cache)
         self.addCleanup(contract._snapshot_ir.cache_clear)
 
+    def test_checkpoint_digest_preserves_frozen_json_and_detects_same_name_changed_content(self):
+        import json
+        from hero_integration.services.migration import _digest
+        schema = {'__schema': self.raw['__schema'], 'uncompiled': 'Prüfung'}
+        raw = json.dumps(schema, ensure_ascii=False)
+        expected = _digest(schema)
+        self.assertEqual(cache.checkpoint_digest(raw), expected)
+        self.assertEqual(cache.checkpoint_digest(raw), expected)
+        self.assertEqual(cache._checkpoint_digest.cache_info().hits, 1)
+        self.assertEqual(cache.checkpoint_digest(json.dumps(schema, indent=2)), expected)
+        schema['uncompiled'] = 'changed'
+        self.assertNotEqual(cache.checkpoint_digest(json.dumps(schema)), expected)
+        with patch.object(cache, 'MAX_CACHEABLE_SCHEMA_CHARS', 5):
+            before = cache._checkpoint_digest.cache_info()
+            self.assertEqual(cache.checkpoint_digest(raw), expected)
+            self.assertEqual(before, cache._checkpoint_digest.cache_info())
+
     def test_saved_reads_build_once_and_keep_each_requests_variables(self):
         with patch('graphql.build_client_schema',wraps=build_client_schema) as build, \
              patch.object(contract,'_snapshot_ir',side_effect=AssertionError('Saved reads need no generated IR')):

@@ -196,6 +196,10 @@ class TestRC16NativeSafety(IntegrationTestCase):
 
     def test_frappe_dispatcher_rejects_get_for_every_write_rpc(self) -> None:
         previous_request = getattr(frappe.local, "request", None)
+        missing = object()
+        job = getattr(frappe.local, "job", missing)
+        if job is not missing:
+            del frappe.local.job
         try:
             frappe.local.request = SimpleNamespace(method="GET")
             for method in (
@@ -214,12 +218,17 @@ class TestRC16NativeSafety(IntegrationTestCase):
                 api.workspace_mutation_contract_save,
                 api.execute_graphql_service,
             ):
-                with self.assertRaises(frappe.PermissionError):
+                with self.subTest(method=method.__name__):
+                    self.assertEqual(frappe.allowed_http_methods_for_whitelisted_func[method], ["POST"])
+                    with self.assertRaises(frappe.PermissionError):
+                        is_valid_http_method(method)
+                    frappe.local.request.method = "POST"
                     is_valid_http_method(method)
-            frappe.local.request = SimpleNamespace(method="POST")
-            is_valid_http_method(api.start_migration)
+                    frappe.local.request.method = "GET"
         finally:
             frappe.local.request = previous_request
+            if job is not missing:
+                frappe.local.job = job
 
     def test_two_connections_can_claim_only_one_active_run(self) -> None:
         first, second = self._run(), self._run()

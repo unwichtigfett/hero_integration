@@ -71,6 +71,21 @@ class TestTaskAssignmentPolicy(unittest.TestCase):
         with self.assertRaises(PolicyError):
             validate_policy_payload({**self.payload, 'allow_all_system_managers': True}, 'isolated.test')
 
+    def test_silent_test_policy_requires_same_origin_recipient_scope_and_frozen_task(self):
+        from hero_integration.services.task_assignment_policy import _allows_test_task, _policy_input
+        raw = {**self.payload, 'test_task_run':'HERO-RUN-00021', 'silent_initial':True,
+               'native_effects':{'date_rule':'LOCAL_TODAY','allow_notifications':False,'allow_follow':False}}
+        payload = validate_policy_payload(raw, 'dev')
+        self.assertEqual(_policy_input(payload), raw)
+        with self.assertRaises(PolicyError):
+            validate_policy_payload({**raw,'user_bindings':[], 'allow_all_active_bound_users':True}, 'dev')
+        budget = types.SimpleNamespace(scope='migration',version=3, source_instance='synthetic',
+                                       allows_record=lambda kind, identity: (kind,identity)==('Task',17))
+        with patch('hero_integration.services.execution_budget.current_budget', return_value=budget):
+            self.assertTrue(_allows_test_task(payload,'HERO-RUN-00021',17))
+            self.assertFalse(_allows_test_task(payload,'HERO-RUN-00022',17))
+            self.assertFalse(_allows_test_task(payload,'HERO-RUN-00021',18))
+
     def test_policy_writes_deny_non_manager_before_document_access(self):
         frappe = types.ModuleType('frappe')
         frappe.only_for = Mock(side_effect=PermissionError('denied'))

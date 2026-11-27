@@ -1,3 +1,4 @@
+from dataclasses import replace
 import unittest
 
 from hero_integration.services.binding_registry import (
@@ -17,6 +18,28 @@ class TestRuntimeBindingIdentity(unittest.TestCase):
     def test_contradictory_target_claim_rejected_even_across_mapping_revisions(self):
         with self.assertRaises(BindingConflict):
             self.registry.create_or_resolve_object_binding(**dict(self.identity, target_name="CUST-99", mapping_revision=2))
+
+    def test_new_generation_after_native_deletion_with_same_name_and_revision(self):
+        from hero_integration.services.binding_registry import NATIVE_DELETED
+        storage = self.registry._storage
+        spec = dict(source_field="name", target_field="customer_name", mapping_definition_id="name",
+                    mapping_revision=1, direction=MappingDirection.HERO_TO_FRAPPE)
+        first_field = self.registry.create_or_resolve_field_binding(self.parent, **spec)
+        retired = replace(self.parent, lifecycle="LEGACY", reconciliation=NATIVE_DELETED)
+        storage._objects[(retired.site_scope, retired.identity_key)] = retired
+        new = self.registry.create_or_resolve_object_binding(**self.identity)
+        self.assertNotEqual(new.identity_key, retired.identity_key)
+        self.assertEqual(self.registry.create_or_resolve_object_binding(**self.identity), new)
+        self.assertEqual(storage.object(retired.site_scope, retired.identity_key), retired)
+        fresh_field = self.registry.create_or_resolve_field_binding(new, **spec)
+        self.assertNotEqual(fresh_field.identity_key, first_field.identity_key)
+        self.assertEqual(storage.fields_for_source(new.site_scope, new.source_instance), (fresh_field,))
+
+    def test_source_deletion_with_native_document_still_present_keeps_its_claim(self):
+        retired = replace(self.parent, lifecycle="LEGACY", reconciliation="DELETED")
+        self.registry._storage._objects[(retired.site_scope, retired.identity_key)] = retired
+        with self.assertRaises(BindingConflict):
+            self.registry.create_or_resolve_object_binding(**self.identity)
 
     def test_other_external_id_cannot_adopt_bound_customer(self):
         with self.assertRaises(BindingConflict):

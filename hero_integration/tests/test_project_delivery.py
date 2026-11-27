@@ -187,8 +187,8 @@ class TestProjectNamingProtection(TestCase):
         with self.assertRaisesRegex(ValueError,'local to ERPNext'):mapped_update_v2.normalise_mapping(value,SCHEMA)
 
     def test_delivery_activity_token_ignores_only_own_data_baseline_advancement(self):
-        from hero_integration.tests.test_project_logbook_writeback import TestLogbookPreparation
-        ctx=TestLogbookPreparation().context()
+        from hero_integration.tests.test_project_logbook_writeback import approved_logbook_context
+        ctx=approved_logbook_context()
         ctx.link['source_field_hashes']='before';ctx.link['target_field_hashes']='before'
         token=logbook._fingerprint(ctx,delivery=True);native=logbook._fingerprint(ctx)
         ctx.link['source_field_hashes']='after';ctx.link['target_field_hashes']='after'
@@ -265,8 +265,8 @@ class TestProjectNamingProtection(TestCase):
 
 class TestConfirmedPhaseStamp(TestCase):
     def test_exact_phase_save_receipt_can_rebase_delivery_token_but_not_native_confirmation(self):
-        from hero_integration.tests.test_project_logbook_writeback import TestLogbookPreparation
-        ctx=TestLogbookPreparation().context()
+        from hero_integration.tests.test_project_logbook_writeback import approved_logbook_context
+        ctx=approved_logbook_context()
         original=logbook._fingerprint(ctx,delivery=True)
         before=str(ctx.project.modified);ctx.project.modified='own-verified-phase-save'
         self.assertNotEqual(original,logbook._fingerprint(ctx,delivery=True))

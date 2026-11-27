@@ -24,7 +24,7 @@ def start_migration(
     frappe.only_for("System Manager")
     if not bool(int(dry_run)):
         key = {"Customer Migration": "contacts", "Project Migration": "projects",
-               "Schedule Migration": "events", "Projection Migration": "tasks"}.get(action, "other")
+               "Schedule Migration": "events", "Projection Migration": "tasks"}.get(action, "combined")
         _assert_manual_prerequisite(key, _configured_source_instance())
     return _start_migration(
         action=action, dry_run=dry_run, scheduled=False, graphql_service=graphql_service
@@ -59,13 +59,24 @@ def pending_sync(expected_plan_generation: int | str) -> dict[str, object]:
 
 @frappe.whitelist(methods=["POST"])
 def start_sync_once(request_id: str, plan_key: str, expected_plan_generation: int,
-                    expected_source_revision: int, confirmed: int, scope: str = "BOUND_OBJECTS"):
-    """Explicit administrative approval, limited to fifty source identities."""
+                    expected_source_revision: int, confirmed: int, scope: str = "BOUND_OBJECTS", expected_limit: int | None = None):
+    """Explicit administrative approval with the configured primary record limit."""
     from hero_integration.services.execution_runtime import execute
     frappe.only_for("System Manager")
     return execute("one_shot", request_id=request_id, plan_key=plan_key,
                    expected_plan_generation=expected_plan_generation,
-                   expected_source_revision=expected_source_revision, confirmed=confirmed, scope=scope)
+                   expected_source_revision=expected_source_revision, confirmed=confirmed, scope=scope, expected_limit=expected_limit)
+
+
+@frappe.whitelist(methods=["POST"])
+def start_monitor_test(request_id: str, plan_key: str, expected_plan_generation: int,
+                       expected_source_revision: int, operation: str, confirmed: int, expected_limit: int | None = None):
+    """Observe one authorized MONITOR stream using the frozen test record limit."""
+    from hero_integration.services.execution_runtime import execute
+    frappe.only_for("System Manager")
+    return execute("manual_monitor", request_id=request_id, plan_key=plan_key,
+                   expected_plan_generation=expected_plan_generation, expected_source_revision=expected_source_revision,
+                   stream=operation, confirmed=confirmed, expected_limit=expected_limit)
 
 
 @frappe.whitelist(methods=["POST"])
@@ -105,6 +116,7 @@ def sync_hero_execute(
     expected_binding_revision: int | str,
     confirmation_fingerprint: str = "",
     confirmed: int | bool = 0,
+    event_name: str = "",
 ) -> dict[str, object]:
     """Execute one revalidated B6-bound, schema-approved HERO mutation."""
     frappe.only_for("System Manager")
@@ -116,37 +128,17 @@ def sync_hero_execute(
         frappe.throw(frappe._("Sync Hero binding revision is invalid."))
     if binding_revision != binding.revision:
         frappe.throw(frappe._("Sync Hero binding changed; reload its preview."))
-    from hero_integration.services.sync_engine import (
-        Eligibility,
-        OutboundApproval,
-        execute_sync_hero,
-        sync_hero_eligibility,
-    )
+    from hero_integration.services.sync_engine import Eligibility, sync_hero_eligibility
 
     if sync_hero_eligibility(context["intent"]) is not Eligibility.LOCAL_CHANGED:
         frappe.throw(frappe._("Only a local field change can be sent; reconcile other binding states first."))
     if confirmed not in (True, 1, "1", "true", "True") or confirmation_fingerprint != context["fingerprint"]:
         frappe.throw(frappe._("Explicit confirmation for this exact Sync Hero preview is required."))
-    _assert_mutation_execution_released()
-    audit = _reserve_mutation(
-        operation_name=context["mapping"]["target"]["operation"],
-        schema_fingerprint=context["snapshot"].schema_fingerprint,
-        mapping_revision=binding.mapping_revision,
-        request_fingerprint=context["fingerprint"],
-    )
-    try:
-        approval = OutboundApproval(True, True, True, True, True, binding.acknowledged_version + 1)
-        updated = execute_sync_hero(
-            context["intent"], approval, _SyncHeroTransport(context, audit), context["bindings"]
-        )
-    except Exception as error:
-        _finalize_mutation(
-            audit, "Timeout" if error.__class__.__name__ in {"TimeoutError", "URLError"} else "Failed",
-            "Sync Hero outcome is unconfirmed. No automatic retry was performed; inspect the remote effect before another explicit submission.",
-        )
-        frappe.throw(frappe._("Sync Hero is blocked or uncertain; no automatic retry was performed."))
-    _finalize_mutation(audit, "Succeeded", "Exact B6-bound Sync Hero mutation completed; values were not retained in the audit.")
-    return {"status": "SUCCEEDED", "correlation_id": audit.correlation_id, "binding_revision": updated.revision}
+    if event_name:
+        event = sync_hero_event_preview(event_name, mapping_name, expected_plan_generation)
+        if event["binding_identity_key"] != binding_identity_key or event["request_fingerprint"] != confirmation_fingerprint:
+            frappe.throw(frappe._("This event does not identify a bound native change."))
+    return _execute_bound_writeback(context, event_name=event_name)
 
 
 def _field_choice_value(value_json):
@@ -181,9 +173,10 @@ def resolve_sync_field(event: str, expected_modified: str, choice: str, value_js
 def _sync_hero_context(binding_identity_key: str, mapping_name: str, expected_plan_generation: int | str,
                        *, review_event=None, reviewed_value=None) -> dict[str, object]:
     """Rebuild all outbound inputs from current B6, plan, schema, and document state."""
-    from hero_integration.services.binding_registry import BindingRegistryService, FrappeBindingStorage
+    from hero_integration.services.binding_registry import BindingRegistryService, FrappeBindingStorage, native_fingerprint
     from hero_integration.services.frappe_writeback import (
-        WritebackContractError, build_request_checked, fingerprint_payload, normalise_mapping,
+        WritebackContractError, approved_field_request, build_request_checked, fingerprint_payload, normalise_mapping,
+        object_write_scope,
     )
     from hero_integration.services.sync_engine import OutboundIntent
     from hero_integration.services.sync_runtime_adapter import _runtime_plan_service
@@ -201,7 +194,11 @@ def _sync_hero_context(binding_identity_key: str, mapping_name: str, expected_pl
     if binding is None:
         frappe.throw(frappe._("Sync Hero requires an existing field binding."))
     parent = storage.object(site_scope, binding.object_binding_key)
-    if parent is None or parent.source_instance != binding.source_instance:
+    if (parent is None or parent.source_instance != binding.source_instance
+            or (parent.target_app, parent.target_doctype, parent.target_name)
+            != (binding.target_app, binding.target_doctype, binding.target_name)):
+        frappe.throw(frappe._("Sync Hero binding has no current source object."))
+    if storage.target_claim(site_scope, parent.target_doctype, parent.target_name) != parent:
         frappe.throw(frappe._("Sync Hero binding has no current source object."))
     if parent.lifecycle != "VALID" or parent.reconciliation:
         frappe.throw(frappe._("Sync Hero object binding requires lifecycle reconciliation."))
@@ -210,6 +207,11 @@ def _sync_hero_context(binding_identity_key: str, mapping_name: str, expected_pl
     )
     if binding.mapping_revision != executable.selection.mapping_revision or parent.mapping_revision != binding.mapping_revision:
         frappe.throw(frappe._("Sync Hero binding mapping revision is stale."))
+    from hero_integration.services import task_hierarchy
+    if parent.target_doctype == "Task" and (frappe.db.get_value("Task", parent.target_name, "parent_task")
+            or task_hierarchy.is_description(binding) and (task_hierarchy.confirmed(binding)
+            or frappe.db.exists("Task", {"parent_task": parent.target_name}))):
+        frappe.throw(frappe._("Task hierarchies require the bound task update mapping."))
     row = frappe.get_doc("HERO GraphQL Mapping", mapping_name)
     if row.status != "Active" or row.direction != "FRAPPE_TO_MUTATION" or row.source_instance != binding.source_instance:
         frappe.throw(frappe._("Sync Hero mutation mapping is not active for this source instance."))
@@ -232,6 +234,19 @@ def _sync_hero_context(binding_identity_key: str, mapping_name: str, expected_pl
         fields=["name", "graphql_service", "operation_name", "contract_revision", "contract_fingerprint", "schema_fingerprint"],
     )
     contract = _require_writeback_contract(contracts, snapshot)
+    from hero_integration.services.sync_runtime_adapter import _require_latest_validated_snapshot
+    if snapshot.execution_contract_status == "Blocked":
+        frappe.throw(frappe._("The mutation schema snapshot is not executable."))
+    _require_latest_validated_snapshot(frappe, frappe.get_single("HERO Integration Settings"),
+                                       parent.source_instance, executable.selection)
+    from types import SimpleNamespace
+    _require_latest_validated_snapshot(frappe, frappe.get_single("HERO Integration Settings"), parent.source_instance,
+        SimpleNamespace(graphql_mapping=row.name, schema_snapshot=snapshot.name, schema_fingerprint=snapshot.schema_fingerprint))
+    scope = json.loads(frappe.db.get_value("HERO Mutation Contract", contract.name, "mapping_json") or "{}")
+    if scope != {"mode": "ADMIN_INPUT"}:
+        from hero_integration.services.mapped_update_v2 import _validate_contract_scope
+        area = {"Customer": "HeroCustomers", "Project": "HeroProjectMatches"}.get(binding.target_doctype)
+        _validate_contract_scope(row, {"area": area}, frappe.get_doc("HERO Mutation Contract", contract.name))
     document = frappe.get_doc(binding.target_doctype, binding.target_name)
     frappe.has_permission(binding.target_doctype, "write", document, throw=True)
     from hero_integration.services.binding_registry import verify_incarnation
@@ -244,11 +259,16 @@ def _sync_hero_context(binding_identity_key: str, mapping_name: str, expected_pl
     value = _writeback_source_value(document, binding.target_field)
     if review_event:
         value = reviewed_value
-    outbound_document, variables = build_request_checked(mapping, schema, parent.external_object_id, value)
-    from hero_integration.services.binding_registry import state_fingerprint
-    local_fingerprint = state_fingerprint(value, present=True)
+    meta = document.meta.get_field(binding.target_field)
+    if (not meta or meta.is_virtual or meta.fetch_from or meta.fieldtype == "Read Only"
+            or int(meta.permlevel or 0) not in document.get_permlevel_access("write")):
+        frappe.throw(frappe._("Sync Hero mapping does not match the bound target field."))
+    _, logical = build_request_checked(mapping, schema, parent.external_object_id, value)
+    service = frappe.get_doc("HERO GraphQL Service", contract.graphql_service)
+    outbound_document, variables, variable = approved_field_request(snapshot, contract, service, mapping["target"], logical)
+    local_fingerprint = native_fingerprint(value, meta.fieldtype)
     canonical = fingerprint_payload(
-        row.name, int(row.mapping_revision or 1), document.modified, binding.source_instance,
+        row.name, int(row.mapping_revision or 1), local_fingerprint, binding.source_instance,
         parent.external_object_id, outbound_document, variables,
     )
     canonical += "|" + binding.identity_key + "|" + str(binding.revision)
@@ -260,26 +280,304 @@ def _sync_hero_context(binding_identity_key: str, mapping_name: str, expected_pl
     )
     context = {
         "bindings": bindings, "binding": binding, "parent": parent, "executable": executable,
-        "snapshot": snapshot, "mapping": mapping, "intent": intent,
+        "snapshot": snapshot, "mapping": mapping, "intent": intent, "variable": variable, "fieldtype": meta.fieldtype,
+        "mapping_name": row.name, "mutation_revision": int(row.mapping_revision or 1), "contract_name": contract.name,
+        "mutation_contract": [contract.name, int(contract.contract_revision or 1), contract.contract_fingerprint],
+        "object_scope": object_write_scope(site_scope, parent.source_instance, binding.target_doctype, binding.target_name),
         "fingerprint": hashlib.sha256(canonical.encode()).hexdigest(),
     }
     from hero_integration.services.writeback_readback import prepare_readback
     context["readback_plan"] = prepare_readback(context, frappe)
+    from hero_integration.services.mapping_runtime import effective_rule_fingerprint
+    from hero_integration.services.sync_engine import FrappeBoundProcessor
+    definitions = context["readback_plan"].sealed.contract.definition_ids
+    processor = FrappeBoundProcessor(binding.mapping_revision, definitions, frappe, object_type=parent.object_type,
+                                     mapping_name=executable.selection.graphql_mapping)
+    plan = processor._approved_plan(frappe, binding.source_instance)
+    rules = [spec for spec in plan.definitions if spec.definition_id == binding.mapping_definition_id]
+    if (len(rules) != 1 or (rules[0].source_path, rules[0].target_doctype, rules[0].target_field)
+            != (binding.source_field, binding.target_doctype, binding.target_field)
+            or parent.mapping_definition_id not in {plan.binding_contract.definition_id, *definitions}
+            or parent.mapping_revision != binding.mapping_revision):
+        frappe.throw(frappe._("Sync Hero binding mapping revision is stale."))
+    rule = rules[0]
+    from hero_integration.services.automatic_writeback import automatic
+    if (not plan.permits_manual_outbound(rule) or automatic() and plan.field_authority.get(rule.definition_id) == "MANUAL"
+            or not processor.supports_scalar(rule, document)):
+        frappe.throw(frappe._("The approved field contract does not permit this outbound write."))
+    if rule.transformation == "Plain Text To HTML" and mapping["transformation"] != "HTML To Plain Text":
+        frappe.throw(frappe._("Project notes require an explicitly approved inverse text transformation."))
+    context["read_plan"], context["rule"] = plan, rules[0]
+    context["service_name"] = service.name
+    context["rules_fingerprint"] = effective_rule_fingerprint(definitions, executable.selection.graphql_mapping)
+    context["field_authority"] = plan.field_authority.get(rule.definition_id)
+    from hero_integration.services.execution_runtime import link_source_type, locked_provenance
+    link = locked_provenance(parent.source_instance, link_source_type(plan.target_operation or plan.operation),
+                             parent.external_object_id, parent.target_doctype)
+    if link and (link.target_name != parent.target_name or link.sync_status != "Synchronized"):
+        frappe.throw(frappe._("Sync Hero object binding requires lifecycle reconciliation."))
     from hero_integration.services.writeback_source import capture_source
     context["source_context"] = capture_source(snapshot, parent.source_instance)
     context["fingerprint"] = hashlib.sha256(
-        (context["fingerprint"] + "|" + context["source_context"].fingerprint).encode()
+        (context["fingerprint"] + "|" + context["source_context"].fingerprint + "|" + context["rules_fingerprint"]).encode()
     ).hexdigest()
     context["recheck"] = lambda: _sync_hero_context(binding_identity_key, mapping_name, generation,
         review_event=review_event, reviewed_value=reviewed_value)["fingerprint"]
     return context
 
 
+@frappe.whitelist()
+def sync_hero_event_preview(event_name: str, mapping_name: str = "", expected_plan_generation: int | str = 0):
+    """Resolve a committed native save to its current field and exact confirmation preview."""
+    frappe.only_for("System Manager")
+    from hero_integration.services.binding_registry import FrappeBindingStorage
+
+    event = frappe.get_doc("HERO Integration Record", event_name)
+    event.check_permission("read")
+    if event.origin == "frappe" and event.technical_action == "frappe_create_observed":
+        from hero_integration.services.mapped_send import preview
+        if (event.target_doctype not in {"Customer", "Task", "Project"} or event.source_type != "Frappe." + event.target_doctype
+                or event.source_id != event.target_name):
+            frappe.throw(frappe._("This event does not identify a bound native change."))
+        result = preview(event.target_doctype, event.target_name, creation_event=event)
+        if mapping_name and result["mapping"] != mapping_name:
+            frappe.throw(frappe._("This event does not identify a bound native change."))
+        return {**result, "event_name": event.name}
+    storage = FrappeBindingStorage(frappe)
+    parent = storage.object(frappe.local.site, event.correlation_id)
+    if (event.technical_action not in {"frappe_change_observed", "frappe_related_change_observed"} or event.origin != "frappe"
+            or not parent or (event.source_type, event.source_id, event.target_doctype, event.target_name)
+            != (parent.object_type, parent.external_object_id, parent.target_doctype, parent.target_name)):
+        frappe.throw(frappe._("This event does not identify a bound native change."))
+    changed = {field.strip() for field in (event.changed_fields or "").split(",")}
+    mapping = frappe.get_doc("HERO GraphQL Mapping", mapping_name)
+    mapping.check_permission("read")
+    profile = json.loads(mapping.mapping_json)
+    source = profile.get("source", {})
+    grouped = profile.get("usage") in {"MAPPED_UPDATE_V2", "SEND_TO_HERO"}
+    if grouped:
+        from hero_integration.services import mapped_send, mapped_update_v2
+        entries = (profile["assignments"] if profile["usage"] == "MAPPED_UPDATE_V2"
+                   else [item for _, item in mapped_send.assignments(profile)])
+        selected = {item["source"]["field"] for item in entries if item["source"]["doctype"] == parent.target_doctype}
+    else:
+        selected = {source.get("field")}
+    if event.technical_action == "frappe_related_change_observed":
+        from hero_integration.services.change_detection import related_field_key
+        if (profile.get("usage") != "MAPPED_UPDATE_V2" or source.get("doctype") != parent.target_doctype
+                or mapping.source_instance != parent.source_instance or mapping.status != "Active" or parent.lifecycle != "VALID"):
+            frappe.throw(frappe._("This event does not identify a bound native change."))
+        related = {related_field_key(item["source"]) for item in entries}
+        observed = json.loads(event.native_state_json or "{}")
+        if not (related & changed) or not (related & changed) <= observed.keys() or not observed.get("_related_document"):
+            frappe.throw(frappe._("This event does not identify a bound native change."))
+        result = mapped_update_v2.preview(mapping.name, parent.target_doctype, parent.target_name,
+            related_observation={key: observed[key] for key in (related & changed) | {"_related_document"}})
+        return {**result, "event_name": event.name}
+    matching = selected & changed
+    if (source.get("doctype") != parent.target_doctype or not matching or mapping.source_instance != parent.source_instance
+            or mapping.status != "Active"):
+        frappe.throw(frappe._("This event does not identify a bound native change."))
+    document = frappe.get_doc(parent.target_doctype, parent.target_name)
+    document.check_permission("write")
+    if event.native_state_json:
+        from hero_integration.services.binding_registry import native_fingerprint
+        observed = json.loads(event.native_state_json)
+        current = {field for field in matching if (meta := document.meta.get_field(field))
+                   and native_fingerprint(document.get(field), meta.fieldtype) == observed.get(field)}
+        if current != matching:
+            from hero_integration.services.automatic_writeback import automatic
+            if not automatic():
+                frappe.throw(frappe._("A later local edit superseded this native change."))
+            if not current:
+                return {"event_name": event.name, "superseded": True, "can_send": False}
+            # The group preview still materializes and fingerprints the entire current
+            # mapping. At least one field from this observation must remain applicable.
+            matching = current
+    if grouped:
+        bound = {field.target_field for field in storage.fields_for_object(parent.site_scope, parent.identity_key)}
+        if not matching <= bound:
+            frappe.throw(frappe._("This event does not identify a bound native change."))
+        if profile["usage"] == "MAPPED_UPDATE_V2":
+            result = mapped_update_v2.preview(mapping.name, parent.target_doctype, parent.target_name)
+        else:
+            result = mapped_send.preview(parent.target_doctype, parent.target_name)
+        if result["mapping"] != mapping.name or result.get("create"):
+            frappe.throw(frappe._("This event does not identify a bound native change."))
+        applicable = any(row.get("source_field") in matching and row.get("source_doctype") == parent.target_doctype
+                         for row in result["changes"])
+        return {**result, "can_send": bool(applicable and result["can_send"]), "event_name": event.name}
+    fields = storage.fields_for_target(parent.site_scope, parent.source_instance, parent.target_doctype,
+                                       parent.target_name, source["field"])
+    if len(fields) != 1 or fields[0].object_binding_key != parent.identity_key:
+        frappe.throw(frappe._("This event does not identify a bound native change."))
+    field = fields[0]
+    return {**sync_hero_preview(field.identity_key, mapping_name, expected_plan_generation),
+            "binding_identity_key": field.identity_key, "event_name": event.name}
+
+
+@frappe.whitelist(methods=["POST"])
+def sync_hero_event_execute(event_name: str, mapping_name: str, confirmation_fingerprint: str, confirmed: int = 0,
+                            expected_plan_generation: int | str = 0):
+    """Deliver an explicitly reviewed native observation once using the existing field or group action."""
+    from hero_integration.services import mapped_send, mapped_update_v2
+
+    frappe.only_for("System Manager")
+    event = frappe.get_doc("HERO Integration Record", event_name)
+    event.check_permission("read")
+    if confirmed not in (True, 1, "1", "true") or not mapping_name or not confirmation_fingerprint:
+        frappe.throw(frappe._("Explicit confirmation for this exact Sync Hero preview is required."))
+    existing = frappe.db.get_value("HERO Mutation Audit", {"event_action_key": _event_action_key(event.name, mapping_name)},
+                                   ["delivery_stage", "correlation_id"], as_dict=True)
+    if existing:
+        return {"status": existing.delivery_stage, "correlation_id": existing.correlation_id}
+    reviewed = sync_hero_event_preview(event.name, mapping_name, expected_plan_generation)
+    if "binding_identity_key" in reviewed:
+        return sync_hero_execute(reviewed["binding_identity_key"], mapping_name, expected_plan_generation,
+            reviewed["binding_revision"], confirmation_fingerprint, confirmed, event_name=event.name)
+    if reviewed["fingerprint"] != confirmation_fingerprint or not reviewed["can_send"]:
+        frappe.throw(frappe._("Explicit confirmation for this exact Sync Hero preview is required."))
+    args = {"fingerprint": confirmation_fingerprint, "confirmed": True, "event_name": event.name}
+    if reviewed.get("area") and not reviewed.get("create"):
+        return mapped_update_v2.send(mapping_name, event.target_doctype, event.target_name, **args)
+    return mapped_send.send(event.target_doctype, event.target_name, **args)
+
+
+def _event_action_key(event_name, mapping_name):
+    return hashlib.sha256(json.dumps([frappe.local.site, event_name, mapping_name]).encode()).hexdigest()
+
+
+def _locked_bound_context(context, proof, *, recovery=False):
+    """Re-read the approved state in a short transaction before dispatch or acknowledgment."""
+    from hero_integration.services.binding_registry import FrappeBindingStorage
+    from hero_integration.services.mapping_runtime import effective_rule_fingerprint
+    from hero_integration.services.writeback_readback import intent_evidence
+
+    selection = context["executable"].selection
+    storage = FrappeBindingStorage(frappe)
+    for doctype, filters in (
+        ("HERO Runtime Plan", {"plan_key": proof["plan"]}),
+        ("HERO GraphQL Schema Snapshot", {"name": selection.schema_snapshot}),
+        ("HERO GraphQL Service", {"name": selection.graphql_service}),
+        ("HERO GraphQL Mapping", {"name": selection.graphql_mapping}),
+        ("HERO GraphQL Mapping", {"name": proof["mutation_mapping"]}),
+        ("HERO Mutation Contract", {"name": context["contract_name"]}),
+        ("HERO GraphQL Service", {"name": context["service_name"]}),
+    ):
+        if not frappe.db.get_value(doctype, filters, "name", for_update=True):
+            frappe.throw(frappe._("The selected mapping revision is stale."))
+    effective_rule_fingerprint(context["readback_plan"].sealed.contract.definition_ids,
+                               selection.graphql_mapping, lock=True, frappe_module=frappe)
+    parent = storage.object(proof["site"], proof["parent"], for_update=True)
+    field = storage.field(proof["site"], proof["binding"], for_update=True)
+    if not parent or not field or not frappe.db.get_value(field.target_doctype, field.target_name,
+                                                         "name", for_update=True):
+        frappe.throw(frappe._("Sync Hero binding has no current source object."))
+    current = _sync_hero_context(proof["binding"], proof["mutation_mapping"], proof["generation"])
+    rebuilt = intent_evidence(current)
+    compare = proof.keys() - ({"wire", "local"} if recovery else set())
+    if set(rebuilt) != set(proof) or any(rebuilt[k] != proof[k] for k in compare):
+        frappe.throw(frappe._("Sync Hero binding changed; reload its preview."))
+    return current
+
+
+def _execute_bound_writeback(context, *, event_name=""):
+    from hero_integration.services.execution_runtime import deliver_bound_intent
+    from hero_integration.services.sync_engine import OutboundApproval, execute_sync_hero
+    from hero_integration.services.writeback_readback import intent_evidence
+
+    _assert_mutation_execution_released()
+    proof = intent_evidence(context)
+
+    def revalidate():
+        return _locked_bound_context(context, proof)
+
+    def perform(audit, dispatch, ledger):
+        def confirm():
+            ledger.commit()
+            revalidate()
+
+        approval = OutboundApproval(True, True, True, True, True, proof["ack_version"] + 1)
+        transport = _SyncHeroTransport(context, audit, before_dispatch=lambda: dispatch(revalidate), before_ack=confirm)
+        return execute_sync_hero(context["intent"], approval, transport, context["bindings"])
+
+    audit, updated = deliver_bound_intent(frappe, proof, operation=context["mapping"]["target"]["operation"],
+        fingerprint=context["fingerprint"], initial_check=revalidate, perform=perform, event_name=event_name)
+    return {"status": "SUCCEEDED", "correlation_id": audit.correlation_id, "binding_revision": updated.revision}
+
+
+@frappe.whitelist(methods=["POST"])
+def reconcile_bound_writeback(correlation_id: str):
+    """Resolve a persisted bound intent using an exact HERO read, without issuing a mutation."""
+    from hero_integration.services.sync_engine import FrappeSyncLedger
+    from hero_integration.services.writeback_readback import observed_field
+    from hero_integration.client.graphql import HeroGraphQLClient
+    from hero_integration.services.writeback_source import validate_source
+
+    frappe.only_for("System Manager")
+    name = frappe.db.get_value("HERO Mutation Audit", {"correlation_id": correlation_id, "site": frappe.local.site})
+    if not name:
+        frappe.throw(frappe._("HERO mutation receipt was not found."))
+    audit = frappe.get_doc("HERO Mutation Audit", name)
+    if not audit.bound_object_key or not audit.intent_json:
+        frappe.throw(frappe._("This receipt has no bound field intent."))
+    ledger = FrappeSyncLedger(frappe)
+    with ledger.execution_lease("outbound:" + audit.bound_object_key):
+        ledger.commit()
+        from hero_integration.services.execution_runtime import locked_delivery_receipt
+        audit = locked_delivery_receipt(frappe, name)
+        proof = json.loads(audit.intent_json)
+        if (proof.get("version") not in {1, 2, 3, 4} or proof.get("object") != audit.bound_object_key
+                or proof.get("site") != frappe.local.site):
+            frappe.throw(frappe._("This receipt has no bound field intent."))
+        if audit.delivery_stage in {"Confirmed", "Not Sent"}:
+            return {"status": audit.delivery_stage, "correlation_id": correlation_id}
+        if audit.pending_object_key != audit.bound_object_key:
+            frappe.throw(frappe._("This receipt has no bound field intent."))
+        if audit.delivery_stage == "Prepared":
+            _finalize_mutation(audit, "Failed", "Abandoned before dispatch.", commit=ledger.commit)
+            return {"status": "Not Sent", "correlation_id": correlation_id}
+        if audit.delivery_stage not in {"Dispatching", "Uncertain"}:
+            frappe.throw(frappe._("This receipt has no bound field intent."))
+        # The worker lease is free. Release its global slot, retaining the object latch even
+        # if permission, schema, credentials, remote read or the later CAS fails.
+        _finalize_mutation(audit, "Failed", "Read-only verification pending.", commit=ledger.commit)
+        if proof["version"] == 4:
+            from hero_integration.services.project_logbook_writeback import reconcile_delivery
+            return reconcile_delivery(audit, proof, ledger)
+        if proof["version"] == 3:
+            from hero_integration.services.mapped_send import reconcile_delivery
+            return reconcile_delivery(audit, proof, ledger)
+        if proof["version"] == 2:
+            from hero_integration.services.mapped_update_v2 import reconcile_delivery
+            return reconcile_delivery(audit, proof, ledger)
+        context = _sync_hero_context(proof["binding"], proof["mutation_mapping"], proof["generation"])
+        _locked_bound_context(context, proof, recovery=True)
+        ledger.commit()
+        config = validate_source(context["source_context"])
+        reader = HeroGraphQLClient(config.endpoint, lambda: validate_source(context["source_context"]).api_token,
+                                   config.timeout_seconds, max_retries=0)
+        wire, projected = observed_field(context, reader)
+        if wire != proof["wire"]:
+            return {"status": "REVIEW_REQUIRED", "correlation_id": correlation_id}
+        ledger.commit()
+        current = _locked_bound_context(context, proof, recovery=True)
+        binding = current["bindings"].record_verified_acknowledgment(current["binding"],
+            expected_revision=proof["revision"], mapping_definition_id=proof["definition"],
+            mapping_revision=proof["mapping_revision"], source_fingerprint=projected, target_fingerprint=proof["local"],
+            evidence_id=correlation_id, version=proof["ack_version"] + 1)
+        _finalize_mutation(audit, "Succeeded", "Original bound intent verified by read-only recovery.", commit=ledger.commit)
+        return {"status": "Confirmed", "correlation_id": correlation_id, "binding_revision": binding.revision,
+                "local_changed": current["intent"].local_fingerprint != proof["local"]}
+
+
 class _SyncHeroTransport:
     """One-shot adapter over the existing mutation client; it never retries."""
 
-    def __init__(self, context: dict[str, object], audit) -> None:
+    def __init__(self, context: dict[str, object], audit, *, before_dispatch=None, before_ack=None) -> None:
         self._context, self._audit = context, audit
+        self.before_dispatch = before_dispatch
+        self.before_ack = before_ack
 
     def execute_once(self, document: str, variables: dict[str, object]):
         from hero_integration.client.graphql_mutation import HeroMutationClient
@@ -292,13 +590,19 @@ class _SyncHeroTransport:
         from hero_integration.services.writeback_source import validate_source
         configuration = validate_source(self._context.get("source_context"))
         from hero_integration.client.graphql import HeroGraphQLClient
-        from hero_integration.services.binding_registry import state_fingerprint
-        from hero_integration.services.writeback_readback import read_bound_value, verify_readback
-        reader = HeroGraphQLClient(configuration.endpoint, lambda: configuration.api_token,
-                                   configuration.timeout_seconds, max_retries=0)
-        before = read_bound_value(self._context, reader)
-        baseline = self._context.get("review_source_fingerprint", self._context["binding"].acknowledged_source_fingerprint)
-        if baseline is not None and state_fingerprint(before, present=True) != baseline:
+        from hero_integration.services.writeback_readback import expected_wire, observed_field, verify_readback
+        reader = HeroGraphQLClient(configuration.endpoint,
+            lambda: validate_source(self._context["source_context"]).api_token,
+            configuration.timeout_seconds, max_retries=0)
+        wire, source = observed_field(self._context, reader)
+        baseline = self._context["binding"].acknowledged_source_fingerprint
+        if not baseline:
+            raise RuntimeError("The bound remote field lacks its confirmed baseline.")
+        if wire == expected_wire(self._context, variables):
+            if self.before_ack:
+                self.before_ack()
+            return OutboundAck(True, self._audit.correlation_id, source, self._context["intent"].local_fingerprint)
+        if source != self._context.get("review_source_fingerprint", baseline):
             raise RuntimeError("The remote field changed since acknowledgment; reconcile before sending.")
         configuration = validate_source(self._context["source_context"])
         from hero_integration.services.mapping_contract_v1 import materialize_saved_mutation
@@ -312,11 +616,16 @@ class _SyncHeroTransport:
             frappe.db.rollback()
         request = materialize_saved_mutation(self._context['snapshot'], document, variables,
                                              request_scope=self._audit.correlation_id)
-        client = HeroMutationClient(configuration.endpoint, lambda: configuration.api_token, configuration.timeout_seconds)
-        before_mutation = self._context.get("before_mutation")
-        if before_mutation:
-            before_mutation()
-        result = client.execute_once(request.document, request.variables)
+        if self.before_dispatch:
+            self.before_dispatch()
+        if self._context.get("before_mutation"):
+            self._context["before_mutation"]()
+        from hero_integration.client.mutation_guard import worker_update
+        transport = HeroMutationClient(configuration.endpoint, lambda: validate_source(self._context["source_context"]).api_token,
+                                       configuration.timeout_seconds)
+        with worker_update(request, self._audit, self._context["source_context"],
+                           lambda: (self._context["parent"], [self._context["binding"]])):
+            result = transport.execute_once(request.document, request.variables)
         mapping, parent, intent = self._context["mapping"], self._context["parent"], self._context["intent"]
         payload = result.get("data") if isinstance(result, dict) and isinstance(result.get("data"), dict) else result
         returned = payload.get(mapping["target"]["operation"]) if isinstance(payload, dict) else None
@@ -324,6 +633,8 @@ class _SyncHeroTransport:
             raise RuntimeError("HERO mutation response could not confirm the bound remote identity.")
         validate_source(self._context["source_context"])
         source_fingerprint = verify_readback(self._context, reader, variables)
+        if self.before_ack:
+            self.before_ack()
         return OutboundAck(True, self._audit.correlation_id, source_fingerprint, intent.local_fingerprint)
 
 
@@ -345,6 +656,9 @@ def _start_migration(
     is_preview = bool(int(dry_run))
     from hero_integration.services.migration_testing import configuration, run_metadata
     frozen_testing = testing_configuration if testing_configuration is not None else configuration(frappe_module=frappe)
+    if frozen_testing['testing_enabled']:
+        from hero_integration.services.test_environment import require_environment
+        require_environment()
     testing = {'enabled': bool(frozen_testing['testing_enabled']), 'max_actions': frozen_testing['testing_max_actions']}
     from hero_integration.services.migration import customer_dependency
 
@@ -356,7 +670,7 @@ def _start_migration(
     _require_selected_mappings(action, service, mapping, dependencies)
     binding = _confirmed_source_binding()
     from hero_integration.services.run_reservation import admit_migration
-    admit_migration(frappe, parent=parent_run_name)
+    admit_migration(frappe, parent=parent_run_name, action=action)
     run = frappe.get_doc(
         {
             "doctype": "HERO Integration Run",
@@ -376,6 +690,10 @@ def _start_migration(
         }
     )
     from hero_integration.services.migration import bind_run_checkpoint
+    if run.testing_enabled:
+        from hero_integration.services.execution_budget import CONTRACT_VERSION
+        run.budget_contract_version = (frappe.db.get_value("HERO Integration Run", parent_run_name,
+                                       "budget_contract_version") or 1) if parent_run_name else CONTRACT_VERSION
     if parent_run_name:
         run.flags.parent_execution_run = parent_run_name
         run.execution_budget_run = frappe.db.get_value("HERO Integration Run", parent_run_name, "execution_budget_run")
@@ -496,11 +814,11 @@ def cancel_run(run_name: str) -> dict[str, str]:
     if run.state not in TERMINAL_STATES:
         run.state = "Cancelled"
         run.save()
-        from hero_integration.services.file_migration import FULL_ACTION, active_child
+        from hero_integration.services.file_migration import FULL_ACTION, active_children
 
-        child = active_child(run.name) if getattr(run, "action", "") == FULL_ACTION else ""
-        if child:
-            cancel_run(child)
+        if getattr(run, "action", "") == FULL_ACTION:
+            for child in active_children(run.name):
+                cancel_run(child)
     return {"status": run.state, "run": run.name}
 
 
@@ -509,6 +827,8 @@ def resume_run(run_name: str) -> dict[str, str]:
     frappe.only_for("System Manager")
     run = frappe.get_doc("HERO Integration Run", run_name)
     from hero_integration.services.file_migration import RUN_ACTIONS, SLICE_ACTIONS, SourceBindingError, resume as resume_file_run
+    from hero_integration.services.test_environment import guard_run
+    guard_run(run)
     recover_running = run.state == "Running" and getattr(run, "action", "") in {*ACTIONS, *SLICE_ACTIONS}
     if not recover_running and run.state not in {"Failed", "Cancelled", "Blocked"}:
         frappe.throw(frappe._("Only failed, cancelled, or blocked runs can resume."))
@@ -527,10 +847,10 @@ def resume_run(run_name: str) -> dict[str, str]:
     from hero_integration.services.run_reservation import admit_migration
     from hero_integration.services.file_migration import _parent_run
     if recover_running:
-        admit_migration(frappe, parent=_parent_run(run.name), resume=run.name, recover_running=True)
+        admit_migration(frappe, parent=_parent_run(run.name), resume=run.name, recover_running=True, action=run.action)
         run.reload()
     else:
-        admit_migration(frappe, parent=_parent_run(run.name), resume=run.name)
+        admit_migration(frappe, parent=_parent_run(run.name), resume=run.name, action=run.action)
     _assert_checkpoint_contract(run, lock=True)
     validate_run_mappings(run)
     # Replay from the beginning through durable identity links. Offset-only
@@ -540,8 +860,8 @@ def resume_run(run_name: str) -> dict[str, str]:
         receipt["replay_requested"] = True
         run.page_checkpoint_json = json.dumps(receipt)
     else:
-        run.resume_phase, run.resume_offset, run.resume_record_index = "", 0, 0
-        run.customer_phase_state = run.project_phase_state = "Queued"
+        from hero_integration.services.migration_replay import begin
+        begin(run)
     run.state = "Queued"
     run.error_message = ""
     run.save()
@@ -642,7 +962,7 @@ def sync_page_state() -> dict[str, object]:
     """Stored state of the Synchronization page; this endpoint never contacts HERO."""
     frappe.only_for("System Manager")
     from hero_integration.services.polling import runtime_plan
-    from hero_integration.services.sync_page import ACTIVE_STATES, AREAS, manual_prerequisite
+    from hero_integration.services.sync_page import ACTIVE_STATES, AREAS, manual_start_blockers, scheduler_state
 
     from hero_integration.services.read_contract import reuse_page_reads
 
@@ -656,25 +976,29 @@ def sync_page_state() -> dict[str, object]:
                                 fields=["name", "action", "state"], order_by="creation asc", limit_page_length=20)
         services = _sync_area_read_services(instance)
         scheduler_active = not is_scheduler_inactive(verbose=False)
+        scheduler = scheduler_state(frappe, settings, plan, instance, scheduler_active)
+        operation = scheduler.get("scheduled_operation")
+        effective_plan = {**plan, "sources": [operation] if operation else []}
         return {
             "source_instance": instance,
             "source_revision": int(getattr(settings, "source_binding_revision", 0) or 0),
-            "manual_prerequisite": manual_prerequisite(instance, frappe),
+            "manual_start_blockers": manual_start_blockers(instance, frappe),
+            "test_limit": _testing_settings(settings)["max_actions"],
+            "testing_enabled": _testing_settings(settings)["enabled"],
             "active_run": active[0] if active else None,
-            "areas": [_sync_area_state(item, instance, services.get(item.operation) or [], active, plan) for item in AREAS],
+            "areas": [_sync_area_state(item, instance, services.get(item.operation) or [], active, effective_plan) for item in AREAS],
             "file_areas": _file_areas(active, instance),
             "service": {
                 "scheduler_active": scheduler_active,
                 "mode": plan["mode"], "allowed": plan["mode"] != "OFF", "paused": plan["paused"],
-                "running": (scheduler_active and plan["mode"] != "OFF" and not plan["paused"]
-                            and not plan["unsupported_sources"] and any(plan["areas"].values())),
+                **scheduler,
                 "interval_minutes": plan["interval_minutes"], "timezone": plan["timezone"],
                 "execution_window": plan["execution_window"], "page_size": plan["page_size"],
                 "page_overlap": plan["page_overlap"], "fast_available": plan["fast_available"],
                 "pagination_strategy": plan["pagination_strategy"], "retry_limit": plan["retry_limit"],
                 "retry_backoff_seconds": plan["retry_backoff_seconds"], "timeout_seconds": plan["timeout_seconds"],
                 "rate_limit": plan["rate_limit"], "notifications": plan["notifications"],
-                "polled_sources": plan["sources"], "unsupported": plan["unsupported_sources"],
+                "polled_sources": effective_plan["sources"], "unsupported": plan["unsupported_sources"],
                 "sync_status": getattr(settings, "sync_status", "") or "Not started",
                 "sync_error": getattr(settings, "sync_error", "") or "",
                 "last_successful_sync": getattr(settings, "last_successful_sync", None),
@@ -709,9 +1033,11 @@ def sync_area_start(area: str) -> dict[str, object]:
 
 
 def _assert_manual_prerequisite(key: str, instance: str) -> None:
-    from hero_integration.services.sync_page import manual_allowed, manual_prerequisite
-    if not manual_allowed(key, manual_prerequisite(instance, frappe)):
-        frappe.throw(frappe._("Migrate Employees first and Contacts second"))
+    from hero_integration.services.sync_page import manual_start_blockers
+    reason = manual_start_blockers(instance, frappe, area_key=key).get(key)
+    if reason:
+        frappe.throw(frappe._(reason))
+
 
 
 @frappe.whitelist(methods=["POST"])
@@ -751,6 +1077,8 @@ def sync_page_runs(start: int | str = 0, page_size: int | str = 8, live: int = 0
     page_size = _mapping_int(page_size, "page_size", 1, 50)
     rows = frappe.get_all("HERO Integration Run", fields=RUN_LIST_FIELDS, order_by="creation desc",
                           limit_start=start, limit_page_length=page_size)
+    from hero_integration.services.run_progress import relationship_status
+    relationship_status(rows)
     for row in rows:
         row["area"] = action_label(row["action"])
     return {"start": start, "page_size": page_size, "total": frappe.db.count("HERO Integration Run"), "rows": rows}
@@ -775,6 +1103,10 @@ def sync_page_run_detail(run_name: str) -> dict[str, object]:
     if budget:
         detail["reserved_identities"] = budget.used()
         detail["identity_limit"] = budget.limit
+        if budget.version in (2, 3):
+            detail["cohort"] = budget.report()
+    from hero_integration.services.run_progress import relationship_status
+    relationship_status([detail])
     outcomes = dict(frappe.db.sql("""SELECT result, COUNT(*) FROM `tabHERO Integration Record`
         WHERE run=%s AND COALESCE(technical_action,'') <> 'identity_checkpoint' GROUP BY result""", (run.name,)))
     detail.update({
@@ -824,7 +1156,8 @@ def sync_page_pending_relationships(start: int | str = 0, page_size: int | str =
     rows = frappe.get_all(MAIN, filters=filters, fields=["name", "operation", "source_id", "status", "detail"],
                           order_by="modified desc, name desc", limit_start=start, limit_page_length=page_size)
     kinds = {"HeroCustomers": "customer", "HeroProjectMatches": "project", "HeroTasks": "Task",
-             "HeroCalendarEvents": "CalendarEvent", "HeroDocuments": "file_upload", "HeroPictures": "file_upload"}
+             "HeroCalendarEvents": "CalendarEvent", "HeroDocuments": "file_upload", "HeroPictures": "file_upload",
+             "HeroEmployees": "partner", "HeroServices": "supply_service"}
     for row in rows:
         kind = kinds.get(row["operation"])
         links = frappe.get_all("HERO Integration Link", filters={"source_system": "HERO", "source_instance": source,
@@ -989,7 +1322,7 @@ def _sync_area_state(item, instance: str, services: list[dict[str, str]], active
                            fields=["target_doctype", "target_field", "personal_graphql_mapping"], limit_page_length=2000)
     rules = [rule for rule in rules if not rule.get("personal_graphql_mapping")
              or (service is not None and rule.get("personal_graphql_mapping") == service["mapping"])]
-    executed = {"action": item.run_action, "mode": "Execute", "source_instance": instance}
+    executed = {"action": item.run_action, "mode": "Execute", "source_instance": instance, "inventory_sync_run": ["is", "not set"]}
     last = frappe.get_all("HERO Integration Run", filters={**executed, "state": ["in", list(SUCCESS_STATES)]},
                           fields=["name", "finished_on"], order_by="finished_on desc", limit_page_length=1)
     running = next((row for row in active if row.get("action") == item.run_action), None)
@@ -1282,6 +1615,7 @@ def workspace_settings_get() -> dict[str, object]:
         "api_token_configured": token_configured,
         "api_token_status": token_status,
         "timeout_seconds": int(settings.timeout_seconds or 30),
+        "migrate_archived_records": bool(getattr(settings, "migrate_archived_records", 0)),
         "testing": _testing_settings(settings),
         "schema_refresh": _schema_refresh_state(settings, token_configured),
         "polling": {
@@ -1327,6 +1661,7 @@ def workspace_settings_save(
     testing_enabled: int | bool | None = None, testing_max_actions: int | str | None = None,
     confirm_source_binding: int | bool | None = None,
     polling_page_overlap: int | str | None = None, polling_read_mode: str | None = None,
+    migrate_archived_records: int | bool | None = None,
 ) -> dict[str, object]:
     """Persist only native integration configuration, with DocType validation."""
     frappe.only_for("System Manager")
@@ -1349,6 +1684,8 @@ def workspace_settings_save(
     if admin_notification_recipients is not None:
         recipients = _validated_admin_recipients(admin_notification_recipients)
         settings.admin_notification_recipients = "\n".join(recipients)
+    if migrate_archived_records is not None:
+        settings.migrate_archived_records = int(_as_bool(migrate_archived_records))
     if testing_enabled is not None:
         settings.testing_enabled = int(_as_bool(testing_enabled))
     if testing_max_actions is not None:
@@ -1391,6 +1728,18 @@ def workspace_testing_settings_save(
     settings.testing_max_actions = _testing_max_actions(testing_max_actions)
     settings.save()
     return workspace_settings_get()
+
+
+@frappe.whitelist(methods=["GET"])
+def workspace_test_reset_preview():
+    from hero_integration.services.test_environment import preview
+    return preview(frappe)
+
+
+@frappe.whitelist(methods=["POST"])
+def workspace_test_reset_confirm(token, confirmed):
+    from hero_integration.services.test_environment import submit
+    return submit(frappe, token, confirmed)
 
 
 def _polling_lines(value: object) -> list[str]:
@@ -1477,10 +1826,16 @@ def _save_polling_configuration(settings, **values: object) -> None:
         "retry_backoff_seconds": ("polling_retry_backoff_seconds", "Polling retry backoff", 0, 3600),
         "timeout_seconds": ("polling_timeout_seconds", "Polling timeout", 1, 120),
         "rate_limit": ("polling_rate_limit", "Polling rate limit", 1, 10000),
-        "concurrency": ("polling_concurrency", "Polling concurrency", 1, 1),
+        "concurrency": ("polling_concurrency", "Polling concurrency", 1, 10),
     }
     for input_name, (fieldname, label, minimum, maximum) in numeric.items():
         if values[input_name] is not None:
+            if fieldname == "polling_concurrency":
+                from hero_integration.services.concurrency import worker_count
+                try:
+                    worker_count(values[input_name])
+                except ValueError as error:
+                    frappe.throw(frappe._(str(error)))
             setattr(settings, fieldname, _bounded_int(values[input_name], label, minimum, maximum))
     for input_name, fieldname in {
         "bootstrap": "polling_bootstrap", "allow_backfill": "polling_allow_backfill",
@@ -1515,7 +1870,7 @@ def _mutation_execution_state(settings=None) -> dict[str, object]:
         "mutation_execution_status": "ENABLED" if enabled else "DISABLED",
         "mutation_execution_reason": (
             "Execution is OFF until a System Manager enables it. Each mutation also requires an active schema-bound "
-            "contract, validated variables, an exact preview fingerprint, and a fresh explicit confirmation."
+            "contract, validated variables, an exact preview fingerprint, and authorized service dispatch."
         ),
     }
 
@@ -2354,11 +2709,12 @@ def _runtime_plan_result(plan) -> dict[str, object]:
         "schema_snapshot": selection.schema_snapshot,
         "schema_fingerprint": selection.schema_fingerprint,
         "approved_by": plan.approved_by,
+        "readers": [item.payload() for item in plan.selections],
     }
 
 
 @frappe.whitelist(methods=["GET"])
-def runtime_plan_status(source_instance: str, include_execution: int = 0) -> dict[str, object]:
+def runtime_plan_status(source_instance: str, include_execution: int = 0, include_monitor: int = 0) -> dict[str, object]:
     """Return redacted lifecycle status through the canonical runtime-plan service."""
     frappe.only_for("System Manager")
     from hero_integration.services.sync_runtime_adapter import _runtime_plan_service
@@ -2372,6 +2728,12 @@ def runtime_plan_status(source_instance: str, include_execution: int = 0) -> dic
     if plan is None:
         return {"state": "NOT_FOUND", "source_instance": source_instance}
     result = _runtime_plan_result(plan)
+    if _as_bool(include_monitor) and result["state"] == "APPROVED":
+        from hero_integration.services.b8_runtime import reconstruct_materialized_read_plan
+        from hero_integration.services.test_environment import require_environment
+        require_environment(frappe)
+        read = reconstruct_materialized_read_plan(plan.selection, frappe_module=frappe)
+        result["monitor_operation"] = read.sealed.contract.target_operation
     if not _as_bool(include_execution):
         return result
     from hero_integration.services.sync_engine import FrappeSyncLedger
@@ -3156,9 +3518,11 @@ def execute_graphql_service(
         from hero_integration.services.mapping_contract_v1 import materialize_saved_mutation
         request = materialize_saved_mutation(snapshot, service.query_document, variables,
                                              request_scope=audit.correlation_id)
-        HeroMutationClient(configuration.endpoint, lambda: configuration.api_token, configuration.timeout_seconds).execute_once(
-            request.document, request.variables
-        )
+        from hero_integration.client.mutation_guard import confirmed_service
+        with confirmed_service(audit, snapshot):
+            HeroMutationClient(configuration.endpoint, lambda: configuration.api_token, configuration.timeout_seconds).execute_once(
+                request.document, request.variables
+            )
     except Exception as error:
         _finalize_mutation(
             audit,
@@ -3247,27 +3611,8 @@ def writeback_execute(mapping_name: str, doctype: str, docname: str, confirmatio
         frappe.throw(frappe._("Explicit confirmation for this exact writeback preview is required."))
     if not _form_writeback_eligible(context):
         frappe.throw(frappe._("Only a local field change can be sent; reconcile other binding states first."))
-    audit = _reserve_mutation(
-        operation_name=context["mapping"]["target"]["operation"],
-        schema_fingerprint=context["snapshot"].schema_fingerprint,
-        mapping_revision=int(context["mapping_row"].mapping_revision or 1),
-        request_fingerprint=context["fingerprint"],
-    )
-    try:
-        from hero_integration.services.sync_engine import OutboundApproval, execute_sync_hero
-        verified = context["verified_context"]
-        binding = verified["binding"]
-        approval = OutboundApproval(True, True, True, True, True, binding.acknowledged_version + 1)
-        execute_sync_hero(verified["intent"], approval, _SyncHeroTransport(verified, audit), verified["bindings"])
-    except Exception as error:
-        _finalize_mutation(
-            audit,
-            "Timeout" if error.__class__.__name__ in {"TimeoutError", "URLError"} else "Failed",
-            "HERO writeback outcome is not confirmed. No automatic retry was performed; inspect the selected remote record before another explicit submission.",
-        )
-        frappe.throw(frappe._("HERO writeback is blocked or uncertain; no automatic retry was performed."))
-    _finalize_mutation(audit, "Succeeded", "Exact Customer/Project writeback completed; field values were not retained in the audit.")
-    return {"status": "SUCCEEDED", "correlation_id": audit.correlation_id, "operation": context["mapping"]["target"]["operation"]}
+    receipt = _execute_bound_writeback(context["verified_context"])
+    return {**receipt, "operation": context["mapping"]["target"]["operation"]}
 
 
 def _require_writeback_snapshot(row, snapshot) -> None:
@@ -3333,9 +3678,11 @@ def _writeback_context(mapping_name: str, document, mapping_row=None) -> dict[st
         fields=["name", "graphql_service", "operation_name", "contract_revision", "contract_fingerprint", "schema_fingerprint"],
     )
     contract = _require_writeback_contract(contracts, snapshot)
+    from hero_integration.services.binding_registry import RETIRED_LINK_SYSTEM
     links = frappe.get_all(
         "HERO Integration Link",
-        filters={"source_type": expected.source_type, "target_doctype": document.doctype, "target_name": document.name},
+        filters={"source_system": ["!=", RETIRED_LINK_SYSTEM], "source_type": expected.source_type,
+                 "target_doctype": document.doctype, "target_name": document.name},
         fields=["name", "source_instance", "source_id", "sync_status", "source_payload_hash", "observed_source_hash"],
     )
     if len(links) != 1:
@@ -3376,7 +3723,7 @@ def _form_sync_context(mapping_name, document, link, field):
     site = frappe.local.site
     storage = FrappeBindingStorage(frappe)
     matches = []
-    for binding in storage.fields_for_source(site, link.source_instance):
+    for binding in storage.fields_for_target(site, link.source_instance, document.doctype, document.name, field):
         if (binding.target_doctype, binding.target_name, binding.target_field) != (document.doctype, document.name, field):
             continue
         parent = storage.object(site, binding.object_binding_key)
@@ -3389,20 +3736,36 @@ def _form_sync_context(mapping_name, document, link, field):
 
 
 def _reserve_mutation(*, operation_name: str, schema_fingerprint: str, mapping_revision: int, request_fingerprint: str,
-                      correlation_id=None, commit=None):
+                      correlation_id=None, bound_intent=None, object_scope=None, event_name="", commit=None):
     """Commit a unique mutation reservation before external I/O.
     MariaDB serializes confirmations; the visible audit supports recovery."""
+    from hero_integration.services.frappe_writeback import object_write_scope
+    native_target = None
+    if bound_intent:
+        native_target = bound_intent.get("native_target") or object_write_scope(
+            frappe.local.site, "", bound_intent["doctype"], bound_intent["name"])
     correlation_id = correlation_id or uuid4().hex
+    from hero_integration.services.automatic_writeback import dispatch_selection
+    _, selected_event = dispatch_selection()
+    worker_event = bool(event_name and selected_event and selected_event[0].name == event_name)
     audit = frappe.get_doc({
         "doctype": "HERO Mutation Audit", "correlation_id": correlation_id, "user": frappe.session.user,
         "site": frappe.local.site, "operation_name": operation_name, "schema_fingerprint": schema_fingerprint,
         "mapping_revision": mapping_revision, "request_fingerprint": request_fingerprint,
         "reservation_key": ACTIVE_MUTATION_RESERVATION, "status": "Approved",
-        "detail": "Explicit System Manager confirmation recorded; variables are intentionally not retained.",
+        **({"bound_object_key": object_scope, "pending_object_key": object_scope} if object_scope else {}),
+        **({"pending_target_key": native_target} if native_target else {}),
+        **({"pending_create_scope": bound_intent["create_scope"]} if bound_intent and bound_intent.get("create_scope") else {}),
+        **({"origin_event": event_name, "event_action_key": _event_action_key(event_name,
+            bound_intent.get("mutation_mapping") or bound_intent["mapping"])} if event_name else {}),
+        **({"delivery_stage": "Prepared", "intent_json": json.dumps(bound_intent, sort_keys=True)}
+           if bound_intent else {}),
+        "detail": ("Bound worker event reserved for the approved runtime plan." if worker_event else
+                   "Explicit System Manager confirmation recorded; variables are intentionally not retained."),
     })
     try:
         audit.insert(ignore_permissions=True)
-    except frappe.DuplicateEntryError:
+    except (frappe.DuplicateEntryError, frappe.UniqueValidationError):
         frappe.throw(frappe._("Another HERO mutation is currently in progress."))
     (commit or frappe.db.commit)()
     return audit
@@ -3410,6 +3773,18 @@ def _reserve_mutation(*, operation_name: str, schema_fingerprint: str, mapping_r
 
 def _finalize_mutation(audit, status: str, detail: str, *, commit=None) -> None:
     """Release a completed reservation without erasing its audit provenance."""
+    if audit.get("delivery_stage"):
+        if status == "Succeeded":
+            audit.delivery_stage = "Confirmed"
+        elif audit.delivery_stage == "Prepared":
+            audit.delivery_stage = "Not Sent"
+            audit.event_action_key = None
+        else:
+            audit.delivery_stage = "Uncertain"
+    if audit.get("delivery_stage") != "Uncertain":
+        audit.pending_object_key = None
+        audit.pending_create_scope = None
+        audit.pending_target_key = None
     audit.status = status
     audit.detail = detail
     audit.reservation_key = audit.correlation_id
@@ -3527,7 +3902,10 @@ def _has_active_run() -> bool:
 def _run_job_timeout() -> int:
     from hero_integration.services.migration import RUN_JOB_TIMEOUT
 
-    return RUN_JOB_TIMEOUT
+    configured = getattr(frappe, "conf", {}).get("hero_native_migration_timeout_seconds")
+    if configured is None:
+        return RUN_JOB_TIMEOUT
+    return max(RUN_JOB_TIMEOUT, min(int(configured), 86400))
 
 
 def _require_selected_mappings(action: str, service, mapping, dependencies=None) -> None:
@@ -3639,12 +4017,19 @@ def config_export(snapshot_name: str = "") -> dict[str, str]:
     Never included: HERO URL/token, allowed hosts, notification recipients, mutation/deletion switches, data.
     """
     frappe.only_for("System Manager")
+    with _simple_mapping_import_errors():
+        _, content = _portable_config_export(snapshot_name)
+        return {"filename": "hero-integration-config.json", "content": content}
+
+
+def _portable_config_export(snapshot_name: str) -> tuple[str, str]:
     from hero_integration.services.config_exchange import export_config
     from hero_integration.services.mapping_import_context import resolve
-    with _simple_mapping_import_errors():
-        context = resolve(snapshot_name or _config_snapshot(), _configured_source_instance())
-        return {"filename": "hero-integration-config.json",
-                "content": export_config(context['snapshot_name'], _configured_source_instance())}
+
+    source_instance = _configured_source_instance()
+    context = resolve(snapshot_name or _config_snapshot(), source_instance)
+    approved_snapshot = context["snapshot_name"]
+    return approved_snapshot, export_config(approved_snapshot, source_instance)
 
 
 @frappe.whitelist(methods=["POST"])
@@ -3681,12 +4066,9 @@ def config_import(payload_json: str, confirmed: int | str = 0, snapshot_name: st
 
 
 def config_export_file(path: str, snapshot_name: str = "") -> dict[str, object]:
-    """bench execute: write the complete configuration to a file (newest validated snapshot by default)."""
-    from hero_integration.services.config_exchange import export_config
-
+    """bench execute: write the complete configuration with its approved snapshot."""
     frappe.set_user("Administrator")
-    snapshot_name = snapshot_name or _config_snapshot()
-    content = export_config(snapshot_name, _configured_source_instance())
+    snapshot_name, content = _portable_config_export(snapshot_name)
     with open(path, "w", encoding="utf-8") as handle:
         handle.write(content)
     return {"path": path, "snapshot": snapshot_name, "bytes": len(content)}

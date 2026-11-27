@@ -13,6 +13,20 @@
         const text = recheck ? String(value).slice(prefix.length) : String(value);
         const exact = tr(text);
         if (exact !== text) return recheck ? format("Recheck requested: {0}", exact) : exact;
+        if (recheck) return format("Recheck requested: {0}", diagnostic(text));
+        for (const prefix of ["Deferred relationship reconciliation: ", "Native reconciliation requires review: "]) {
+            if (text.startsWith(prefix)) return format(prefix + "{0}", diagnostic(text.slice(prefix.length)));
+        }
+        const summary = text.match(/^(\d+) added, (\d+) updated, (\d+) unchanged, (\d+) skipped, (\d+) conflicts, (\d+) failed(?:, ([\d.]+ [A-Z]+) transferred)?\.$/);
+        if (summary) {
+            const counts = format("{0} added, {1} updated, {2} unchanged, {3} skipped, {4} conflicts, {5} failed.", ...summary.slice(1,7));
+            return summary[7] ? counts + " " + format("{0} transferred.",summary[7]) : counts;
+        }
+        // Receipts concatenate canonical sentences. Split only known message boundaries.
+        const boundary = text.match(/^(.+?\.) (Customer addresses require |Customer primary address |Mapped primary address |An existing |Local field change observed|Non-conflicting HERO |It was not imported\.)([\s\S]*)$/);
+        if (boundary) return diagnostic(boundary[1]) + " " + diagnostic(boundary[2]+boundary[3]);
+        const local = text.match(/^Local changes were preserved: (.+)\.$/);
+        if (local) return format("Local changes were preserved: {0}.",local[1]);
         const suggestion = text.match(/^Type-compatible name and label match\.(?: Relation: (.+?)\.)?(?: (Select values require validation before activation\.))?(?: (Required target field; target creation needs an app-owned contract\.))?(?: (Draft only for this non-canonical app target\.))?$/);
         if (suggestion) {
             const parts = [tr("Type-compatible name and label match.")];

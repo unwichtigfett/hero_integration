@@ -313,7 +313,7 @@ class TestFileSlice(unittest.TestCase):
         fake = SimpleNamespace(db=db, log_error=lambda **k: None)
         lock = SimpleNamespace(filelock=lambda *a, **k: contextlib.nullcontext())
         config = SimpleNamespace(source_instance="source-a")
-        with patch.object(fm, "frappe", fake), patch.object(fm, "_enqueue", side_effect=queued.append), \
+        with patch.object(fm, "frappe", fake), patch.object(fm, "_enqueue", side_effect=lambda name, **kwargs: queued.append(name)), \
                 patch.object(fm, "now_datetime", lambda: "now"), \
                 patch.dict("sys.modules", {"frappe.utils.synchronization": lock}), \
                 patch("hero_integration.services.file_transfer._client_and_downloader",
@@ -447,11 +447,27 @@ class TestSourceBinding(unittest.TestCase):
                 patch("hero_integration.services.migration.bind_run_checkpoint"), \
                 patch("hero_integration.services.file_transfer.reset_phase"):
             fm.start("Document Migration")
-        admission.assert_called_once_with(fake, parent="")
+        admission.assert_called_once_with(fake, parent="", action="Document Migration")
         self.assertEqual((created[0].source_instance, created[0].source_binding_revision), ("source-a", 3))
         with patch.object(fm, "frappe", fake), patch.object(fm, "_configuration", return_value=_config(confirmed=False)), \
                 self.assertRaises(fm.SourceBindingError):
             fm.start("Document Migration")
+
+    def test_parallel_terminal_handoff_rechecks_parent_before_doing_any_work(self):
+        import frappe
+        fake = Mock(QueryDeadlockError=frappe.QueryDeadlockError, QueryTimeoutError=frappe.QueryTimeoutError,
+                    RetryBackgroundJobError=frappe.RetryBackgroundJobError)
+        run = SimpleNamespace(state='Completed')
+        with patch.object(fm, 'frappe', fake), patch('hero_integration.services.test_environment.guard_run'):
+            fake.get_doc.side_effect = [frappe.QueryDeadlockError('stale parent'), run]
+            fm._execute('root')
+            fake.db.rollback.assert_called_once_with()
+            fake.set_user.assert_not_called()
+            fake.db.commit.assert_not_called()
+            fake.get_doc.side_effect = frappe.QueryTimeoutError('lock busy')
+            with self.assertRaises(frappe.RetryBackgroundJobError):
+                fm._execute('root')
+            self.assertEqual(fake.db.rollback.call_count, 4)
 
     def test_source_change_before_execution_blocks_without_reading_hero(self):
         db = _DB()
@@ -545,7 +561,7 @@ class TestEveryStartPathIsSourceBound(unittest.TestCase):
                                                        commit=lambda: None),
                                     log_error=lambda **kwargs: self.queued.append(("logged", kwargs)))
         for target in (patch("hero_integration.services.run_reservation.admit_migration"), patch.object(api, "frappe", self.fake), patch.object(ft, "frappe", self.fake),
-                       patch("hero_integration.services.sync_page.manual_prerequisite", return_value=""),
+                       patch("hero_integration.services.sync_page.manual_start_blockers", return_value={}),
                        patch.object(fm, "frappe", self.fake), patch.object(fm.direct_runtime, "resolve_read"),
                        patch.object(fm, "_enqueue", side_effect=lambda name: self.queued.append(name)),
                        patch("hero_integration.services.file_transfer.reset_phase")):
@@ -588,7 +604,8 @@ class TestFullRelationshipRetry(unittest.TestCase):
         self.db.runs['EVENTS']={'state':'Completed','source_instance':'source'}
         self.db.defaults[fm.CHILD_KEY.format('EVENTS')]='FULL'
         self.state={'step':len(fm.NEW_FULL_STEPS),'steps':list(fm.NEW_FULL_STEPS),'child':'',
-            'completed_children':['EVENTS'],'notes':['scalar conflict','Relationship reconciliation: 1 reference(s) require review.'],
+            'completed_children':['EVENTS'],'notes':['scalar conflict','Relationship reconciliation: 1 reference(s) require review.',
+                '2 selected primary record(s) have incomplete outcomes or relationships.'],
             'reconciliation_done':True,'reconciliation_after':'old','reconciliation_stage':8}
         self.db.defaults[fm.FULL_KEY.format('FULL')]=json.dumps(self.state)
         self.run=SimpleNamespace(action=fm.FULL_ACTION,mode='Execute',state='Completed',source_instance='source',
@@ -596,7 +613,8 @@ class TestFullRelationshipRetry(unittest.TestCase):
         self.fake=SimpleNamespace(db=self.db,only_for=Mock(),get_doc=Mock(return_value=self.run))
 
     def test_retry_queues_only_frozen_relationship_scope_without_scalar_restart(self):
-        with patch.object(fm,'frappe',self.fake),patch.object(fm,'bound_configuration'), \
+        with patch('hero_integration.services.test_environment.require_environment', return_value='synthetic-sandbox'), \
+                patch.object(fm,'frappe',self.fake),patch.object(fm,'bound_configuration'), \
                 patch('hero_integration.services.run_reservation.admit_migration') as admission, \
                 patch.object(fm,'_enqueue') as enqueue,patch.object(fm,'_start_step') as start:
             result=fm.retry_full_relationships('FULL')
@@ -612,6 +630,15 @@ class TestFullRelationshipRetry(unittest.TestCase):
         self.assertNotIn('reconciliation_done',state)
         self.assertEqual(self.run.testing_cohort_json,'frozen cohort')
 
+    def test_relationship_retry_outside_sandbox_never_requeues_or_saves(self):
+        from hero_integration.services.test_environment import EnvironmentUnavailable
+        with patch.object(fm, 'frappe', self.fake), patch.object(fm, '_enqueue') as enqueue, \
+                patch('hero_integration.services.test_environment.require_environment', side_effect=EnvironmentUnavailable), \
+                self.assertRaises(EnvironmentUnavailable):
+            fm.retry_full_relationships('FULL')
+        enqueue.assert_not_called()
+        self.run.save.assert_not_called()
+
     def test_incomplete_full_run_or_wrong_child_source_cannot_retry(self):
         for mode in ('incomplete','wrong-source','wrong-parent'):
             with self.subTest(mode=mode):
@@ -619,7 +646,36 @@ class TestFullRelationshipRetry(unittest.TestCase):
                 if mode=='incomplete':self.run.state='Running'
                 elif mode=='wrong-source':self.db.runs['EVENTS']['source_instance']='other'
                 else:self.db.defaults[fm.CHILD_KEY.format('EVENTS')]='OTHER'
-                with patch.object(fm,'frappe',self.fake),patch.object(fm,'bound_configuration'), \
+                with patch('hero_integration.services.test_environment.require_environment', return_value='synthetic-sandbox'), \
+                        patch.object(fm,'frappe',self.fake),patch.object(fm,'bound_configuration'), \
                         patch.object(fm,'_enqueue') as enqueue,self.assertRaises(fm.SourceBindingError):
                     fm.retry_full_relationships('FULL')
                 enqueue.assert_not_called();self.run.save.assert_not_called()
+
+
+class TestSitePictureSelection(unittest.TestCase):
+    def test_default_and_site_selection(self):
+        from types import SimpleNamespace
+        with patch.object(fm, 'frappe', SimpleNamespace(local=SimpleNamespace(conf={}))):
+            self.assertTrue(fm.pictures_enabled())
+            self.assertEqual(len(fm.NEW_FULL_STEPS), 9)
+        with patch.object(fm, 'frappe', SimpleNamespace(local=SimpleNamespace(conf={'hero_exclude_picture_migration': 1}))):
+            self.assertFalse(fm.pictures_enabled())
+            self.assertEqual(list(fm.FULL_STEPS_WITHOUT_PICTURES),
+                             [step for step in fm.NEW_FULL_STEPS if step != 'Picture Migration'])
+
+    def test_deployment_selection_survives_restored_site_configuration(self):
+        from types import SimpleNamespace
+        with patch.object(fm, 'frappe', SimpleNamespace(local=SimpleNamespace(site='fixture.local', conf={}))), \
+             patch.dict('os.environ', {'HERO_PICTURE_EXCLUDED_SITES':'["fixture.local"]'}):
+            self.assertFalse(fm.pictures_enabled())
+            fm.frappe.local.site = 'other.local'
+            self.assertTrue(fm.pictures_enabled())
+
+    def test_disabled_site_rejects_transfer_before_client_or_download(self):
+        from hero_integration.services import file_transfer
+        with patch.object(fm, 'pictures_enabled', return_value=False), \
+             patch.object(file_transfer, '_client_and_downloader') as client:
+            with self.assertRaises(file_transfer.TransferError):
+                file_transfer.transfer('images')
+            client.assert_not_called()

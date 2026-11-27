@@ -87,9 +87,14 @@ ignore_links_on_delete = ["HERO Integration Link"]
 
 # Observe only targets identified by Integration Links; no queueing or HERO I/O.
 doc_events["*"] = {
+    "after_insert": "hero_integration.services.selective_test_reset.capture_creation",
     "after_delete": "hero_integration.services.binding_registry.native_target_lifecycle",
     "before_rename": "hero_integration.services.binding_registry.native_target_lifecycle",
-    "on_update": "hero_integration.services.change_detection.observe_frappe_target_change",
+    "on_update": [
+        "hero_integration.services.change_detection.observe_frappe_target_change",
+        "hero_integration.services.selective_test_reset.capture_creation",
+    ],
+    "on_update_after_submit": "hero_integration.services.change_detection.observe_frappe_target_change",
 }
 doc_events["ToDo"] = {
     "on_update": "hero_integration.services.task_assignment_state.observe_local_todo",
@@ -112,7 +117,11 @@ doc_events["Project"] = {
     "before_rename": "hero_integration.services.guards.protect_hero_project_rename",
     "on_update": "hero_integration.services.project_logbook_writeback.capture_project_activity",
 }
-doc_events["Task"] = {"validate": "hero_integration.services.change_detection.protect_external_task_deadline"}
+doc_events["Task"] = {
+    "validate": "hero_integration.services.change_detection.protect_external_task_deadline",
+    "on_change": "hero_integration.services.task_hierarchy.observe",
+    "after_delete": "hero_integration.services.task_hierarchy.observe",
+}
 doc_events["File"] = {"validate": "hero_integration.services.project_image_categories.validate_file_category"}
 for _doctype in ("User", "Employee"):
     doc_events[_doctype] = {"validate": "hero_integration.services.change_detection.protect_employee_source_observations"}

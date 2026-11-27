@@ -30,6 +30,7 @@ class TestSharedWritebackMariaDB(unittest.TestCase):
 
         outer = self
         class Facade:
+            _ = staticmethod(str)
             PermissionError = PermissionError
             session = SimpleNamespace(user="alice")
             def only_for(self, _role): pass

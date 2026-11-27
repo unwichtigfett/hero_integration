@@ -7,6 +7,7 @@ requiring another HERO- or Core-specific application.
 
 from __future__ import annotations
 
+import json
 from typing import Any
 
 import frappe
@@ -23,7 +24,7 @@ def migration_outcome(result: str) -> str:
         return "SUCCESS"
     if result in {"CONFLICT", "SKIPPED_AMBIGUOUS", "SKIPPED_REJECTED"}:
         return "CONFLICT"
-    if result in {"PENDING_REVIEW", "UNAVAILABLE"}:
+    if result in {"PENDING_REVIEW", "UNAVAILABLE", "DEFERRED"}:
         return "SKIPPED_DEPENDENCY"
     return "FAILED"
 
@@ -38,6 +39,7 @@ def record_output(
     *,
     source_type: str,
     source_id: str,
+    source_instance: str | None = None,
     result: str,
     action: str,
     detail: str = "",
@@ -48,6 +50,7 @@ def record_output(
     origin: str = "hero_integration",
     changed_fields: list[str] | None = None,
     event_id: str | None = None,
+    native_state: dict[str, str] | None = None,
 ) -> str:
     """Persist one technical outcome after the caller's business write is known.
 
@@ -55,10 +58,32 @@ def record_output(
     emitted here, so consumers never receive an event that later rolls back.
     """
 
+    if run and not event_id and result in {'PENDING_REVIEW', 'CONFLICT', 'SKIPPED', 'UNCHANGED', 'OBSERVED'}:
+        from hero_integration.services.deferred_references import realizing
+        if realizing():
+            # resolve_one holds this observation's row lock until the receipt
+            # commits. Compare the last decision, including receipts predating
+            # this check, so A -> B -> A remains a visible change.
+            previous = frappe.db.get_value('HERO Integration Record', {
+                'run': run, 'source_type': source_type, 'source_id': str(source_id), 'technical_action': action},
+                ['name', 'result', 'detail', 'target_doctype', 'target_name', 'origin', 'correlation_id', 'changed_fields'],
+                as_dict=True, order_by='creation desc, name desc', for_update=True)
+            if previous:
+                prefix = 'Deferred relationship reconciliation: '
+                if (previous.result == result
+                        and (previous.detail or '').removeprefix(prefix) == (detail or '').removeprefix(prefix)
+                        and (previous.target_doctype or '') == (target_doctype or '')
+                        and (previous.target_name or '') == (target_name or '')
+                        and (previous.origin or 'hero_integration') == origin
+                        and (previous.correlation_id or '') == (correlation_id or '')
+                        and (previous.changed_fields or '') == redacted_changed_fields(changed_fields)):
+                    return previous.name
+
     record = frappe.get_doc(
         {
             "doctype": "HERO Integration Record",
             "run": run,
+            **({"source_instance": source_instance} if source_instance else {}),
             "source_type": source_type,
             "source_id": str(source_id),
             "result": result,
@@ -72,6 +97,7 @@ def record_output(
             "origin": origin,
             "observed_at": now_datetime(),
             "changed_fields": redacted_changed_fields(changed_fields),
+            **({"native_state_json": json.dumps(native_state, sort_keys=True)} if native_state else {}),
         }
     )
     if event_id:
@@ -82,6 +108,12 @@ def record_output(
         columns = ["source_type", "source_id", "result", "detail", "target_doctype", "target_name",
                    "output_schema_version", "event_type", "technical_action", "correlation_id",
                    "origin", "observed_at", "changed_fields"]
+        if run:
+            columns.append("run")
+        if source_instance:
+            columns.append("source_instance")
+        if native_state:
+            columns.append("native_state_json")
         actor = frappe.session.user
         frappe.db.bulk_insert("HERO Integration Record",
             ["name", "creation", "modified", "owner", "modified_by", *columns],
@@ -121,6 +153,7 @@ def list_outputs(limit_start: int = 0, limit_page_length: int = 20) -> dict[str,
         "name", "creation", "observed_at", "output_schema_version", "event_type",
         "source_type", "source_id", "target_doctype", "target_name",
         "technical_action", "result", "correlation_id", "origin", "changed_fields",
+        "outbound_status", "outbound_detail", "outbound_retry_on",
     ]
     return {
         "schema_version": OUTPUT_SCHEMA_VERSION,

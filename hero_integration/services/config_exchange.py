@@ -28,7 +28,7 @@ FORMAT_V1 = "hero-integration-config-v1"
 # site-specific: credentials, hosts, recipients (personal data), safety switches.
 SETTINGS_KEYS = (
     "hero_source_instance", "schema_refresh_interval_minutes", "timeout_seconds",
-    "scheduled_sync_enabled", "sync_service_paused",
+    "scheduled_sync_enabled", "sync_service_paused", "migrate_archived_records",
     "sync_area_contacts", "sync_area_projects", "sync_area_events", "sync_area_tasks",
     "polling_mode", "polling_interval_minutes", "polling_timezone", "polling_execution_window",
     "polling_bootstrap", "polling_page_size", "polling_page_overlap", "polling_read_mode", "polling_pagination_strategy", "polling_allow_backfill",
@@ -144,7 +144,8 @@ def _export_settings(settings):
         field = meta.get_field(key) if meta else None
         if field and field.fieldtype == 'Password':
             continue
-        result[key] = settings.get(key)
+        value = settings.get(key)
+        result[key] = int(value or 0) if key == "migrate_archived_records" else value
     return result
 
 
@@ -331,6 +332,10 @@ def _parse(payload_json: str) -> dict:
             raise ConfigExchangeError("The schema snapshot in the file is incomplete.")
         if not isinstance(settings, dict) or set(settings) - set(SETTINGS_KEYS):
             raise ConfigExchangeError("The file contains settings that are never transferred (e.g. credentials).")
+        if "migrate_archived_records" in settings:
+            flag = settings["migrate_archived_records"]
+            if type(flag) not in (bool, int) or flag not in (0, 1):
+                raise ConfigExchangeError("Migrate archived records requires a checkbox value.")
     seen = set()
     for item in payload["read_services"]:
         if (not isinstance(item, dict) or set(item) != SERVICE_KEYS or item["target_operation"] not in AREA_ORDER

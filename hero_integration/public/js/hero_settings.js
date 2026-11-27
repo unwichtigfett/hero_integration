@@ -28,6 +28,7 @@
         timeout_seconds: "Timeout Seconds",
         scheduled_sync_enabled: "Enable Scheduled Sync",
         sync_service_paused: "Sync Service Paused",
+        migrate_archived_records: "Migrate archived records",
         sync_area_contacts: "Sync Contacts",
         sync_area_projects: "Sync Projects",
         sync_area_events: "Sync Events",
@@ -232,8 +233,9 @@
         const pollingBackoff = document.createElement("input"); pollingBackoff.type = "number"; pollingBackoff.min = "0"; pollingBackoff.max = "3600"; pollingBackoff.className = "hero-settings-input";
         const pollingTimeout = document.createElement("input"); pollingTimeout.type = "number"; pollingTimeout.min = "1"; pollingTimeout.max = "120"; pollingTimeout.className = "hero-settings-input";
         const pollingRate = document.createElement("input"); pollingRate.type = "number"; pollingRate.min = "1"; pollingRate.className = "hero-settings-input";
-        const pollingConcurrency = document.createElement("input"); pollingConcurrency.type = "number"; pollingConcurrency.min = "1"; pollingConcurrency.max = "1"; pollingConcurrency.value = "1"; pollingConcurrency.className = "hero-settings-input";
+        const pollingConcurrency = document.createElement("input"); pollingConcurrency.type = "number"; pollingConcurrency.min = "1"; pollingConcurrency.max = "10"; pollingConcurrency.value = "1"; pollingConcurrency.className = "hero-settings-input";
         const pollingNotifications = document.createElement("input"); pollingNotifications.type = "checkbox"; pollingNotifications.className = "hero-settings-check";
+        const archiveRecords = document.createElement("input"); archiveRecords.type = "checkbox"; archiveRecords.className = "hero-settings-check";
         const testingEnabled = document.createElement("input"); testingEnabled.type = "checkbox"; testingEnabled.className = "hero-settings-check";
         const testingMaxActions = document.createElement("input"); testingMaxActions.type = "number"; testingMaxActions.min = "1"; testingMaxActions.max = "100"; testingMaxActions.step = "1"; testingMaxActions.className = "hero-settings-input";
 
@@ -282,6 +284,8 @@
             field("Confirm source binding", bindingConfirm, "Confirm that the endpoint and API token belong to the HERO account named by the source instance. The token is never used as an identity."),
             bindingStatus
         );
+        const migrationSection = section("Migration", "migration", "", field("Migrate archived records", archiveRecords,
+            "Applies to new test and full migrations. Archived records excluded by the HERO query are not counted as read."));
         const securitySection = section("Safety and conflict notifications", "safety", "",
             field("Allow deletion", allowDeletion, "OFF blocks every HERO Integration deletion route on the server. Turning it on is only a necessary prerequisite."),
         );
@@ -290,10 +294,13 @@
         testingStatus.setAttribute("role", "status");
         const testingSave = node("button", "hero-page-button hero-settings-button", "Save Testing Settings");
         testingSave.type = "button";
+        const resetTests = node("button", "hero-page-button hero-settings-button", "Reset all test data");
+        resetTests.type = "button";
+        resetTests.hidden = window.frappe?.session?.user !== "Administrator";
         const testingCard = section("Testing", "testing", "",
             field("Enabled", testingEnabled),
-            field("Max. records per area", testingMaxActions, "Limits manually started previews and imports to this many records in each area. Imports write ERPNext data. Full Migration applies the limit separately to each area. The setting is fixed when the run starts; changing it affects new runs only."),
-            column("hero-settings-actions", testingSave, testingStatus)
+            field("Max. primary records", testingMaxActions, "Each test migration selects additional primary records. Full Migration applies the limit separately to projects, products and services and includes proven project dependencies. A manual MONITOR test counts records in its selected stream. Imports write ERPNext data. The run keeps the limit set at its start."),
+            column("hero-settings-actions", testingSave, resetTests, testingStatus)
         );
 
         const saveBar = column("hero-settings-savebar", reset, save);
@@ -318,7 +325,7 @@
                 field("Read Mode", pollingReadMode, "Fast Mode requires a verified HERO change-discovery contract."), field("Pagination strategy", pollingPagination, "Cursor watermarks are advanced only after complete successful processing. Offset pagination does not invent watermarks."),
                 field("Allow backfill", pollingBackfill, "Stores permission to fetch older records; the current polling reader does not perform backfill."), field("Allow full inventory", pollingInventory, "Allows a bounded scan of up to 100 pages per source instead of one page."), field("Allow reconciliation", pollingReconciliation, "Reconciliation reports discrepancies and never auto-deletes ERPNext records.")),
             pollingGroup("Reliability and notifications",
-                field("Retry limit", pollingRetryLimit), field("Retry backoff seconds", pollingBackoff), field("Polling timeout seconds", pollingTimeout), field("Rate limit", pollingRate), field("Concurrency", pollingConcurrency, "The approved V1 source reader is intentionally single-worker."), field("Notifications", pollingNotifications))
+                field("Retry limit", pollingRetryLimit), field("Retry backoff seconds", pollingBackoff), field("Polling timeout seconds", pollingTimeout), field("Rate limit", pollingRate), field("Concurrency", pollingConcurrency, "Choose 1 to 10 workers. At most 4 HERO GraphQL requests run simultaneously."), field("Notifications", pollingNotifications))
         );
         pollingDetails.append(pollingSummary, pollingContent);
         pollingCard.append(pollingDetails);
@@ -356,7 +363,7 @@
             column("hero-settings-actions", packageExport, packageStatus)
         );
 
-        root.append(header, status, connection, sources, securitySection, testingCard, saveBar, pollingCard, packageCard, mutationCard);
+        root.append(header, status, connection, sources, migrationSection, securitySection, testingCard, saveBar, pollingCard, packageCard, mutationCard);
         workspace.replaceChildren(root);
 
         let destroyed = false, loaded = null;
@@ -379,9 +386,11 @@
             [pollingTimezone, pollingWindow, pollingBootstrap, pollingPageSize, pollingOverlap, pollingReadMode, pollingPagination, pollingBackfill, pollingInventory, pollingReconciliation, pollingRetryLimit, pollingBackoff, pollingTimeout, pollingRate, pollingConcurrency, pollingNotifications].forEach((control) => { control.disabled = value; });
             mutationEnabled.disabled = value;
             mutationSave.disabled = value;
+            archiveRecords.disabled = value;
             testingEnabled.disabled = value;
             testingMaxActions.disabled = value;
             testingSave.disabled = value;
+            resetTests.disabled = value;
         }
 
         function apply(data) {
@@ -417,6 +426,7 @@
             pollingRate.value = String(data.polling?.rate_limit || 30);
             pollingConcurrency.value = String(data.polling?.concurrency || 1);
             pollingNotifications.checked = Boolean(data.polling?.notifications);
+            archiveRecords.checked = Boolean(data.migrate_archived_records);
             testingEnabled.checked = Boolean(data.testing?.enabled);
             testingMaxActions.value = String(data.testing?.max_actions || 5);
             token.value = "";
@@ -479,6 +489,7 @@
                     allowed_hero_hosts: allowedHosts.value.trim(),
                     hero_source_instance: sourceInstance.value.trim(),
                     confirm_source_binding: bindingConfirm.checked,
+                    migrate_archived_records: archiveRecords.checked,
                     allow_deletion: allowDeletion.checked,
                     polling_mode: pollingMode.value,
                     polling_interval_minutes: Number(pollingInterval.value),
@@ -583,6 +594,44 @@
         refresh.addEventListener("click", load);
         save.addEventListener("click", persist);
         testingSave.addEventListener("click", persistTesting);
+        resetTests.addEventListener("click", async () => {
+            busy(true);
+            try {
+                const preview = await platform.api("workspace_test_reset_preview", {});
+                if (destroyed) return;
+                const inventory = preview.inventory;
+                if (inventory.active_or_queued || inventory.running_jobs || inventory.waiting_jobs || inventory.synchronization_enabled || inventory.external_send_enabled || inventory.active_mutations) {
+                    testingStatus.textContent = uiText("Turn off HERO polling and outbound delivery and wait for HERO background work to finish before resetting.");
+                    return;
+                }
+                if (!inventory.deletion_enabled) {
+                    testingStatus.textContent = uiText("Enable the existing HERO deletion setting before confirming a reset.");
+                    return;
+                }
+                const counts = (values) => Object.entries(values).map(([kind, count]) => `${kind}: ${count}`).join(", ") || "0";
+                const protectedCounts = Object.fromEntries(Object.entries(inventory.protected).map(
+                    ([kind, reasons]) => [kind, Object.values(reasons).reduce((total, count) => total + count, 0)]
+                ));
+                const message = format("Remove confirmed HERO test data on {0}? Native records: {1}. Test artifacts: {2}. Files: {3} ({4} bytes). Retained for review: {5}.",
+                    preview.site, counts(inventory.deletable_records), counts(inventory.removable_artifacts),
+                    inventory.file_count, inventory.file_bytes, counts(protectedCounts));
+                frappe.confirm(escapeHtml(message), async () => {
+                    busy(true);
+                    try {
+                        await platform.api("workspace_test_reset_confirm", {token: preview.token, confirmed: 1}, {write: true});
+                        testingStatus.textContent = uiText("Selective HERO test reset completed.");
+                    } catch (error) {
+                        testingStatus.textContent = errorMessage(error);
+                    } finally {
+                        if (!destroyed) busy(false);
+                    }
+                });
+            } catch (error) {
+                if (!destroyed) testingStatus.textContent = errorMessage(error);
+            } finally {
+                if (!destroyed) busy(false);
+            }
+        });
 
         const showPackageState = (text, state = "") => {
             packageStatus.textContent = text;

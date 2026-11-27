@@ -7,6 +7,10 @@ class HEROIntegrationLink(Document):
         if self.sync_status == 'Synchronized' and (not self.source_payload_hash or not self.target_payload_hash):
             frappe.throw(frappe._('A synchronized binding requires both successful synchronization baselines.'))
         self.source_system = self.source_system or "HERO"
+        from hero_integration.services.binding_registry import RETIRED_LINK_SYSTEM
+        if self.source_system == RETIRED_LINK_SYSTEM:
+            self.source_key = "retired:" + self.name
+            return
         self.source_key = ":".join(
             (self.source_system, self.source_instance or "default", self.source_type, self.source_id)
         )
@@ -17,3 +21,5 @@ def on_doctype_update():
     import frappe
 
     frappe.db.add_index("HERO Integration Link", ["target_doctype", "target_name"], index_name="target_lookup")
+    frappe.db.add_index("HERO Integration Link", ["source_system", "source_instance", "source_type", "source_id"],
+                        index_name="hero_link_source")

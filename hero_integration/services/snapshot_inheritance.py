@@ -125,6 +125,8 @@ def child_content(row, parent_snapshot: str, child_schema, parent_schema) -> dic
         new = str(uuid4())
         renamed[old] = new
         rules[new] = {key: found[0][key] for key in sorted(RULE_FIELDS) if found[0].get(key) is not None}
+    from hero_integration.services.personal_mapping_content import remap_query_options
+    remap_query_options(content, renamed)
     content["mapping_definition_ids"] = [renamed[old] for old in old_ids]
     content["field_rules"] = rules
     if isinstance(content.get("field_contexts"), dict):

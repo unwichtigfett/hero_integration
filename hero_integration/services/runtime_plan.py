@@ -71,8 +71,11 @@ class RuntimePlanSelection:
     schema_fingerprint: str
     operation_name: str
     execution_mode: str
+    validated_snapshot: str = ""
 
     def __post_init__(self) -> None:
+        if self.validated_snapshot:
+            _identifier(self.validated_snapshot, "compatible snapshot")
         _identifier(self.site_scope, "site scope")
         _identifier(self.source_instance, "source instance")
         _identifier(self.graphql_service, "GraphQL service")
@@ -109,6 +112,7 @@ class RuntimePlanSelection:
             "schema_fingerprint": self.schema_fingerprint,
             "operation_name": self.operation_name,
             "execution_mode": self.execution_mode,
+            **({"validated_snapshot": self.validated_snapshot} if self.validated_snapshot else {}),
         }
 
 
@@ -120,12 +124,27 @@ class RuntimePlan:
     revision: int
     generation: int
     approved_by: str = ""
+    additional_readers: tuple[RuntimePlanSelection, ...] = ()
+
+    @property
+    def selections(self):
+        return (self.selection, *self.additional_readers)
+
+    @property
+    def semantic_hash(self):
+        if not self.additional_readers:
+            return self.selection.semantic_hash
+        return sha256(json.dumps([item.payload() for item in self.selections],
+                                 sort_keys=True, separators=(",", ":")).encode()).hexdigest()
 
     def __post_init__(self) -> None:
         if not isinstance(self.plan_key, str) or not _FINGERPRINT.fullmatch(self.plan_key):
             raise RuntimePlanError("runtime plan key is invalid.")
         if self.plan_key != self.selection.plan_key:
             raise RuntimePlanError("runtime plan key does not match site/source scope.")
+        if (any(item.plan_key != self.plan_key for item in self.additional_readers)
+                or len({item.graphql_service for item in self.selections}) != len(self.selections)):
+            raise RuntimePlanError("Reader selections must be unique and belong to the same plan scope.")
         if not isinstance(self.state, RuntimePlanState):
             raise RuntimePlanError("runtime plan state is invalid.")
         _positive(self.revision, "runtime plan revision")
@@ -211,26 +230,28 @@ class RuntimePlanService:
     def __init__(self, storage: RuntimePlanStorage, references: RuntimePlanReferences, audit: RuntimePlanAudit, authority: RuntimePlanAuthority) -> None:
         self._storage, self._references, self._audit, self._authority = storage, references, audit, authority
 
-    def create_draft(self, selection: RuntimePlanSelection, *, actor: str) -> RuntimePlan:
+    def create_draft(self, selection: RuntimePlanSelection, *, actor: str, additional_readers=()) -> RuntimePlan:
         self._authorize(actor, selection.site_scope)
         if self._storage.read_scope(selection.site_scope, selection.source_instance) is not None:
             raise RuntimePlanConflict("A runtime plan already exists for this site/source instance.")
-        plan = RuntimePlan(selection.plan_key, selection, RuntimePlanState.DRAFT, 1, 1)
+        plan = RuntimePlan(selection.plan_key, selection, RuntimePlanState.DRAFT, 1, 1, additional_readers=tuple(additional_readers))
         stored = self._storage.create(plan)
         self._record(stored, "DRAFT_CREATED", actor)
         return stored
 
-    def update_draft(self, plan_key: str, selection: RuntimePlanSelection, *, expected_revision: int, actor: str) -> RuntimePlan:
+    def update_draft(self, plan_key: str, selection: RuntimePlanSelection, *, expected_revision: int, actor: str, additional_readers=()) -> RuntimePlan:
         current = self._require(plan_key)
         self._authorize(actor, current.selection.site_scope)
         self._require_expected(current, expected_revision)
-        if current.state is not RuntimePlanState.DRAFT:
-            raise RuntimePlanConflict("Only a draft runtime plan may be edited.")
+        if current.state is RuntimePlanState.DISABLED:
+            raise RuntimePlanConflict("A disabled runtime plan cannot be edited.")
         if selection.plan_key != current.plan_key:
             raise RuntimePlanConflict("A runtime plan cannot move between site/source scopes.")
-        if selection.semantic_hash == current.selection.semantic_hash:
+        readers = tuple(additional_readers)
+        if (selection, *readers) == current.selections:
             return current
-        candidate = replace(current, selection=selection, revision=current.revision + 1, generation=current.generation + 1)
+        candidate = replace(current, selection=selection, additional_readers=readers, state=RuntimePlanState.DRAFT, approved_by="",
+                            revision=current.revision + 1, generation=current.generation + 1)
         stored = self._storage.replace(candidate, expected_revision)
         self._record(stored, "DRAFT_UPDATED", actor)
         return stored
@@ -241,9 +262,29 @@ class RuntimePlanService:
         self._require_expected(current, expected_revision)
         if current.state is not RuntimePlanState.DRAFT:
             raise RuntimePlanConflict("Only a draft runtime plan may be approved.")
-        self._references.validate_current(current.selection)
+        for item in current.selections:
+            self._references.validate_current(item)
         candidate = replace(current, state=RuntimePlanState.APPROVED, revision=current.revision + 1, generation=current.generation + 1, approved_by=actor)
         stored = self._storage.replace(candidate, expected_revision)
+        self._record(stored, "APPROVED", actor)
+        return stored
+
+    def adopt_validated_schemas(self, plan, confirmed, snapshot, *, actor):
+        """A renewal can change only the validation snapshot of existing approved members."""
+        self._authorize(actor, plan.selection.site_scope)
+        if plan.state is not RuntimePlanState.APPROVED:
+            raise RuntimePlanConflict("Schema adoption requires an approved runtime plan.")
+        readers = []
+        for current in plan.selections:
+            if current.graphql_mapping in confirmed:
+                self._references.validate_current(current)
+                current = replace(current, validated_snapshot=snapshot)
+            readers.append(current)
+        if tuple(readers) == plan.selections:
+            return plan
+        updated = replace(plan, selection=readers[0], additional_readers=tuple(readers[1:]),
+                          revision=plan.revision + 1, generation=plan.generation + 1)
+        stored = self._storage.replace(updated, plan.revision)
         self._record(stored, "APPROVED", actor)
         return stored
 
@@ -270,7 +311,7 @@ class RuntimePlanService:
         return self._storage.read_scope(site_scope, source_instance)
 
     def resolve_executable_plan(
-        self, site_scope: str, source_instance: str, expected_generation: int, automatic: bool, actor: str
+        self, site_scope: str, source_instance: str, expected_generation: int, automatic: bool, actor: str, *, reader=None
     ) -> ExecutableRuntimePlan:
         """Reject stale/unapproved plans before constructing providers.
 
@@ -292,8 +333,12 @@ class RuntimePlanService:
             raise RuntimePlanConflict("Runtime plan generation is stale.")
         if automatic and plan.selection.execution_mode != RUNTIME_EXECUTION_MODE:
             raise RuntimePlanConflict("Automatic execution requires an AUTO_SYNC runtime plan.")
-        self._references.validate_current(plan.selection)
-        return ExecutableRuntimePlan(plan.plan_key, plan.revision, plan.generation, automatic, actor, plan.selection)
+        selection = plan.selection if reader is None else next(
+            (item for item in plan.selections if item.graphql_service == reader), None)
+        if selection is None:
+            raise RuntimePlanConflict("Reader is outside the approved plan generation.")
+        self._references.validate_current(selection)
+        return ExecutableRuntimePlan(plan.plan_key, plan.revision, plan.generation, automatic, actor, selection)
 
     def _require(self, plan_key: str) -> RuntimePlan:
         if not isinstance(plan_key, str) or not _FINGERPRINT.fullmatch(plan_key):
@@ -313,7 +358,7 @@ class RuntimePlanService:
         self._authority.require_system_manager(actor, site_scope)
 
     def _record(self, plan: RuntimePlan, action: str, actor: str) -> None:
-        self._audit.record(RuntimePlanAuditEvent(plan.plan_key, plan.selection.site_scope, plan.selection.source_instance, action, actor, plan.revision, plan.generation, plan.selection.semantic_hash))
+        self._audit.record(RuntimePlanAuditEvent(plan.plan_key, plan.selection.site_scope, plan.selection.source_instance, action, actor, plan.revision, plan.generation, plan.semantic_hash))
 
 
 class InMemoryRuntimePlanStorage:
@@ -494,7 +539,9 @@ class FrappeRuntimePlanStorage:
             "schema_fingerprint": selection.schema_fingerprint,
             "operation_name": selection.operation_name,
             "execution_mode": selection.execution_mode,
-            "semantic_hash": selection.semantic_hash,
+            "semantic_hash": plan.semantic_hash,
+            "validated_snapshot": selection.validated_snapshot,
+            "additional_readers_json": json.dumps([item.payload() for item in plan.additional_readers]),
             "state": plan.state.value,
             "plan_revision": plan.revision,
             "generation": plan.generation,
@@ -517,10 +564,15 @@ class FrappeRuntimePlanStorage:
                 schema_fingerprint=document.schema_fingerprint,
                 operation_name=document.operation_name,
                 execution_mode=document.execution_mode,
+                validated_snapshot=getattr(document,"validated_snapshot",None) or "",
             )
-            if getattr(document, "semantic_hash", "") != selection.semantic_hash:
+            readers = tuple(RuntimePlanSelection(**row) for row in json.loads(
+                getattr(document, "additional_readers_json", None) or "[]"))
+            plan = RuntimePlan(document.plan_key, selection, RuntimePlanState(document.state),
+                               int(document.plan_revision), int(document.generation), document.approved_by or "", readers)
+            if getattr(document, "semantic_hash", "") != plan.semantic_hash:
                 raise RuntimePlanError("Persisted runtime plan semantic hash is stale.")
-            return RuntimePlan(document.plan_key, selection, RuntimePlanState(document.state), int(document.plan_revision), int(document.generation), document.approved_by or "")
+            return plan
         except (AttributeError, TypeError, ValueError) as error:
             raise RuntimePlanError("Persisted runtime plan is malformed.") from error
 

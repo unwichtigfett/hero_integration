@@ -2,7 +2,7 @@
 from contextlib import ExitStack
 from types import SimpleNamespace as NS
 from unittest import TestCase
-from unittest.mock import Mock, patch
+from unittest.mock import MagicMock, Mock, patch
 
 from hero_integration import api
 from hero_integration.services.binding_registry import state_fingerprint, BindingRegistryService, InMemoryBindingStorage
@@ -20,8 +20,14 @@ class TestFormVerifiedWriteback(TestCase):
             target_name='C1', mapping_definition_id='d', mapping_revision=1)
         binding = bindings.create_or_resolve_field_binding(parent, source_field='full_name', target_field='customer_name',
             mapping_definition_id='d', mapping_revision=1, direction=MappingDirection.HERO_TO_FRAPPE)
+        prior = state_fingerprint("Old", present=True)
+        binding = bindings.record_verified_acknowledgment(binding, expected_revision=1, mapping_definition_id="d",
+            mapping_revision=1, source_fingerprint=prior, target_fingerprint=prior, evidence_id="fixture", version=1)
         fixture = NS(bindings=bindings, binding=binding)
         verified = context()
+        verified.update(parent=parent, mapping_name="out", object_scope="scope", mutation_revision=1,
+                        mutation_contract=["contract", 1, "fingerprint"], rules_fingerprint="rules",
+                        executable=NS(plan_key="plan", generation=2, selection=NS(schema_fingerprint=fixtures.FP)))
         verified['binding'] = fixture.binding
         verified['bindings'] = fixture.bindings
         verified['intent'] = OutboundIntent(fixture.binding, 1, fixtures.FP,
@@ -33,9 +39,9 @@ class TestFormVerifiedWriteback(TestCase):
 
     def execute(self, form, *, configuration_values=None, read_values=None, mutation=None):
         fake = NS(only_for=lambda role: None, has_permission=lambda *a, **kw: True,
-                  get_doc=lambda *a: NS(), _=lambda text: text,
+                  get_doc=lambda *a, **kw: self.reserve.return_value, _=lambda text: text,
                   throw=lambda text: (_ for _ in ()).throw(ValueError(text)))
-        self.reserve, self.finalize = Mock(return_value=NS(correlation_id='audit')), Mock()
+        self.reserve, self.finalize = Mock(return_value=NS(name='receipt', correlation_id='audit', delivery_stage='Prepared', save=Mock())), Mock()
         self.mutation, self.read = Mock(), Mock()
         # HeroMutationClient returns the already-unwrapped data object.
         self.mutation.return_value.execute_once.return_value = {'update_contact': {'id': '42'}}
@@ -47,8 +53,9 @@ class TestFormVerifiedWriteback(TestCase):
         with ExitStack() as stack:
             for name, value in (('frappe', fake), ('_writeback_context', Mock(return_value=form)),
                                 ('_assert_mutation_execution_released', Mock()),
-                                ('_reserve_mutation', self.reserve), ('_finalize_mutation', self.finalize)):
+                                ('_locked_bound_context', Mock()), ('_reserve_mutation', self.reserve), ('_finalize_mutation', self.finalize)):
                 stack.enter_context(patch.object(api, name, value))
+            stack.enter_context(patch('hero_integration.services.sync_engine.FrappeSyncLedger', MagicMock()))
             stack.enter_context(patch('hero_integration.client.settings.get_configuration',
                                       side_effect=configuration_values or [configuration()] * 3))
             stack.enter_context(patch('hero_integration.client.graphql_mutation.HeroMutationClient', self.mutation))
@@ -64,7 +71,7 @@ class TestFormVerifiedWriteback(TestCase):
         self.assertEqual(self.read.return_value.query.call_count, 2)
         updated = fixture.bindings.get_field_bindings('site', fixture.binding.object_binding_key)[0]
         self.assertEqual(updated.acknowledged_source_fingerprint, state_fingerprint('Expected', present=True))
-        self.assertEqual(updated.revision, 2)
+        self.assertEqual(updated.revision, 3)
 
     def test_wrong_or_unconfirmed_source_blocks_all_network_access(self):
         for config in (configuration(source_instance='other'), configuration(source_binding_confirmed=False),

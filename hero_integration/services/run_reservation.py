@@ -6,6 +6,9 @@ transaction commit. All run checks below are current reads, not snapshot reads.
 """
 from __future__ import annotations
 
+from contextlib import contextmanager
+from contextvars import ContextVar
+
 NATIVE_ACTIONS = {
     "Customer Migration",
     "Project Migration",
@@ -93,23 +96,100 @@ def recover_stopped_owner(frappe, slot):
     return True
 
 
-def admit_migration(frappe, *, parent="", resume="", recover_running=False):
+_wave = ContextVar('hero_migration_wave_intake', default=None)
+STANDALONE_PAIRS = (
+    frozenset(('Product Migration', 'Customer Migration')),
+    frozenset(('Product Migration', 'Project Migration')),
+)
+
+
+def parallel_migrations(frappe):
+    conf = getattr(frappe, 'conf', None)
+    return bool(conf and int(conf.get('hero_migration_workers') or 0) >= 2)
+
+
+def _compatible_standalone(frappe, action, pending):
+    # The native writer owns the only legacy slot. Product writes Item and
+    # prices; it uses its own area lock and separate budget/selection series.
+    if not parallel_migrations(frappe) or len(pending) != 1:
+        return False
+    peer, = pending
+    peer_action = frappe.db.get_value('HERO Integration Run', peer, 'action', for_update=True)
+    if frozenset((action, peer_action)) not in STANDALONE_PAIRS:
+        return False
+    from hero_integration.services.file_migration import _parent_run
+    return not _parent_run(peer)
+
+
+def in_wave_intake():
+    return _wave.get() is not None
+
+
+@contextmanager
+def admit_wave(frappe, parent, requests, *, resuming=False):
+    """Reserve once and grant one admission for each exact (action, child) in this transaction."""
+    from hero_integration.services.file_migration import _parent_run
+    admit_migration(frappe, parent='' if resuming else parent, resume=parent if resuming else '',
+                    _resume_wave=resuming)
+    if frappe.db.get_value('HERO Integration Run', parent, 'action', for_update=True) != 'Full Migration':
+        raise frappe.ValidationError('Invalid parent for concurrent migration areas.')
+    for action, child in requests:
+        if child and (_parent_run(child) != parent or
+                frappe.db.get_value('HERO Integration Run', child, 'action', for_update=True) != action):
+            raise frappe.ValidationError('Concurrent migration child belongs to another parent or action.')
+    if resuming:
+        requests = [(action, child) for action, child in requests if frappe.db.get_value(
+            'HERO Integration Run', child, 'state', for_update=True) in ('Failed', 'Cancelled', 'Blocked')]
+    allowed = set(requests)
+    token = _wave.set((frappe, parent, allowed))
+    try:
+        yield requests
+        if allowed:
+            raise frappe.ValidationError('Concurrent migration admission was not fully consumed.')
+    finally:
+        _wave.reset(token)
+
+
+def admit_migration(frappe, *, parent="", resume="", recover_running=False, action="", _resume_wave=False):
     """Serialize acceptance with the sync ledger through the caller's transaction.
 
     A full run may submit its own next child. A resume is permitted to recover
     its own lease. Other queued work retains its place.
     """
+    grant = _wave.get()
+    if grant is not None:
+        owner, expected_parent, allowed = grant
+        if owner is not frappe or parent != expected_parent or recover_running or (action, resume) not in allowed:
+            raise frappe.ValidationError('Unexpected child in concurrent migration admission.')
+        allowed.remove((action, resume))
+        return
     if not acquire(frappe):
         raise frappe.ValidationError("The HERO execution slot could not be reserved.")
     try:
         slot = locked_legacy_slot(frappe)
+        from hero_integration.services.test_environment import INBOX
+        if (INBOX / 'pending.json').exists():
+            raise frappe.ValidationError('A HERO test reset is pending.')
         allowed = {value for value in (parent, resume) if value}
         if locked_b8_runs(frappe, frappe.local.site):
             raise frappe.ValidationError("Another HERO sync run owns the execution slot.")
         pending = {row.name for row in locked_pending_migrations(frappe)}
         if slot and slot not in allowed and slot not in pending and legacy_slot_is_active(frappe, slot):
             raise frappe.ValidationError("Another HERO migration owns the execution slot.")
+        if _resume_wave:
+            from hero_integration.services.file_migration import _full, _parent_run
+            if parent or not resume or frappe.db.get_value('HERO Integration Run', resume, 'action',
+                    for_update=True) != 'Full Migration':
+                raise frappe.ValidationError('Only the owning full migration can resume this batch.')
+            wave = _full(resume, lock=True).get('wave_children') or {}
+            for member_action, child in wave.items():
+                if _parent_run(child) != resume or frappe.db.get_value('HERO Integration Run', child,
+                        'action', for_update=True) != member_action:
+                    raise frappe.ValidationError('Invalid full migration wave ownership.')
+                allowed.add(child)
         others = pending - allowed
+        if others and not parent and action and _compatible_standalone(frappe, action, others):
+            others = set()
         if others:
             # A full parent or queued sibling keeps its place. A single native
             # claim can also survive loss of its Singles pointer.

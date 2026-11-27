@@ -29,6 +29,13 @@ class TestMappedLogbookPagination(TestCase):
         source._saved_request = lambda variables: NS(document=source.service.query_document, variables=variables)
         return source, calls
 
+    def test_parent_version_change_between_nested_pages_rejects_the_snapshot(self):
+        from hero_integration.services.read_contract import ReadContractError
+        source, _ = self.source([[{"id":7, "modified":"new", "histories":[]}]])
+        with self.assertRaisesRegex(ReadContractError, "lost its parent"):
+            lb.complete_mapped_histories(source, [{"id":7,"modified":"old","histories":[{"id":1}]}],
+                                         {"first":1,"offset":0,"history_offset":0})
+
     def test_short_server_pages_are_exhausted_using_the_exact_approved_document(self):
         source, calls = self.source([[{'id': 7, 'histories': [{'id': 2}]}], [{'id': 7, 'histories': []}]])
         result = lb.complete_mapped_histories(source, [{'id': 7, 'histories': [{'id': 1}]}],
@@ -51,6 +58,19 @@ class TestMappedLogbookPagination(TestCase):
         self.assertEqual(len(result.records[0]['histories']), 2)
         self.assertEqual(result.records[0]['_hero_source_instance'], 'source-a')
         self.assertEqual(result.next_offset, 1)
+
+    def test_only_an_empty_collection_or_null_confirms_a_history_free_project(self):
+        for invalid in ({}, '', False, 0):
+            source, calls = self.source([])
+            with self.subTest(invalid=invalid), self.assertRaisesRegex(ValueError, 'not a collection'):
+                lb.complete_mapped_histories(source, [{'id': 1, 'histories': invalid}], {})
+            self.assertEqual(calls, [])
+        for empty in (None, []):
+            source, calls = self.source([])
+            result, = lb.complete_mapped_histories(source, [{'id': 1, 'histories': empty}], {})
+            self.assertIs(result['_hero_logbook_complete'], True)
+            self.assertEqual(result['histories'], [])
+            self.assertEqual(calls, [])
 
     def test_repeated_identity_parent_loss_and_page_bound_fail_closed(self):
         for pages, options, message in [
@@ -189,6 +209,87 @@ class TestCompleteMappedLogbook(TestCase):
             self.record['histories'][0][missing] = saved
         self.assertEqual(self.docs, {})
 
+    def test_empty_entry_does_not_block_siblings_and_can_later_acquire_text(self):
+        valid = self.record['histories'][0]
+        empty = dict(valid, id=17, custom_text='   ', custom_title='Subject only')
+        self.record['histories'] = [empty, valid]
+        self.assertEqual(self.sync(preview=True, empty_entries={}), 1)
+        self.assertEqual(self.docs, {})
+        skipped = {}
+        self.assertEqual(self.sync(empty_entries=skipped), 1)
+        self.assertEqual(skipped, {'17':'SKIPPED'})
+        self.assertEqual(len(self.links), 1)
+        self.assertEqual(self.sync(empty_entries={}), 0)
+        empty['custom_text'] = 'Later entry'
+        self.assertEqual(self.sync(), 1)
+        self.assertEqual(self.sync(), 0)
+        self.assertEqual(len(self.links), 2)
+
+    def test_empty_entry_preserves_bound_content_baseline_and_restricts_visibility(self):
+        self.sync()
+        link = self.links[0]
+        comment = self.docs[link.target_name]
+        baseline = (link.source_payload_hash, link.target_payload_hash)
+        comment.content = 'Locally edited'
+        self.record['histories'][0].update(custom_text='', role_visibility='manager')
+        conflicts = []
+        self.assertEqual(self.sync(conflicts=conflicts, empty_entries={}), 0)
+        self.assertEqual(conflicts, [link.name])
+        self.assertEqual(link.sync_status, 'Conflict')
+        self.assertEqual(comment.content, 'Locally edited')
+        self.assertEqual((link.source_payload_hash, link.target_payload_hash), baseline)
+        self.assertEqual((comment.reference_doctype, comment.reference_name), ('HERO Integration Link', link.name))
+
+    def test_configured_heading_remains_importable_without_body(self):
+        self.options['logbook']['heading_paths'] = ['histories.custom_title']
+        self.record['histories'][0]['custom_text'] = None
+        self.assertEqual(self.sync(), 1)
+        self.assertIn('Title', self.docs[self.links[0].target_name].content)
+
+    def test_restored_identical_body_resolves_only_its_own_empty_content_hold(self):
+        self.sync()
+        link = self.links[0]
+        entry = self.record['histories'][0]
+        original = entry['custom_text']
+        entry['custom_text'] = ''
+        self.sync(empty_entries={})
+        self.writes.clear()
+        self.sync(empty_entries={})
+        self.assertEqual(self.writes, [])
+        entry['custom_text'] = original
+        self.sync(empty_entries={})
+        self.assertEqual(link.sync_status, 'Synchronized')
+        self.assertTrue(all(kind != 'Comment' for kind, _, _ in self.writes))
+        entry['custom_text'] = ''
+        for state in ('Pending Review', 'Rejected', 'Source Deleted', 'Conflict'):
+            link.sync_status, link.conflict_detail = state, 'Pre-existing decision'
+            self.writes.clear()
+            self.sync(empty_entries={})
+            self.assertEqual((link.sync_status, link.conflict_detail), (state, 'Pre-existing decision'))
+            self.assertEqual(self.writes, [])
+
+    def test_blank_body_does_not_bypass_visibility_or_identity_checks(self):
+        entry = self.record['histories'][0]
+        entry['custom_text'] = ''
+        del entry['role_visibility']
+        with self.assertRaisesRegex(ValueError, 'visibility'):
+            self.sync()
+        self.assertEqual(self.docs, {})
+
+    def test_incompatible_binding_rolls_back_only_its_project_record(self):
+        from hero_integration.services import migration
+        self.sync()
+        self.docs[self.links[0].target_name].reference_name = 'another-project'
+        savepoints, rolled_back = [], []
+        runtime = NS(db=NS(savepoint=savepoints.append, rollback=lambda *, save_point: rolled_back.append(save_point)))
+        with patch.object(migration,'frappe',runtime):
+            rejected = migration._migrate_isolated(lambda: self.sync(empty_entries={}))
+            following = migration._migrate_isolated(lambda: migration.Result('CREATED', 'next project'))
+        self.assertEqual(rejected.code, 'CONFLICT')
+        self.assertIn('another parent',rejected.detail)
+        self.assertEqual((savepoints,rolled_back), (['hero_record','hero_record'], ['hero_record']))
+        self.assertEqual(following.code,'CREATED')
+
     def test_new_native_fields_validate_and_other_comment_fields_remain_protected(self):
         for spec in self.plan.definitions: qm.validate_v2_spec(spec, None, self.options)
         bad = rule('owner', 'histories.author_name', 'Comment', 'owner', operation='HeroProjectMatches')
@@ -280,6 +381,27 @@ class TestOutboundLogbookEcho(TestCase):
             source_type=PENDING_TYPE,target_doctype='Project',target_name='P1',sync_status='Pending Review'))
         with self.assertRaisesRegex(ValueError,'unconfirmed outbound'):self.sync()
         self.assertEqual(self.docs,{})
+
+    def test_empty_observation_of_original_activity_records_review_once(self):
+        from hero_integration.services.project_logbook_writeback import OUTBOUND_VERSION, _hash
+        self.sync()
+        link = self.links[0]
+        comment = self.docs[link.target_name]
+        link.mapping_version = OUTBOUND_VERSION
+        link.source_payload_hash = _hash('Previously acknowledged')
+        link.target_payload_hash = _hash(comment.content)
+        source = self.record['histories'][0]
+        source['custom_text'] = ''
+        original = comment.content
+        for attempt in range(2):
+            self.writes.clear()
+            empty, conflicts = {}, []
+            self.sync(empty_entries=empty, conflicts=conflicts)
+            self.assertEqual(empty, {str(source['id']): 'PENDING_REVIEW'})
+            self.assertEqual(conflicts, [link.name])
+            self.assertEqual(comment.content, original)
+            if attempt:
+                self.assertEqual(self.writes, [])
 
     def test_version_echo_retains_original_change_record_without_comment_copy(self):
         from hero_integration.services.project_logbook_writeback import OUTBOUND_VERSION, _hash

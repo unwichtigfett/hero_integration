@@ -107,26 +107,20 @@ test('States includes employees and services, including a zero service count', a
     app.view.destroy();
 });
 
-test('manual prerequisites expose only the allowed start button', async () => {
+test('manual cards follow the per-area server blockers after each refresh', async () => {
     const app = setup(); await flush();
-    const area = key => ({key, label: key, action_label: key, button: 'Start', ready: true,
-        kind: 'direct', description: '', scope_note: '', blocker: '', scope: {objects: [], object_count: 0, field_count: 0}});
-    app.data.areas = [area('contacts'), area('projects')];
-    app.data.file_areas = [area('employees'), area('full')];
-    app.data.manual_prerequisite = 'employees';
-    await app.tick();
+    const keys = ['contacts','projects','events','tasks','employees','products','services','documents','pictures','full'];
+    app.data.file_areas = keys.map(key => ({key, label:key, ready:true, button:'Start'}));
     const action = key => app.host.querySelectorAll('button').find(el => el.dataset.area === key && el.className === 'hero-sync-action');
-    assert.equal(action('employees').disabled, undefined);
-    assert.equal(action('full').disabled, undefined);
-    assert.equal(action('contacts').disabled, true);
-    assert.equal(action('contacts').children[0], 'Waiting');
-    assert.ok(app.host.querySelectorAll('p').some(el => el.textContent === 'Migrate Employees first and Contacts second'));
-    app.data.manual_prerequisite = 'contacts'; await app.tick();
-    assert.equal(action('contacts').disabled, undefined);
-    assert.equal(action('full').disabled, undefined);
-    assert.equal(action('employees').disabled, true);
-    app.data.manual_prerequisite = ''; await app.tick();
-    assert.equal(action('projects').disabled, undefined);
+    for (const blockers of [{projects:'Migrate Employees first', tasks:'Migrate Employees first',
+        documents:'Migrate Contacts first', pictures:'Migrate Contacts first'}, {tasks:'Migrate Employees first'}, {}]) {
+        app.data.manual_start_blockers = blockers;
+        await app.tick();
+        for (const key of keys) {
+            assert.equal(Boolean(action(key).disabled), Boolean(blockers[key]), key);
+            assert.equal(action(key).children[0], blockers[key] ? 'Waiting' : 'Start');
+        }
+    }
     app.view.destroy();
 });
 

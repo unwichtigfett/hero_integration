@@ -17,6 +17,15 @@ class TestAutoSyncRouting(unittest.TestCase):
         sync.assert_called_once_with()
         record.assert_called_once_with("AUTO_SYNC", "Incomplete", "INCOMPLETE", source_instance="source", sync_run="SYNC-1")
 
+    def test_only_confirmed_partial_execution_gets_a_success_receipt(self):
+        for proven, expected in [(True, "Succeeded"), (False, "Incomplete")]:
+            record = Mock()
+            outcome = sync_runtime_adapter.RuntimePreflight("PARTIAL", "plan", 3, "source", "SYNC-1", proven)
+            with patch.object(sync_runtime_adapter, "run_scheduled_auto_sync", return_value=outcome):
+                tasks._run("AUTO_SYNC", record)
+            self.assertEqual(record.call_args.args[1], expected)
+            self.assertEqual(record.call_args.kwargs["sync_run"], "SYNC-1")
+
     def test_off_or_disabled_scheduler_suppresses_automatic_execution(self):
         fake = Mock(local=SimpleNamespace(site="isolated.localhost"))
         with patch.object(tasks, "frappe", fake), patch.object(tasks, "_run") as run, \
@@ -47,13 +56,15 @@ class TestAutoSyncRouting(unittest.TestCase):
         from hero_integration.services.sync_page import AREAS
         adapter = sync_runtime_adapter
         settings = SimpleNamespace(polling_mode='AUTO_SYNC', hero_source_instance='fixture',
-                                   source_binding_revision=2, source_binding_confirmed_revision=2)
+                                   source_binding_revision=2, source_binding_confirmed_revision=2,
+                                   testing_enabled=0, allow_graphql_mutation_execution=0)
         fake = Mock(local=SimpleNamespace(site='fixture'), session=SimpleNamespace(user='Administrator'))
         fake.get_single.return_value = settings
         selection = SimpleNamespace(execution_mode='AUTO_SYNC', graphql_mapping='mapping')
         executable = SimpleNamespace(selection=selection)
         with patch.object(adapter, '_runtime_plan_service') as service, \
              patch.object(adapter, '_require_latest_validated_snapshot'), patch.object(adapter, '_run') as execute:
+            service.return_value.current_approved.return_value = SimpleNamespace(generation=2, additional_readers=())
             service.return_value.resolve_executable_plan.return_value = executable
             for index, area in enumerate(AREAS):
                 for candidate in AREAS:

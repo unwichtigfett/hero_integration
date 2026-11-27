@@ -17,6 +17,8 @@ from uuid import uuid4
 
 import frappe
 
+from hero_integration.services.binding_registry import RETIRED_LINK_SYSTEM
+
 # operation -> [(match, change)]; change None removes the rule.
 RULE_CHANGES = {
     "HeroCustomers": [
@@ -224,8 +226,8 @@ def copy_values(scopes=()) -> dict:
                 link = frappe.get_doc('HERO Integration Link', name, for_update=True)
                 if any(link.get(key) != value for key, value in filters.items()):
                     continue
-                owners = frappe.get_all('HERO Integration Link', filters={'target_doctype': doctype,
-                    'target_name': link.target_name}, pluck='name', limit_page_length=2)
+                owners = frappe.get_all('HERO Integration Link', filters={'source_system': ['!=', RETIRED_LINK_SYSTEM],
+                    'target_doctype': doctype, 'target_name': link.target_name}, pluck='name', limit_page_length=2)
                 if owners != [name] or not frappe.db.exists(doctype, link.target_name):
                     continue
                 doc = frappe.get_doc(doctype, link.target_name, for_update=True)

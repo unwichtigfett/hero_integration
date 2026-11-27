@@ -145,7 +145,10 @@ def _items(project, section, start, search, status, category="", uncategorized=0
         or_filters = [
             ["Event", "reference_docname", "=", project.name],
             ["Dynamic Link", "link_name", "=", project.name],
+            ["Event Participants", "reference_docname", "=", project.name],
         ]
+        if frappe.get_meta("Event").has_field("custom_hero_project"):
+            or_filters.append(["Event", "custom_hero_project", "=", project.name])
         if search:
             filters["subject"] = ["like", "%" + search + "%"]
 
@@ -200,6 +203,8 @@ def _row(document, project, section):
             return None
         values = _fields(document, (
             "subject", "starts_on", "ends_on", "status", "event_category", "all_day", "repeat_this_event",
+            "custom_hero_recurrence_interval", "repeat_on", "repeat_till",
+            "monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday",
         ))
         values["participants"] = [
             {"doctype": row.get("reference_doctype"), "name": row.get("reference_docname")}
@@ -212,6 +217,9 @@ def _row(document, project, section):
 def _event_is_linked(document, project):
     return (
         document.get("reference_doctype") == "Project" and document.get("reference_docname") == project
+    ) or document.get("custom_hero_project") == project or any(
+        row.get("reference_doctype") == "Project" and row.get("reference_docname") == project
+        for row in document.get("event_participants") or []
     ) or any(
         row.get("link_doctype") == "Project" and row.get("link_name") == project
         for row in document.get("links") or []

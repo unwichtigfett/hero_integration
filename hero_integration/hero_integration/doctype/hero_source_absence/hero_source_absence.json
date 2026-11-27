@@ -1,0 +1,156 @@
+{
+ "doctype": "DocType",
+ "name": "HERO Source Absence",
+ "module": "HERO Integration",
+ "istable": 1,
+ "editable_grid": 0,
+ "permissions": [],
+ "field_order": [
+  "absence_id",
+  "partner_id",
+  "from_date",
+  "to_date",
+  "duration_days",
+  "budget_days",
+  "source_comment",
+  "absence_type",
+  "source_status",
+  "start_budget",
+  "end_budget",
+  "source_created",
+  "source_modified",
+  "source_instance",
+  "has_duration",
+  "has_budget"
+ ],
+ "fields": [
+  {
+   "fieldname": "absence_id",
+   "fieldtype": "Data",
+   "label": "Absence Id",
+   "read_only": 1,
+   "in_list_view": 0,
+   "permlevel": 1
+  },
+  {
+   "fieldname": "partner_id",
+   "fieldtype": "Data",
+   "label": "Partner Id",
+   "read_only": 1,
+   "in_list_view": 0,
+   "permlevel": 1
+  },
+  {
+   "fieldname": "from_date",
+   "fieldtype": "Date",
+   "label": "From Date",
+   "read_only": 1,
+   "in_list_view": 1,
+   "permlevel": 1
+  },
+  {
+   "fieldname": "to_date",
+   "fieldtype": "Date",
+   "label": "To Date",
+   "read_only": 1,
+   "in_list_view": 1,
+   "permlevel": 1
+  },
+  {
+   "fieldname": "duration_days",
+   "fieldtype": "Float",
+   "label": "Duration Days",
+   "read_only": 1,
+   "in_list_view": 1,
+   "permlevel": 1
+  },
+  {
+   "fieldname": "budget_days",
+   "fieldtype": "Float",
+   "label": "Budget Days",
+   "read_only": 1,
+   "in_list_view": 0,
+   "permlevel": 1
+  },
+  {
+   "fieldname": "source_comment",
+   "fieldtype": "Long Text",
+   "label": "Source Comment",
+   "read_only": 1,
+   "in_list_view": 0,
+   "permlevel": 1
+  },
+  {
+   "fieldname": "absence_type",
+   "fieldtype": "Data",
+   "label": "Absence Type",
+   "read_only": 1,
+   "in_list_view": 1,
+   "permlevel": 1
+  },
+  {
+   "fieldname": "source_status",
+   "fieldtype": "Data",
+   "label": "Source Status",
+   "read_only": 1,
+   "in_list_view": 0,
+   "permlevel": 1
+  },
+  {
+   "fieldname": "start_budget",
+   "fieldtype": "Data",
+   "label": "Start Budget",
+   "read_only": 1,
+   "in_list_view": 0,
+   "permlevel": 1
+  },
+  {
+   "fieldname": "end_budget",
+   "fieldtype": "Data",
+   "label": "End Budget",
+   "read_only": 1,
+   "in_list_view": 0,
+   "permlevel": 1
+  },
+  {
+   "fieldname": "source_created",
+   "fieldtype": "Data",
+   "label": "Source Created",
+   "read_only": 1,
+   "in_list_view": 0,
+   "permlevel": 1
+  },
+  {
+   "fieldname": "source_modified",
+   "fieldtype": "Data",
+   "label": "Source Modified",
+   "read_only": 1,
+   "in_list_view": 0,
+   "permlevel": 1
+  },
+  {
+   "fieldname": "source_instance",
+   "fieldtype": "Data",
+   "label": "Source Instance",
+   "read_only": 1,
+   "in_list_view": 0,
+   "permlevel": 1
+  },
+  {
+   "fieldname": "has_duration",
+   "label": "Has Duration",
+   "fieldtype": "Check",
+   "read_only": 1,
+   "hidden": 1,
+   "permlevel": 1
+  },
+  {
+   "fieldname": "has_budget",
+   "label": "Has Budget",
+   "fieldtype": "Check",
+   "read_only": 1,
+   "hidden": 1,
+   "permlevel": 1
+  }
+ ]
+}

@@ -94,9 +94,11 @@ class TestConfigurationSecretBoundary(unittest.TestCase):
     def test_allowlisted_settings_export_excludes_declared_password_fields(self):
         values={key:'ordinary' for key in config.SETTINGS_KEYS}
         values.update(hero_api_token='secret-token-canary',password='password-canary',encryption_key='encryption-canary')
+        values['migrate_archived_records'] = 1
         values['timeout_seconds']='custom-password-canary'
         settings=NS(get=lambda key:values.get(key),meta=NS(get_field=lambda key:NS(fieldtype='Password' if key=='timeout_seconds' else 'Data')))
         exported=config._export_settings(settings)
+        self.assertEqual(exported['migrate_archived_records'], 1)
         self.assertNotIn('timeout_seconds',exported)
         self.assertFalse({'hero_api_token','password','encryption_key'}&set(exported))
         self.assertNotIn('canary',json.dumps(exported))

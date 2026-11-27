@@ -4,7 +4,9 @@
  "module": "HERO Integration",
  "autoname": "field:sync_run_id",
  "track_changes": 1,
- "fields": [
+ "fields": [{"fieldname":"read_service","label":"GraphQL Reader","fieldtype":"Data","read_only":1},{"fieldname":"scheduler_cycle","label":"Scheduler Cycle","fieldtype":"Data","read_only":1},{"fieldname":"cycle_allocation","label":"Cycle Record Allocation","fieldtype":"Int","read_only":1},
+  {"fieldname":"budget_contract_version","label":"Budget Contract Version","fieldtype":"Int","read_only":1},
+  {"fieldname":"testing_max_actions","label":"Frozen Primary Record Limit","fieldtype":"Int","read_only":1},
   {"fieldname": "execution_scope", "label": "Execution scope", "fieldtype": "Data", "read_only": 1},
   {"fieldname": "confirmed_position", "label": "Confirmed position", "fieldtype": "Data", "read_only": 1},
   {"fieldname": "rows_read", "label": "Source rows read", "fieldtype": "Int", "read_only": 1},

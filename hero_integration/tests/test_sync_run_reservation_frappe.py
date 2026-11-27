@@ -29,7 +29,7 @@ class TestSyncRunReservationMariaDB(IntegrationTestCase):
         if self.created_state:
             frappe.get_doc({'doctype': 'HERO Sync State Ledger', 'site_scope': SITE,
                 'configuration_json': json.dumps({'site_scope': SITE, 'enabled': False, 'interval_seconds': 60,
-                    'source_instance': 'reservation-test', 'mapping_revision': 1, 'snapshot_fingerprint': 'a' * 64}),
+                    'source_instance': 'reservation-test', 'mapping_revision': 1, 'schema_fingerprint': 'a' * 64}),
                 'coverage_json': '[]', 'status': 'IDLE', 'generation': 1}).insert()
         frappe.db.commit()
 

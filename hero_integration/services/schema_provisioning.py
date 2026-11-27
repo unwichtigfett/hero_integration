@@ -252,9 +252,9 @@ def _definitions(schema: object) -> dict[str, list[dict[str, object]]]:
             _validate_field(field, ids, fields, custom_doctype=str(definition["name"]))
     for definition in result["custom_fields"]:
         required = {"id", "doctype", "fieldname", "label", "fieldtype", "options", "insert_after"}
-        if not isinstance(definition, dict) or not required <= set(definition) or set(definition) - required - {'reqd', 'unique', 'read_only'}:
+        if not isinstance(definition, dict) or not required <= set(definition) or set(definition) - required - {'reqd', 'unique', 'read_only', 'hidden'}:
             raise SchemaProvisioningError('Custom field has an unknown or missing field.')
-        _validate_field({key: definition[key] for key in ("id", "fieldname", "label", "fieldtype", "options", 'reqd', 'unique', 'read_only') if key in definition}, ids, fields, custom_doctype=None)
+        _validate_field({key: definition[key] for key in ("id", "fieldname", "label", "fieldtype", "options", 'reqd', 'unique', 'read_only', 'hidden') if key in definition}, ids, fields, custom_doctype=None)
         if not _owned_field(definition["fieldname"]):
             raise SchemaProvisioningError("Custom Fields must use the custom_hero_ prefix.")
     for relation in result["relations"]:
@@ -642,7 +642,7 @@ def _create_custom_field(definition):
         "label": display_label(definition["doctype"], definition["fieldname"], definition["label"]),
         "module": PROVENANCE_MODULE, "fieldtype": definition["fieldtype"], "options": definition["options"],
         "insert_after": definition["insert_after"],
-        **{flag: definition[flag] for flag in ('reqd', 'unique', 'read_only') if flag in definition},
+        **{flag: definition[flag] for flag in ('reqd', 'unique', 'read_only', 'hidden') if flag in definition},
     }).insert()
 
 
@@ -701,7 +701,7 @@ def _custom_field_is_new(definition):
 
 
 def _custom_field_state(definition):
-    rows = frappe.get_all("Custom Field", filters={"dt": definition["doctype"], "fieldname": definition["fieldname"]}, fields=["fieldtype", "options", "label", 'reqd', 'unique', 'read_only'])
+    rows = frappe.get_all("Custom Field", filters={"dt": definition["doctype"], "fieldname": definition["fieldname"]}, fields=["fieldtype", "options", "label", 'reqd', 'unique', 'read_only', 'hidden'])
     if not rows:
         return "Conflict"
     row = rows[0]
@@ -734,9 +734,12 @@ def _owned_field(value):
 
 def _validate_field(field, ids, fields, custom_doctype):
     expected = {"id", "fieldname", "label", "fieldtype", "options"}
-    if not isinstance(field, dict) or not expected <= set(field) or set(field) - expected - {'reqd', 'unique', 'read_only'}:
+    flags = {'reqd', 'unique', 'read_only'}
+    if custom_doctype is None:
+        flags.add('hidden')  # Initial presentation of a new Custom Field.
+    if not isinstance(field, dict) or not expected <= set(field) or set(field) - expected - flags:
         raise SchemaProvisioningError('field has an unknown or missing field.')
-    if any(type(field[flag]) is not int or field[flag] not in (0, 1) for flag in ('reqd', 'unique', 'read_only') if flag in field):
+    if any(type(field[flag]) is not int or field[flag] not in (0, 1) for flag in ('reqd', 'unique', 'read_only', 'hidden') if flag in field):
         raise SchemaProvisioningError('Field constraints must be 0 or 1.')
     if not re.fullmatch(r'custom_hero_[a-z][a-z0-9_]*', str(field['fieldname'])) or len(field['fieldname']) > 64:
         raise SchemaProvisioningError('Schema field name is invalid.')

@@ -63,6 +63,15 @@ class TestEmployeeWrites(unittest.TestCase):
     def run_import(self):
         return em.upsert(self.row, 'source-a', 'Synthetic Company', {'de'})
 
+    def test_absences_are_written_to_the_bound_employee_only(self):
+        self.bind_existing_user()
+        rows = [{'id': 5, 'partner_id': self.row['id']}]
+        with patch('hero_integration.services.source_history.store_absences') as store:
+            result = em.upsert(self.row, 'source-a', 'Synthetic Company', {'de'}, absences=rows)
+        self.assertEqual(result, 'added')
+        store.assert_called_once_with(self.new_docs[0], rows, 'source-a')
+        self.assertNotIn('custom_hero_absence_history', self.user)
+
     def test_insert_reuses_native_fields_and_explicit_company_joining_date(self):
         self.bind_existing_user()
         self.assertEqual(self.run_import(), 'added')

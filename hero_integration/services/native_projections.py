@@ -52,6 +52,16 @@ def _text(value, field, *, required=False, limit=None):
 EVENT_SUBJECT_FALLBACK = 'HERO-Termin'
 
 
+def is_native_event_title(rule):
+    return (rule.target_doctype, rule.target_field, rule.source_path, rule.purpose, rule.transformation) == (
+        "Event", "subject", "title", "Native Binding", "Native Adapter")
+
+
+def event_sharing_requires_review(doc):
+    return doc.get("event_type") != "Private" or any(doc.get(field) for field in
+        ("event_participants", "send_reminder", "sync_with_google_calendar", "add_video_conferencing", "repeat_this_event"))
+
+
 def _event_subject(record, *, creating):
     """HERO allows untitled events; ERPNext requires a subject.
 
@@ -60,7 +70,8 @@ def _event_subject(record, *, creating):
     """
     title = record.get('title')
     if isinstance(title, str) and title.strip():
-        return _text(title, 'Event title', limit=140)
+        # Event.subject is Small Text; Frappe validates its native storage type.
+        return _text(title, 'Event title')
     if not creating:
         return _text(title, 'Event title')
     for key in ('localized_type', 'type'):
@@ -92,7 +103,7 @@ RECURRING_REVIEW = ('HERO marks this event as recurring but supplies no recurren
                     'only the delivered occurrence was imported as a single event.')
 
 
-def values(contract, record, identity, instance, options, *, lookup, allow_partial=False, review=None):
+def values(contract, record, identity, instance, options, *, lookup, allow_partial=False, review=None, recurrence_interval=None):
     """Resolve native values before _upsert; lookup must enforce native read permission."""
     kind = contract.get('native_kind')
     validate_options(contract, options)
@@ -102,7 +113,7 @@ def values(contract, record, identity, instance, options, *, lookup, allow_parti
     try:
         if type(record.get('is_recurring')) is not bool:
             raise ValueError('Calendar recurrence flag must be explicit; null is not false.')
-        if record['is_recurring']:
+        if record['is_recurring'] and not recurrence_interval:
             # HERO exposes no recurrence rule: review new single occurrences and keep
             # existing Event times.
             if allow_partial or review is None:

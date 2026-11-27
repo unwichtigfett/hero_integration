@@ -134,6 +134,24 @@ class TestSchemaProvisioning(unittest.TestCase):
         self.assertEqual(field["state"], "Unchanged")
         self.assertEqual(self.frappe.custom_fields[("Customer", "custom_hero_schema_value")]["read_only"], 1)
 
+    def test_hidden_custom_field_can_be_shown_without_mapping_change(self):
+        draft = package()
+        draft["schema"]["custom_fields"][0]["hidden"] = 1
+        draft["mappings"] = []
+
+        preview = schema_provisioning.preview_package("SYNTHETIC", json.dumps(draft))
+        field = next(item for item in preview["items"] if item["id"] == "field:customer-schema-value")
+        self.assertEqual(field["state"], "New")
+        definitions = schema_provisioning._definitions(draft["schema"])
+        self.assertEqual(schema_provisioning._PlannedMetadata(definitions).field("Customer", "custom_hero_schema_value").hidden, 1)
+
+        self.adopt("SYNTHETIC", json.dumps(draft), [field["id"]], True)
+        self.assertEqual(self.frappe.custom_fields[("Customer", "custom_hero_schema_value")].get("hidden"), 1)
+        self.frappe.custom_fields[("Customer", "custom_hero_schema_value")]["hidden"] = 0
+        repeated = schema_provisioning.preview_package("SYNTHETIC", json.dumps(draft))
+        field = next(item for item in repeated["items"] if item["id"] == "field:customer-schema-value")
+        self.assertEqual(field["state"], "Unchanged")
+
     def test_matching_readonly_overlay_is_proven_but_conflicting_or_duplicate_overrides_block(self):
         draft = package()
         field = draft['schema']['custom_fields'][0]

@@ -65,6 +65,21 @@ class TestContactPersistence(unittest.TestCase):
                 self.assertEqual(len(contact[table]), 2)
                 self.assertFalse(_set_primary_child(contact, table, field, flag, "new"))
 
+    def test_change_one_shared_primary_number_preserves_the_other_on_replay(self):
+        customer = _Document(name="CUST-001", customer_primary_contact="CONT-001")
+        for field, other in (("mobile_no", "phone"), ("phone", "mobile_no")):
+            with self.subTest(field=field):
+                shared = _Document(phone="+49 555 100", is_primary_phone=1, is_primary_mobile_no=1)
+                contact = _Document(name="CONT-001", phone_nos=[shared],
+                                    links=[_Document(link_doctype="Customer", link_name=customer.name)])
+                with _fake_frappe(contact):
+                    synchronize_primary_contact(customer, {field: "+49 555 101"})
+                    synchronize_primary_contact(customer, {field: "+49 555 101"})
+                    self.assertEqual(primary_contact_values(customer, {field, other}),
+                                     {field: "+49 555 101", other: "+49 555 100"})
+                self.assertEqual(len(contact.phone_nos), 2)
+                self.assertEqual(contact.save_calls, 1)
+
     def test_home_phone_is_added_once_to_an_exclusive_customer_contact(self):
         customer = _Document(name="CUST-001", customer_primary_contact="CONT-001")
         contact = _Document(

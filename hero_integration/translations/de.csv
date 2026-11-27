@@ -1397,7 +1397,8 @@ Project response has an incompatible field: {0},Die Projektantwort enthält ein 
 Project response has an incompatible object: {0},Die Projektantwort enthält ein inkompatibles Objekt: {0}
 ProjectMatch reference awaits or failed administrator review; linked records wait.,Die ProjectMatch-Referenz wartet auf Administratorprüfung oder hat diese nicht bestanden; verknüpfte Datensätze warten.
 ProjectMatch reference has no verified native Project binding.,Die ProjectMatch-Referenz hat keine geprüfte native Project-Bindung.
-Migrate Employees first and Contacts second,Zuerst Mitarbeiter und danach Kontakte migrieren
+Migrate Employees first,Zuerst Mitarbeiter migrieren
+Migrate Contacts first,Zuerst Kontakte migrieren
 Related Test Selection,Zusammengehörige Testauswahl
 Employee Migration Progress,Fortschritt der Mitarbeitermigration
 {0} related employee identities could not be resolved uniquely.,{0} zugehörige Mitarbeiteridentitäten konnten nicht eindeutig aufgelöst werden.
@@ -1952,7 +1953,8 @@ The approved Query omitted the configured canonical source projection.,Die freig
 The approved Send readback exceeded its bounded page limit.,Der freigegebene Readback zum Senden hat seine begrenzte Seitenzahl überschritten.
 The approved Send readback query changed.,Die freigegebene Readback-Query zum Senden hat sich geändert.
 The approved V1 source reader executes one request at a time.,Der freigegebene V1-Quell-Reader führt jeweils eine Anfrage aus.
-The approved V1 source reader is intentionally single-worker.,Der freigegebene V1-Quell-Reader verwendet bewusst nur einen Worker.
+Choose 1 to 10 workers. At most 4 HERO GraphQL requests run simultaneously.,1 bis 10 Worker. Höchstens 4 HERO-GraphQL-Anfragen laufen gleichzeitig.
+Polling concurrency must be an integer between 1 and 10.,Die Polling-Parallelität muss eine ganze Zahl zwischen 1 und 10 sein.
 The approved lookup did not return the configured records.,Der freigegebene Lookup hat die konfigurierten Datensätze nicht geliefert.
 The approved mapping binding is invalid.,Die freigegebene Mapping-Bindung ist ungültig.
 The approved mutation service does not bind every configured input argument.,Der freigegebene Mutation-Dienst bindet nicht alle konfigurierten Eingangsargumente.
@@ -2629,10 +2631,10 @@ HERO cleared values that the no-clear policy does not write: {0}.,"HERO hat Wert
 Existing {0} has no stable HERO link.,Für das vorhandene Objekt {0} gibt es keinen stabilen HERO-Link.
 Awaits administrator approval: {0},Wartet auf Freigabe durch einen Administrator: {0}
 Event time or recurrence requires review; unrelated field changes were considered. {0},Terminzeit oder Wiederholung erfordert eine Prüfung; unabhängige Feldänderungen wurden berücksichtigt. {0}
-{0} Local changes were preserved: {1}.,{0} Lokale Änderungen wurden beibehalten: {1}.
+{0} Local changes were preserved: {1}.,{0} Beibehaltene ERPNext-Felder: {1}.
 Non-conflicting HERO field changes were applied through native Frappe validation.,Konfliktfreie HERO-Feldänderungen wurden mit der regulären Frappe-Validierung übernommen.
 HERO and Frappe changed to the same values; the baseline was advanced without a write.,HERO und Frappe wurden auf dieselben Werte geändert; die Basis wurde ohne Schreibvorgang aktualisiert.
-Local field change observed; no outbound HERO mutation was prepared.,Lokale Feldänderung erkannt; es wurde keine ausgehende HERO-Mutation vorbereitet.
+Local field change observed; no outbound HERO mutation was prepared.,Beim Import wich der ERPNext-Feldwert vom gespeicherten Vergleichswert ab. Es wurde keine Änderung an HERO vorbereitet.
 "{0} {1} already exists without this HERO record's link. The HERO number is not reassigned, suffixed or merged; check whether {1} is the same {2} and link or rename it.","{0} {1} existiert bereits ohne Link zu diesem HERO-Datensatz. Die HERO-Nummer wird weder neu vergeben noch mit einem Zusatz versehen oder zusammengeführt; prüfen Sie, ob {1} dasselbe Objekt ({2}) ist, und verknüpfen oder benennen Sie es um."
 HERO {0} changed from {1} to {2}. {3} {4} keeps its name and number until reviewed; set {5} to {2} to accept the new number.,"HERO-{0} wurde von {1} auf {2} geändert. {3} {4} behält seinen Namen und seine Nummer bis zur Prüfung; setzen Sie {5} auf {2}, um die neue Nummer zu übernehmen."
 customer number,Kundennummer
@@ -2852,7 +2854,7 @@ Each step is its own run in the history. A stopped step blocks the chain; contin
 {0} {1}? {2},{0} {1}? {2}
 Products,Artikel
 Product Migration,Artikelmigration
-Import all HERO articles (own articles and supplier catalogs) as ERPNext Items with prices.,Alle HERO-Artikel (eigene Artikel und Lieferantenkataloge) als ERPNext-Artikel mit Preisen importieren.
+Import HERO articles with a usage count above zero as ERPNext Items with prices.,HERO-Artikel mit „Genutzt“ größer als 0 als ERPNext-Artikel mit Preisen importieren.
 "Item code, name, description, unit, catalog as Item Group, manufacturer as Brand, EAN, purchase and sales price. Items changed in ERPNext are reported as conflicts, not overwritten.","Artikelnummer, Name, Beschreibung, Einheit, Katalog als Artikelgruppe, Hersteller als Marke, EAN, Einkaufs- und Verkaufspreis. In ERPNext geänderte Artikel werden als Konflikt gemeldet, nicht überschrieben."
 The Item was changed in ERPNext; the newer HERO article was not applied.,Der Artikel wurde in ERPNext geändert; der neuere HERO-Artikel wurde nicht übernommen.
 "Reads HERO directly for the source instance ""{0}"" and writes nothing back to HERO. Unchanged records are skipped; a cancelled or stopped run continues where it stopped.","Liest HERO direkt für die Quellinstanz ""{0}"" und schreibt nichts nach HERO zurück. Unveränderte Datensätze werden übersprungen; ein abgebrochener oder angehaltener Lauf setzt dort fort, wo er stehen blieb."
@@ -3977,8 +3979,8 @@ This synchronization approval belongs to a different request.,Diese Synchronisie
 Provider object type differs from the approved reader.,Der Objekttyp des Anbieters weicht vom Typ des freigegebenen Lesedienstes ab.
 Compare bound objects once,Gebundene Objekte einmalig vergleichen
 An approved runtime plan is required.,Ein freigegebener Laufzeitplan ist erforderlich.
-Compare and update up to 50 existing bound objects? {0},Bis zu 50 bestehende gebundene Objekte vergleichen und aktualisieren? {0}
-"Run {0}: {1}. Reserved {2}/50, processed {3}, skipped {4}.","Lauf {0}: {1}. Reserviert {2}/50, verarbeitet {3}, übersprungen {4}."
+Compare and update up to {0} existing bound objects? {1},Bis zu {0} bestehende gebundene Objekte vergleichen und aktualisieren? {1}
+"Run {0}: {1}. Reserved {2}/{3}, processed {4}, skipped {5}.","Lauf {0}: {1}. Reserviert {2}/{3}, verarbeitet {4}, übersprungen {5}."
 Plan Generation,Plangeneration
 Source Revision,Quellenrevision
 Execution status,Ausführungsstatus
@@ -4066,3 +4068,214 @@ This field review has no recoverable active dispatch slot.,Für diesen Feldkonfl
 Review dispatch slot,Versandreservierung prüfen
 Release this dispatch slot and keep the field open for verified readback?,Versandplatz freigeben und das Feld bis zur Bestätigung durch Rücklesen offenhalten?
 Confirm the HERO readback and open a new review for the later ERPNext edit?,Den HERO-Wert als zurückgelesen bestätigen und die spätere ERPNext-Änderung zur erneuten Prüfung öffnen?
+Frozen cohort,Eingefrorene Kohorte
+Primary record type,Typ der Hauptdatensätze
+Selected primary records,Ausgewählte Hauptdatensätze
+Processed primary records,Verarbeitete Hauptdatensätze
+Failed primary records,Fehlgeschlagene Hauptdatensätze
+Cohort conflicts,Konflikte der Kohorte
+Missing relationships,Fehlende Beziehungen
+Dependent objects,Abhängige Objekte
+Budget Contract Version,Version des Budgetvertrags
+Frozen Test Cohort,Fixierte Testkohorte
+Manual Test Approval Fingerprint,Prüfsumme der manuellen Testfreigabe
+Frozen Main Record Limit,Fixiertes Hauptdatensatzlimit
+Frozen Primary Record Limit,Fixierte Obergrenze für Hauptdatensätze
+Execution Budget,Ausführungsbudget
+Checkpoint Outcome,Ergebnis am Fortsetzungspunkt
+Outcome Phase,Ergebnisphase
+Test Budget Contract Version,Version des Testbudgetvertrags
+Test Budget Root,Ursprungslauf des Testbudgets
+Testing Max. Primary Records,Maximale Zahl der Hauptdatensätze im Test
+Frozen primary record limit. Full test migrations count projects. Older runs retain their original contract.,Fixierte Obergrenze für Hauptdatensätze. Komplettmigrationen im Test zählen Projekte. Ältere Läufe behalten ihren ursprünglichen Vertrag.
+Manual monitoring requires one bounded collection query.,Der manuelle Monitor benötigt eine begrenzte Abfrage für genau eine Datensammlung.
+Manual monitoring requires one bounded collection root.,Der manuelle Monitor benötigt genau eine begrenzte Sammlung im Wurzelfeld.
+Manual monitoring needs a proven server-side limit on the selected collection.,Für die gewählte Sammlung muss eine serverseitige Abfragegrenze nachgewiesen sein.
+The reviewed MONITOR plan or source revision changed.,Der geprüfte MONITOR-Plan oder die Quellenrevision hat sich geändert.
+The test limit changed. Review the current value before approval.,Das Testlimit hat sich geändert. Prüfen Sie den aktuellen Wert vor der Freigabe.
+The reviewed MONITOR stream differs from the approved collection.,Der geprüfte MONITOR-Änderungsstrom weicht von der freigegebenen Sammlung ab.
+Manual MONITOR requires explicit approval.,Der manuelle MONITOR benötigt eine ausdrückliche Freigabe.
+This MONITOR request belongs to a different approval.,Diese MONITOR-Anfrage gehört zu einer anderen Freigabe.
+Enable migration testing to start a bounded manual MONITOR test.,Aktivieren Sie den Migrationstestmodus für einen begrenzten manuellen MONITOR-Test.
+A MONITOR test requires the reviewed MONITOR source revision.,Der MONITOR-Test benötigt die geprüfte Quellenrevision.
+The frozen MONITOR cohort belongs to another stream or approval.,Die fixierte MONITOR-Kohorte gehört zu einem anderen Änderungsstrom oder einer anderen Freigabe.
+The recorded MONITOR sample has lost its frozen identities.,Die fixierten Identitäten der gespeicherten MONITOR-Stichprobe fehlen.
+The approved MONITOR source changed before cohort selection.,Die freigegebene MONITOR-Quelle hat sich vor der Kohortenauswahl geändert.
+Max. primary records,Max. Hauptdatensätze
+Single migrations and manual MONITOR tests count distinct primary records. Full Migration counts projects and includes their proven dependencies. Imports write ERPNext data. The run keeps the limit set at its start.,Einzelmigrationen und manuelle MONITOR-Tests zählen unterschiedliche Hauptdatensätze. Die Komplettmigration zählt Projekte und übernimmt deren nachgewiesene Abhängigkeiten. Importe schreiben ERPNext-Daten. Das Limit wird beim Laufstart festgelegt.
+Enable bounded migration and manual MONITOR tests. Executed imports write ERPNext data.,Begrenzte Migrationstests und manuelle MONITOR-Tests aktivieren. Ausgeführte Importe schreiben ERPNext-Daten.
+1 through 100 distinct primary records per run. Full Migration counts selected projects and includes proven dependencies.,1 bis 100 unterschiedliche Hauptdatensätze je Lauf. Die Komplettmigration zählt ausgewählte Projekte und übernimmt nachgewiesene Abhängigkeiten.
+Reset all test data,Alle Testdaten zurücksetzen
+Incremental Cohort Checkpoints,Fortsetzungspunkte der inkrementellen Kohortenauswahl
+Test Environment,Testumgebung
+Migration Type,Migrationstyp
+"Each test migration selects additional primary records. Full Migration applies the limit separately to projects, products and services and includes proven project dependencies. A manual MONITOR test counts records in its selected stream. Imports write ERPNext data. The run keeps the limit set at its start.","Jede Testmigration wählt zusätzliche Hauptdatensätze. Die Komplettmigration begrenzt Projekte, Produkte und Leistungen jeweils separat und übernimmt nachgewiesene Projektabhängigkeiten. Ein manueller MONITOR-Test zählt Datensätze seines Änderungsstroms. Importe schreiben ERPNext-Daten. Jeder Lauf behält sein Startlimit."
+Manual MONITOR test,Manueller MONITOR-Test
+Review the approved read stream,Freigegebenen Lesestrom prüfen
+Enable testing under Settings,Testmodus in den Einstellungen aktivieren
+The approved MONITOR stream is not enabled.,Der freigegebene MONITOR-Lesestrom ist nicht aktiviert.
+Observe up to {0} previously unselected records in this MONITOR stream? {1},Bis zu {0} bisher nicht ausgewählte Datensätze dieses MONITOR-Lesestroms beobachten? {1}
+"MONITOR {0}: {1}/{2} selected, {3} observed, {4} conflicts. Cohort {5}.","MONITOR {0}: {1}/{2} ausgewählt, {3} beobachtet, {4} Konflikte. Kohorte {5}."
+Testing Contract Version,Version des Testvertrags
+Incremental MONITOR requires the approved identity-ordered first/offset reader.,"Der inkrementelle MONITOR benötigt einen freigegebenen, nach ID sortierten Lesedienst mit first und offset."
+MONITOR returned an invalid or out-of-order numeric identity.,MONITOR hat eine ungültige oder falsch sortierte numerische ID geliefert.
+The approved MONITOR reader changed during selection.,Der freigegebene MONITOR-Lesedienst hat sich während der Auswahl geändert.
+The approved MONITOR identity order did not advance.,Die nach ID sortierte MONITOR-Auswahl kommt nicht voran.
+The bounded MONITOR scan reached its page ceiling before finding the next sample.,"Die MONITOR-Suche hat ihre Seitengrenze erreicht, bevor die nächste Stichprobe vollständig bestimmt war."
+Unsupported manual MONITOR contract version.,Die Vertragsversion des manuellen MONITOR-Tests wird nicht unterstützt.
+Select an approved MONITOR collection.,Einen freigegebenen MONITOR-Lesestrom auswählen.
+The reviewed MONITOR test limit changed.,Die bestätigte Grenze des MONITOR-Tests hat sich geändert.
+The frozen MONITOR environment changed.,Die für den MONITOR-Test festgelegte Umgebung hat sich geändert.
+Wait for migrations and background jobs to finish before resetting.,Vor dem Zurücksetzen den Abschluss der Migrationen und Hintergrundjobs abwarten.
+Relationship conflicts,Beziehungskonflikte
+DEFERRED,Zurückgestellt
+Open conflicts and relationships,Offene Feld- und Zuordnungskonflikte
+Review and correct,Prüfen und bearbeiten
+Review HERO {0},HERO-Datensatz {0} prüfen
+Edit {0} in ERPNext,{0} in ERPNext bearbeiten
+Primary HERO address {0},HERO-Hauptadresse {0}
+Additional HERO address {0},Weitere HERO-Adresse {0}
+Save address in ERPNext and recheck,Adresse in ERPNext speichern und erneut prüfen
+Recheck customer relationship,Kundenzuordnung erneut prüfen
+Conflict resolved.,Der Konflikt ist behoben.
+Rechecked. This relationship still needs review.,Die Prüfung ist abgeschlossen. Für diese Zuordnung besteht weiterer Klärungsbedarf.
+Correct the source or target and repeat the original import.,Bitte den Quell- oder Zieldatensatz korrigieren und den ursprünglichen Import erneut ausführen.
+Relationship requires review.,Die Zuordnung zwischen HERO und ERPNext muss geprüft werden.
+Native reconciliation requires review: {0},Der Abgleich mit ERPNext erfordert eine Entscheidung ({0}).
+Deferred relationship reconciliation: {0},Nachträglicher Abgleich der Zuordnung: {0}
+It was not imported.,Der Datensatz wurde nicht importiert.
+Waiting for relationship,Die Zuordnung steht noch aus.
+FIELD_CONFLICT,Feldkonflikt
+This review is no longer open for this source.,Dieser Fall ist für die aktuelle HERO-Quelle nicht mehr offen.
+The case changed. Reopen it before saving.,Der Fall hat sich geändert. Bitte vor dem Speichern erneut öffnen.
+The mapping changed. Run the customer import again.,Das Mapping hat sich geändert. Bitte den Kundenimport erneut ausführen.
+The HERO customer changed. Import the new source record before reviewing it.,Die Kundendaten in HERO haben sich geändert. Bitte zuerst die aktuellen Quelldaten importieren.
+The customer identity cannot be verified.,Die Zuordnung zum ERPNext-Kunden lässt sich nicht eindeutig bestätigen.
+This address already has a decision or a link. Reopen the case.,Für diese Adresse gibt es bereits eine Entscheidung oder Verknüpfung. Bitte den Fall erneut öffnen.
+Enter the missing street and city. Existing source values must be preserved.,Bitte fehlende Straße und Ort ergänzen. Vorhandene HERO-Werte müssen erhalten bleiben.
+Several customer addresses match. Reconcile the addresses in ERPNext first.,Mehrere Kundenadressen passen zu diesen Angaben. Bitte zuerst die Adressen in ERPNext abgleichen.
+The address decision could not be verified.,Die gespeicherte Adresszuordnung konnte nicht bestätigt werden.
+The imported source observation or binding changed; refresh the source record before retrying.,Die importierten Daten oder ihre Zuordnung haben sich geändert. Bitte den Quelldatensatz erneut importieren.
+A related assignment or address still requires review.,Eine zugehörige Adresse oder Zuweisung muss noch geprüft werden.
+Assignment remains pending; review its source identity and authority.,Die Zuweisung steht noch aus. Bitte Quellidentität und Berechtigung prüfen.
+The original migration actor is inactive.,Das Benutzerkonto des ursprünglichen Imports ist deaktiviert.
+"The frozen cohort contains missing, failed or conflicting records or required relationships.","Die festgelegte Datenauswahl enthält fehlende, fehlerhafte oder widersprüchliche Datensätze oder Zuordnungen."
+"{0} added, {1} updated, {2} unchanged, {3} skipped, {4} conflicts, {5} failed.","{0} hinzugefügt, {1} aktualisiert, {2} unverändert, {3} übersprungen, {4} Konflikte, {5} fehlgeschlagen."
+{0} transferred.,{0} übertragen.
+Local changes were preserved: {0}.,Beibehaltene ERPNext-Felder: {0}.
+Create as a separate contact,Als eigenständigen Kontakt anlegen
+Create as a separate address,Als eigenständige Adresse anlegen
+Confirm that this HERO record is distinct from the existing ERPNext record?,Ist dies tatsächlich ein anderer Kontakt bzw. eine andere Adresse als der vorhandene ERPNext-Datensatz?
+Check the IBAN and its owner in the source and in ERPNext before importing again.,Bitte IBAN und Kontoinhaber in HERO und ERPNext abgleichen und anschließend den Kunden erneut importieren.
+Separate ERPNext record confirmed for HERO ID {0}.,Eigenständiger ERPNext-Datensatz für HERO-ID {0} bestätigt.
+The address belongs to another HERO source.,Die Adresse ist mit einer anderen HERO-Quelle verknüpft.
+An identical address already exists for this customer. Confirm reuse to link it.,Für diesen Kunden gibt es bereits eine identische Adresse. Bitte die Übernahme bestätigen.
+Link an exactly matching address of this customer if one exists,Eine exakt übereinstimmende Adresse dieses Kunden übernehmen
+HERO recurrence interval,HERO-Wiederholungsintervall
+Mapped logbook content is now empty. Existing content was retained.,Der gemappte Logbuchinhalt ist jetzt leer. Der vorhandene Inhalt wurde beibehalten.
+Bank account has multiple or inconsistent HERO bindings.,Das Bankkonto hat mehrere oder widersprüchliche HERO-Bindungen.
+The frozen child does not belong to this full migration checkpoint.,Der gebundene Teilauftrag gehört nicht zu diesem Wiederaufnahmepunkt der Gesamtmigration.
+Bank account changed during migration. Retry the record.,Das Bankkonto hat sich während der Migration geändert. Der Datensatz wird erneut geprüft.
+Bank was created concurrently. Retry the record.,Ein anderer Worker hat die Bank gerade angelegt. Der Datensatz wird erneut geprüft.
+The checkpoint contract changed during retry.,Die gespeicherte Migrationskonfiguration hat sich beim Wiederholen geändert.
+"Missing, repeated or foreign identity in scoped child read.","Beim Lesen der zugehörigen Datensätze fehlt eine Identität, kommt mehrfach vor oder gehört zu einem anderen Objekt."
+Existing native target verified.,Vorhandener ERPNext-Datensatz bestätigt.
+Creation waits for mandatory bindings.,Anlage wartet auf die erforderlichen Verknüpfungen.
+Not permitted,Zugriff verweigert
+Reload,Neu laden
+Historical,Historisch
+Original Mapping Revision,Ursprüngliche Mapping-Revision
+HERO Customer ID,HERO-Kunden-ID
+HERO Address ID,HERO-Adress-ID
+Address Role,Adressrolle
+primary,Hauptanschrift
+collection,Zusatzanschrift
+Address,Adresse
+Original HERO Address Fingerprint,Prüfsumme der ursprünglichen HERO-Adresse
+Verified External Address Evidence,Geprüfter externer Adressnachweis
+Catalog selection checkpoint,Wiederaufnahmepunkt der Katalogauswahl
+Absence Id,Abwesenheits-ID
+Partner Id,Partner-ID
+From Date,Von
+To Date,Bis
+Duration Days,Dauer in Tagen
+Budget Days,Kontingent in Tagen
+Source Comment,Kommentar aus HERO
+Absence Type,Abwesenheitsart
+Source Status,Status in HERO
+Start Budget,Anfangskontingent
+End Budget,Endkontingent
+Has Duration,Dauer angegeben
+Has Budget,Kontingent angegeben
+Waiting for the next scheduled run,Wartet auf den nächsten geplanten Lauf
+Interrupted run awaiting recovery,Unterbrochener Lauf wartet auf Wiederaufnahme
+Writeback queued,Rückübertragung in der Warteschlange
+Worker queue unavailable,Worker-Warteschlange nicht erreichbar
+Paused,Pausiert
+A later local edit superseded this native change.,Eine spätere lokale Bearbeitung hat diese Änderung abgelöst.
+Approved Intent Evidence,Nachweis des freigegebenen Schreibauftrags
+Bound Object Key,Schlüssel des gebundenen Objekts
+Confirmed,Bestätigt
+Delivery Stage,Übertragungsstand
+Dispatching,Versand begonnen
+Field authority must identify a selected rule and its supported role.,Die Feldführerschaft muss eine ausgewählte Regel und eine zulässige Rolle benennen.
+Field authority requires a scalar rule on the selected native target.,Feldführerschaft setzt eine skalare Regel am ausgewählten nativen Ziel voraus.
+HERO mutation receipt was not found.,Der Beleg für die HERO-Mutation wurde nicht gefunden.
+Native Event Delivery Key,Zustellschlüssel des nativen Ereignisses
+Not Sent,Nicht gesendet
+Observed Field Fingerprints,Fingerabdrücke der beobachteten Felder
+Origin Event,Auslösendes Ereignis
+Pending Creation Scope,Bereich einer ausstehenden Anlage
+Pending Native Target,Ausstehender nativer Zieldatensatz
+Pending Object Key,Objektschlüssel des offenen Auftrags
+Prepared,Vorbereitet
+Project notes contain formatting outside the approved plain-text round trip.,Die Formatierung der Projektnotizen lässt sich mit der freigegebenen Klartextumwandlung nicht verlustfrei übertragen.
+Project notes require an explicitly approved inverse text transformation.,Projektnotizen benötigen eine ausdrücklich freigegebene Rückumwandlung in Klartext.
+Returned HERO Identity,Von HERO bestätigte Identität
+The approved field contract does not permit this outbound write.,Der freigegebene Feldvertrag erlaubt diese Übertragung an HERO nicht.
+The approved mutation does not bind this field operation.,Die freigegebene Mutation deckt diese Feldoperation nicht ab.
+The approved readback did not establish a field baseline.,Das freigegebene Rücklesen konnte keinen Feldvergleichsstand bestätigen.
+The approved reader marks the bound source as deleted.,Der freigegebene Leser meldet den gebundenen Quelldatensatz als gelöscht.
+The selected mapping revision is stale.,Die ausgewählte Mappingrevision ist veraltet.
+This event does not identify a bound native change.,Dieses Ereignis verweist auf keine gebundene native Änderung.
+This receipt has no bound field intent.,Für diesen Beleg liegt kein gebundener Schreibauftrag vor.
+Uncertain,Ausgang ungewiss
+Automatic writeback configuration changed before delivery.,Die Konfiguration der automatischen Rückübertragung hat sich vor dem Versand geändert.
+Deferred,Zurückgestellt
+Delivered,Zugestellt
+Manual known-object comparison requires a budget.,Für den manuellen Abgleich bekannter Objekte ist ein Budget erforderlich.
+Next Writeback Attempt,Nächster Rückübertragungsversuch
+Superseded,Durch neuere Änderung ersetzt
+Writeback Attempts,Rückübertragungsversuche
+Writeback Detail,Details zur Rückübertragung
+Writeback Status,Status der Rückübertragung
+Picture migration is disabled on this site.,Die Bildmigration ist auf dieser Site deaktiviert.
+The approved file category is missing.,Die freigegebene Dateikategorie fehlt.
+File metadata changed during the approved read.,Die Dateimetadaten haben sich während des freigegebenen Lesevorgangs geändert.
+Service metadata changed during the approved read.,Die Leistungsmetadaten haben sich während des freigegebenen Lesevorgangs geändert.
+Inventory Sync Run,Bestandsabgleichslauf
+Inventory page exceeded its admitted budget.,Die Bestandsseite hat ihr freigegebenes Budget überschritten.
+The source-approved product usage file changed during inventory.,Die für diese Quelle freigegebene Artikel-Positivliste hat sich während des Bestandsabgleichs geändert.
+Turn off HERO polling and outbound delivery and wait for HERO background work to finish before resetting.,HERO-Polling und Versand ausschalten und laufende HERO-Aufträge abwarten.
+Enable the existing HERO deletion setting before confirming a reset.,Vor der Bestätigung die vorhandene HERO-Löschfreigabe aktivieren.
+"Remove confirmed HERO test data on {0}? Native records: {1}. Test artifacts: {2}. Files: {3} ({4} bytes). Retained for review: {5}.","Bestätigte HERO-Testdaten auf {0} entfernen? Native Datensätze: {1}. Testartefakte: {2}. Dateien: {3} ({4} Byte). Zur Prüfung erhalten: {5}."
+Selective HERO test reset completed.,Selektiver HERO-Testreset abgeschlossen.
+Reader selections must be unique and belong to the same plan scope.,Die Reader-Auswahl muss eindeutig sein und zum selben Laufzeitplan gehören.
+A disabled runtime plan cannot be edited.,Ein deaktivierter Laufzeitplan kann nicht bearbeitet werden.
+Schema adoption requires an approved runtime plan.,Die Schemaübernahme erfordert einen genehmigten Laufzeitplan.
+Reader is outside the approved plan generation.,Der Reader gehört nicht zur genehmigten Plangeneration.
+No approved reader is enabled.,Es ist kein genehmigter Reader aktiviert.
+Automatic synchronization is switched off.,Die automatische Synchronisation ist ausgeschaltet.
+Source revision changed before polling.,Die Quellrevision hat sich vor dem Polling geändert.
+Compatible Contract,Kompatibler Vertrag
+Blocked Contract,Blockierter Vertrag
+GraphQL Reader,GraphQL-Reader
+Scheduler Cycle,Scheduler-Zyklus
+Cycle Record Allocation,Datensatzbudget für den Zyklus
+Runtime Schema Validated Against,Validierter Laufzeit-Schema-Snapshot
+Additional Approved Readers,Weitere genehmigte Reader
+Last Scheduled Reader,Zuletzt eingeplanter Reader
+Reader Checkpoints,Reader-Checkpoints
+Of which: partial inventory,Davon mit Teilabgleich
+Migrate archived records,Archivierte Datensätze migrieren
+Applies to new test and full migrations. Archived records excluded by the HERO query are not counted as read.,Gilt für neue Test- und Vollmigrationen. Bereits durch die HERO-Abfrage ausgeschlossene Datensätze werden nicht als gelesen gezählt.

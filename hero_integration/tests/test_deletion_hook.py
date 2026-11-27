@@ -45,7 +45,8 @@ class TestDeletionHook(IntegrationTestCase):
         )
         self.assertEqual(
             hero_integration.hooks.doc_events["*"]["on_update"],
-            "hero_integration.services.change_detection.observe_frappe_target_change",
+            ["hero_integration.services.change_detection.observe_frappe_target_change",
+             "hero_integration.services.selective_test_reset.capture_creation"],
         )
         self.assertEqual(
             hero_integration.hooks.doc_events["Task"]["validate"],

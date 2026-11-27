@@ -108,6 +108,10 @@ def validate_edits(prior, submitted):
             if key in submitted and submitted[key] != 'SEND_TO_HERO':
                 raise MappingDraftError('Unsupported mutation mapping usage.')
             continue
+        if key == 'field_authority':
+            from hero_integration.services.mapping_runtime import field_authorities
+            field_authorities(submitted, submitted.get('mapping_definition_ids', []))
+            continue
         if key in {'query_adapter', 'send_options'}:
             if key not in submitted:
                 continue
@@ -226,6 +230,9 @@ def validate_rule(rule):
 
 
 def remap_query_options(content, identities):
+    if 'field_authority' in content:
+        roles = content['field_authority']
+        content['field_authority'] = {identities.get(key, key): role for key, role in roles.items()}
     options = content.get('query_adapter', {}).get('transform_options')
     if isinstance(options, dict):
         content['query_adapter']['transform_options'] = {identities.get(key, key): value for key, value in options.items()}

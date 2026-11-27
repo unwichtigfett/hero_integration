@@ -5,6 +5,7 @@
   "autoname": "field:plan_key",
   "track_changes": 1,
   "fields": [
+    {"fieldname":"validated_snapshot","label":"Runtime Schema Validated Against","fieldtype":"Link","options":"HERO GraphQL Schema Snapshot","read_only":1},{"fieldname":"additional_readers_json","label":"Additional Approved Readers","fieldtype":"Code","read_only":1,"options":"JSON","hidden":1},{"fieldname":"last_scheduled_reader","label":"Last Scheduled Reader","fieldtype":"Data","read_only":1},
     {"fieldname":"plan_key","label":"Plan Key","fieldtype":"Data","reqd":1,"unique":1,"read_only":1},
     {"fieldname":"site_scope","label":"Site Scope","fieldtype":"Data","reqd":1,"read_only":1},
     {"fieldname":"source_instance","label":"Source Instance","fieldtype":"Data","reqd":1,"read_only":1},

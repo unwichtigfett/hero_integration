@@ -3,7 +3,7 @@ from copy import deepcopy
 import json
 from types import SimpleNamespace as NS
 from unittest import TestCase
-from unittest.mock import Mock, patch
+from unittest.mock import MagicMock, Mock, patch
 from uuid import uuid4
 
 from graphql import build_schema, get_introspection_query, graphql_sync
@@ -61,22 +61,23 @@ class TestLogbookConfiguration(TestCase):
             self.assertNotEqual(first, wb._comment_scope('source', 'C2'))
 
 
-class TestLogbookPreparation(TestCase):
-    def context(self):
-        from hero_integration.services.mutation_binding_contract import parse_mutation
-        value = content()
-        return NS(document=NS(name='C1', doctype='Comment', comment_type='Comment', modified='v1', content='<p>New<br>activity</p>',
-                   reference_doctype='Project', reference_name='P1'), project=NS(name='P1', modified='p1'),
-            mapping=NS(name='mapping', mapping_revision=1), content=value, proof=NS(fingerprint='proof'),
-            link={'name': 'link', 'source_id': '7'}, contract=NS(name='contract', contract_revision=1, contract_fingerprint='fp'),
-            service=NS(query_document='mutation Add($entry:LogbookEntryInput){add_logbook_entry(logbook_entry:$entry){id}}'),
-            read=NS(contract=NS(adapter_options={'logbook': {'path': 'histories', 'identity_path': 'id'}}),
-                    service=NS(query_document='query{project_matches{id histories{id custom_text}}}')),
-            parsed=parse_mutation('mutation Add($entry:LogbookEntryInput){add_logbook_entry(logbook_entry:$entry){id}}'),
-            raw_schema=SCHEMA, hero_id='7')
+def approved_logbook_context():
+    from hero_integration.services.mutation_binding_contract import parse_mutation
+    value = content()
+    return NS(document=NS(name='C1', doctype='Comment', comment_type='Comment', modified='v1', content='<p>New<br>activity</p>',
+               reference_doctype='Project', reference_name='P1'), project=NS(name='P1', modified='p1'),
+        mapping=NS(name='mapping', mapping_revision=1), content=value, proof=NS(fingerprint='proof'),
+        link={'name': 'link', 'source_id': '7'}, contract=NS(name='contract', contract_revision=1, contract_fingerprint='fp'),
+        service=NS(query_document='mutation Add($entry:LogbookEntryInput){add_logbook_entry(logbook_entry:$entry){id}}'),
+        read=NS(contract=NS(adapter_options={'logbook': {'path': 'histories', 'identity_path': 'id'}}),
+                service=NS(query_document='query{project_matches{id histories{id custom_text}}}')),
+        parsed=parse_mutation('mutation Add($entry:LogbookEntryInput){add_logbook_entry(logbook_entry:$entry){id}}'),
+        raw_schema=SCHEMA, hero_id='7')
 
+
+class TestLogbookPreparation(TestCase):
     def test_only_server_bound_project_and_plain_activity_text_enter_variables(self):
-        ctx = self.context()
+        ctx = approved_logbook_context()
         with patch.object(wb, '_read_project', return_value={'id': 7, 'histories': [{'id': 9}]}):
             prepared = wb._prepare(ctx, Mock())
         self.assertEqual(prepared.variables, {'entry': {'target': 'project_match', 'target_id': 7, 'custom_text': 'New\nactivity'}})
@@ -86,14 +87,14 @@ class TestLogbookPreparation(TestCase):
         self.assertNotEqual(previous, wb._fingerprint(ctx))
 
     def test_empty_or_omitted_logbook_blocks_prepare(self):
-        ctx = self.context();ctx.document.content = '<p></p>'
+        ctx = approved_logbook_context();ctx.document.content = '<p></p>'
         with patch.object(wb, '_read_project', return_value={'id': 7, 'histories': []}):
             with self.assertRaises(ValueError): wb._prepare(ctx, Mock())
         with patch.object(wb, '_read_project', return_value={'id': 7}):
             with self.assertRaises(ValueError): wb._prepare(ctx, Mock())
 
     def test_readback_must_prove_identity_text_and_parent(self):
-        ctx = self.context();prepared = NS(text='Expected')
+        ctx = approved_logbook_context();prepared = NS(text='Expected')
         for entry in ({'id': 1, 'custom_text': 'Wrong', 'target': 'project_match', 'target_id': 7},
                       {'id': 1, 'custom_text': 'Expected', 'target': 'project_match', 'target_id': 8},
                       {'id': 2, 'custom_text': 'Expected', 'target': 'project_match', 'target_id': 7}):
@@ -107,9 +108,9 @@ class TestLogbookPreparation(TestCase):
 class TestLogbookSend(TestCase):
     def setUp(self):
         self.ctx = NS(proof=NS(source_instance='source'), snapshot=NS(schema_fingerprint='schema'),
-            mapping=NS(mapping_revision=1), project=NS(name='P1'), service=NS(query_document='approved mutation'))
+            mapping=NS(mapping_revision=1), project=NS(name='P1'), marker=NS(name='marker'), service=NS(query_document='approved mutation'))
         self.prepared = NS(fingerprint='fingerprint', variables={'entry': {}}, history_ids={'9'})
-        self.audit = NS(correlation_id='own-audit')
+        self.audit = NS(name='audit', correlation_id='own-audit', delivery_stage='Prepared', save=Mock())
         self.events = []; self.transport = Mock()
         self.transport.execute_once.return_value = {wb.OPERATION: {'id': 10}}
         self.database = NS(commit=Mock(), rollback=Mock(), set_value=Mock())
@@ -117,6 +118,11 @@ class TestLogbookSend(TestCase):
         compiler = patch('hero_integration.services.mapping_contract_v1.materialize_saved_mutation',
             side_effect=lambda snapshot, document, variables, **kwargs: NS(document=document, variables=variables))
         compiler.start(); self.addCleanup(compiler.stop)
+        ledger = MagicMock()
+        for stub in (patch('hero_integration.services.sync_engine.FrappeSyncLedger', return_value=ledger),
+                     patch('hero_integration.services.execution_runtime.locked_delivery_receipt', return_value=self.audit)):
+            stub.start()
+            self.addCleanup(stub.stop)
         patches = [patch.object(wb, 'frappe', self.fake), patch.object(wb, '_load_context', return_value=self.ctx),
             patch.object(wb, '_prepare', return_value=self.prepared), patch.object(wb, '_fingerprint', return_value='fingerprint'),
             patch.object(wb, '_reserve_project', side_effect=lambda *a: self.events.append('marker') or 'marker'),
@@ -137,7 +143,8 @@ class TestLogbookSend(TestCase):
         self.assertEqual(result['status'], 'SENT')
         self.transport.execute_once.assert_called_once_with('approved mutation', {'entry': {}})
         self.assertEqual(self.events, ['marker', 'receipt', 'readback'])
-        self.assertEqual(self.mocks[1].call_count, 4)
+        self.assertEqual([call.kwargs.get("lock", False) for call in self.mocks[1].call_args_list],
+                         [False, True, False, True, True, False, True])
         self.assertEqual(self.mocks[-2].call_args.kwargs['request_fingerprint'], wb._comment_scope('source', 'C1'))
         self.assertEqual(self.mocks[-1].call_args.args[1], 'Succeeded')
 
@@ -147,7 +154,7 @@ class TestLogbookSend(TestCase):
         self.mocks[-2].assert_not_called();self.transport.execute_once.assert_not_called()
 
     def test_post_reservation_authority_failure_stops_transport(self):
-        self.mocks[1].side_effect = [self.ctx, ValueError('changed')]
+        self.mocks[1].side_effect = [self.ctx, self.ctx, ValueError('changed')]
         with self.assertRaises(ValueError): self.send()
         self.transport.execute_once.assert_not_called()
         self.assertEqual(self.mocks[-1].call_args.args[1], 'Failed')
@@ -269,7 +276,7 @@ class TestAutomaticProjectActivities(TestCase):
 
 class TestAutomaticActivityGuards(TestCase):
     def test_rendered_change_text_and_language_are_bound_to_confirmation(self):
-        ctx=TestLogbookPreparation().context()
+        ctx=approved_logbook_context()
         first=wb._fingerprint(ctx,text='Status: Open → Completed')
         self.assertNotEqual(first,wb._fingerprint(ctx,text='Status: Offen → Abgeschlossen'))
         self.assertNotEqual(first,wb._fingerprint(ctx,text=''))

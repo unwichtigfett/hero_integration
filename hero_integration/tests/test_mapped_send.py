@@ -45,14 +45,14 @@ def context():
               target_doctype='Customer', target_name='C1', sync_status='Synchronized', source_field_hashes=encode(field_hashes({'custom_notes': 'Old'})),
               target_field_hashes=encode(field_hashes({'custom_notes': 'Old'})))
     schema_fingerprint = analyze_snapshot(SCHEMA).fingerprint
-    return NS(document=_Doc(custom_notes='Expected'), content=ms.normalise_send_mapping(content(), SCHEMA),
+    return NS(parent=None,fields={},rules_fingerprint='rules',document=_Doc(custom_notes='Expected'), content=ms.normalise_send_mapping(content(), SCHEMA),
         mapping=NS(name='MAP-1', operation_name='update_contact', mapping_revision=2),
         snapshot=NS(name='SNAP-1', snapshot_json=json.dumps(SCHEMA), schema_fingerprint=schema_fingerprint,
                     analysis_status='Validated', source_instance='source-a'),
         link=link, baseline_links={}, proof=NS(source_instance='source-a', fingerprint='source-proof'), hero_id=42, related={},
-        service=NS(query_document=DOCUMENT), contract=NS(contract_fingerprint='contract-proof', contract_revision=3),
+        service=NS(query_document=DOCUMENT), contract=NS(name='contract',mapping_json='{"mode":"ADMIN_INPUT"}', contract_fingerprint='contract-proof', contract_revision=3),
         parsed=parse_mutation(DOCUMENT), read=NS(service=NS(name='READ-1', query_document='approved-query'),
-        mapping=NS(name='QUERY-MAP-1'), contract=NS(target_operation='HeroCustomers', service_revision=4,
+        mapping=NS(name='QUERY-MAP-1'), contract=NS(target_operation='HeroCustomers', mapping_name='QUERY-MAP-1', identity_path='id', service_revision=4,
             mapping_revision=5)), rule=rule)
 
 
@@ -116,21 +116,30 @@ class TestSendProfileNormalization(TestCase):
 class _TransportFixture(TestCase):
     def setUp(self):
         self.ctx = context()
+        self.ctx.document.creation = "fixture-creation"
         self.statuses = []
         self.writes = []
         self.mutation = NS(execute_once=Mock(return_value={'update_contact': {'id': 42}}))
-        self.frappe = NS(has_permission=Mock(), get_meta=lambda doctype: NS(get_field=lambda field: NS(label='Mapped notes',
+        self.frappe = NS(local=NS(site='scope'),has_permission=Mock(), get_meta=lambda doctype: NS(get_field=lambda field: NS(label='Mapped notes',
             fieldtype='Small Text', hidden=0, is_virtual=0, permlevel=0)),
-            db=NS(savepoint=Mock(), rollback=Mock(), set_value=lambda *a, **kw: self.writes.append((a, kw))),
+            db=NS(savepoint=Mock(), rollback=Mock(), get_value=lambda *args: None, set_value=lambda *a, **kw: self.writes.append((a, kw))),
             get_doc=lambda doctype, name, **kw: self.ctx.link if doctype == 'HERO Integration Link' else self.ctx.document)
-        patches = [patch.object(ms, 'frappe', self.frappe), patch.object(ms, '_load_context', return_value=self.ctx),
+        from unittest.mock import MagicMock
+        ledger = MagicMock()
+        ledger.rollback.side_effect = lambda: self.frappe.db.rollback()
+        # Unit fixtures model the persistent receipt and local row locks. The native suite
+        # exercises those boundaries with actual MariaDB sessions and durable bindings.
+        patches = [patch('hero_integration.services.sync_engine.FrappeSyncLedger', return_value=ledger),
+            patch('hero_integration.services.execution_runtime.locked_delivery_receipt', return_value=NS(correlation_id='AUDIT-1', delivery_stage='Dispatching')),
+            patch.object(ms, '_check_send_local', side_effect=lambda ctx, *args: ms._check_conditions_current(ctx)),
+            patch.object(ms, '_publish_registry'), patch.object(ms, 'frappe', self.frappe), patch.object(ms, '_load_context', return_value=self.ctx),
             patch.object(ms, '_read_record', return_value={'id': 42, 'remarks': 'Old'}),
-            patch('hero_integration.services.migration._mapping_plan_for_run', return_value=NS(definitions=(self.ctx.rule,))),
+            patch('hero_integration.services.migration._mapping_plan_for_run', return_value=NS(definitions=(self.ctx.rule,), mapping_version='fixture', source_deleted=lambda row: False)),
             patch('hero_integration.services.writeback_source.validate_source', return_value=NS(endpoint='endpoint', api_token='synthetic', timeout_seconds=1)),
             patch('hero_integration.api._mutation_execution_state', return_value={'mutation_execution_enabled': True}),
             patch('hero_integration.api._assert_mutation_execution_released'),
-            patch('hero_integration.api._reserve_mutation', return_value=NS(correlation_id='AUDIT-1')),
-            patch('hero_integration.api._finalize_mutation', side_effect=lambda audit, status, detail: self.statuses.append(status))]
+            patch('hero_integration.api._reserve_mutation', return_value=NS(name='AUDIT-1',correlation_id='AUDIT-1',save=Mock(),delivery_stage='Prepared')),
+            patch('hero_integration.api._finalize_mutation', side_effect=lambda audit, status, detail, **kw: self.statuses.append(status))]
         for item in patches:
             item.start(); self.addCleanup(item.stop)
 
@@ -159,7 +168,7 @@ class TestMappedSendTransport(_TransportFixture):
                         self.ctx.hero_id = 43
                     else:
                         self.ctx.link.source_field_hashes = encode(field_hashes({'custom_notes': 'Other'}))
-                    return NS(correlation_id='AUDIT-1')
+                    return NS(name='AUDIT-1',correlation_id='AUDIT-1',save=Mock(),delivery_stage='Prepared')
                 with patch.object(ms, '_load_context', side_effect=lambda *a, **k: self.ctx), \
                         patch('hero_integration.api._reserve_mutation', side_effect=reserve), \
                         self.assertRaises(ms.MappedSendError):
@@ -196,7 +205,7 @@ class TestMappedSendTransport(_TransportFixture):
         fingerprint = self.preview()['fingerprint']
         def reserve(**kwargs):
             self.ctx.snapshot.schema_fingerprint = 'a' * 64
-            return NS(correlation_id='AUDIT-1')
+            return NS(name='AUDIT-1',correlation_id='AUDIT-1',save=Mock(),delivery_stage='Prepared')
         with patch('hero_integration.api._reserve_mutation', side_effect=reserve), self.assertRaises(ms.MappedSendError):
             self.send(fingerprint)
         self.mutation.execute_once.assert_not_called()
@@ -311,11 +320,11 @@ class TestGroupedNestedSend(_TransportFixture):
         after = {'id': 42, 'remarks': 'Expected', 'address': {'id': 9, 'street': 'New Street'}}
         self.frappe.get_all = lambda *args, **kwargs: ['9']
         with patch('hero_integration.services.migration._mapping_plan_for_run',
-                   return_value=NS(definitions=(self.ctx.rule, address_rule))), \
+                   return_value=NS(definitions=(self.ctx.rule, address_rule), mapping_version='fixture', source_deleted=lambda row: False)), \
                 patch.object(ms, '_read_record', return_value=before):
             fingerprint = self.preview()['fingerprint']
         with patch('hero_integration.services.migration._mapping_plan_for_run',
-                   return_value=NS(definitions=(self.ctx.rule, address_rule))), \
+                   return_value=NS(definitions=(self.ctx.rule, address_rule), mapping_version='fixture', source_deleted=lambda row: False)), \
                 patch.object(ms, '_read_record', side_effect=[before, before, after]):
             self.send(fingerprint)
         self.mutation.execute_once.assert_called_once_with(print_ast(parse(DOCUMENT)), {'input': {
@@ -486,12 +495,12 @@ class TestConfiguredProjectPhase(_TransportFixture):
         before = {'id': 42, 'current_project_match_status': {'step_id': 1, 'step': {'name': 'Old'}}, 'type': {'project_status_steps': phases}}
         after = {'id': 42, 'current_project_match_status': {'step_id': 2, 'step': {'name': 'New'}}, 'type': {'project_status_steps': phases}}
         self.mutation.execute_once.return_value = {'update_project_match': {'id': 42}}
-        with patch('hero_integration.services.migration._mapping_plan_for_run', return_value=NS(definitions=(rule,))), \
+        with patch('hero_integration.services.migration._mapping_plan_for_run', return_value=NS(definitions=(rule,), mapping_version='fixture', source_deleted=lambda row: False)), \
                 patch.object(ms, '_read_record', return_value=before):
             preview = ms.preview('Project', 'C1', phase_id=2, client=NS())
         self.assertEqual(preview['phases'], [{'id': 1, 'name': 'Old'}, {'id': 2, 'name': 'New'}])
         self.assertEqual(preview['hero']['phase_id'], 1)
-        with patch('hero_integration.services.migration._mapping_plan_for_run', return_value=NS(definitions=(rule,))), \
+        with patch('hero_integration.services.migration._mapping_plan_for_run', return_value=NS(definitions=(rule,), mapping_version='fixture', source_deleted=lambda row: False)), \
                 patch.object(ms, '_read_record', side_effect=[before, before, after]):
             ms.send('Project', 'C1', phase_id=2, fingerprint=preview['fingerprint'], confirmed=1,
                     client=NS(), mutation_client=self.mutation)
@@ -623,7 +632,7 @@ class TestAcknowledgmentTransaction(_TransportFixture):
         events = []
         self.frappe.db.rollback.side_effect = lambda: events.append('rollback')
         with patch.object(ms, '_read_record', side_effect=[{'id': 42, 'remarks': 'Old'}, {'id': 42, 'remarks': 'Old'}, {'id': 42, 'remarks': 'Expected'}]), \
-                patch('hero_integration.api._finalize_mutation', side_effect=lambda audit, status, detail: events.append(status)), \
+                patch('hero_integration.api._finalize_mutation', side_effect=lambda audit, status, detail, **kw: events.append(status)), \
                 self.assertRaises(ms.MappedSendError):
             self.send(fingerprint)
         self.assertEqual(events, ['rollback', 'Failed'])
@@ -642,7 +651,7 @@ class TestAcknowledgmentTransaction(_TransportFixture):
         def apply(*args):
             callbacks.add(lambda: delivered.append('phase event'))
             raise ms.MappedSendError('Local phase validation failed')
-        def finalize(audit, status, detail):
+        def finalize(audit, status, detail, **kw):
             events.append(status)
             callbacks.run()
         with patch.object(ms, '_read_record', side_effect=[{'id': 42, 'remarks': 'Old'}, {'id': 42, 'remarks': 'Old'}, {'id': 42, 'remarks': 'Expected'}]), \
@@ -706,12 +715,12 @@ class TestMappedTaskAssignee(_TransportFixture):
         self.mutation.execute_once.return_value = {'update_task': {'id': 42}}
         before, after = {'id': 42, 'title': 'Expected', 'target_user_id': 7}, {'id': 42, 'title': 'Expected', 'target_user_id': 8}
         with patch.dict(sys.modules, {'hero_integration.services.query_mapping': NS(transform=transform)}), \
-                patch('hero_integration.services.migration._mapping_plan_for_run', return_value=NS(definitions=rules, adapter_options=options)), \
+                patch('hero_integration.services.migration._mapping_plan_for_run', return_value=NS(definitions=rules, adapter_options=options, mapping_version='fixture', source_deleted=lambda row: False)), \
                 patch.object(ms, '_lookup', return_value=[('new@example.invalid', 8)]), \
                 patch.object(ms, '_read_record', return_value=before):
             fingerprint = ms.preview('Task', 'C1', client=NS())['fingerprint']
         with patch.dict(sys.modules, {'hero_integration.services.query_mapping': NS(transform=transform)}), \
-                patch('hero_integration.services.migration._mapping_plan_for_run', return_value=NS(definitions=rules, adapter_options=options)), \
+                patch('hero_integration.services.migration._mapping_plan_for_run', return_value=NS(definitions=rules, adapter_options=options, mapping_version='fixture', source_deleted=lambda row: False)), \
                 patch.object(ms, '_lookup', return_value=[('new@example.invalid', 8)]), \
                 patch.object(ms, '_read_record', side_effect=[before, before, after]):
             ms.send('Task', 'C1', fingerprint=fingerprint, confirmed=1, client=NS(), mutation_client=self.mutation)
@@ -949,6 +958,7 @@ class TestTaskCreate(_TransportFixture):
         class Task(_Doc):
             doctype = 'Task'
         self.ctx.document = Task(subject='Synthetic test task', project='PROJECT-TEST')
+        self.ctx.document.creation = 'synthetic-creation'
         self.ctx.hero_id, self.ctx.link = None, None
         self.ctx.content = ms.normalise_send_mapping(create_content(), CREATE_SCHEMA)
         self.ctx.mapping.operation_name = 'update_task'
@@ -959,7 +969,7 @@ class TestTaskCreate(_TransportFixture):
         self.ctx.read.contract.target_operation = 'HeroTasks'
         self.ctx.query_plan = NS(definitions=(MappingSpec('HeroTasks', 'title', 'Task', 'subject', 'string|null'),
             MappingSpec('HeroTasks', 'target_project_match_id', 'Task', 'project', 'int|null',
-                        purpose='Project Relation', transformation='HERO Project Link')), mapping_version='approved-query-version')
+                        purpose='Project Relation', transformation='HERO Project Link')), mapping_version='approved-query-version', source_deleted=lambda row: False)
         self.audit_rows, self.bindings, self.links = [], [], []
         self.created = []
         self.frappe.local = NS(site='synthetic-test-site')
@@ -1014,7 +1024,7 @@ class TestTaskCreate(_TransportFixture):
 
     def test_timeout_and_bad_readback_never_link_or_permit_automatic_retry(self):
         fingerprint = self.preview()['fingerprint']
-        with patch('hero_integration.api._finalize_mutation', side_effect=lambda audit, status, detail:
+        with patch('hero_integration.api._finalize_mutation', side_effect=lambda audit, status, detail, **kw:
                    self.audit_rows.append(NS(correlation_id=audit.correlation_id, status=status, detail=detail))), \
                 patch.object(ms, '_read_record', return_value={**self.after, 'title': 'Ignored'}), \
                 self.assertRaises(ms.MappedSendError):
@@ -1059,7 +1069,7 @@ class TestTaskCreate(_TransportFixture):
     def test_timeout_is_latched_even_without_a_returned_remote_identity(self):
         fingerprint = self.preview()['fingerprint']
         self.mutation.execute_once.side_effect = TimeoutError('Synthetic timeout')
-        with patch('hero_integration.api._finalize_mutation', side_effect=lambda audit, status, detail:
+        with patch('hero_integration.api._finalize_mutation', side_effect=lambda audit, status, detail, **kw:
                    self.audit_rows.append(NS(correlation_id=audit.correlation_id, status=status, detail=detail))), \
                 self.assertRaises(ms.MappedSendError):
             self.send(fingerprint)

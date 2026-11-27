@@ -12,14 +12,20 @@ from hero_integration.tests.test_product_mapping import _Frappe, SUPPLIER_ROW, o
 class TestSupplierBaseline(unittest.TestCase):
     def setUp(self):
         self.fake = _Frappe()
-        self.fake.db.get_value = lambda doctype, filters, field: next((
-            row['supplier_name'] for row in self.fake.masters
-            if doctype == 'Supplier' and row['doctype'] == doctype
-            and row['supplier_name'] == filters['supplier_name']), None)
         self.patch = patch.object(pm, 'frappe', self.fake)
         self.patch.start()
         self.addCleanup(self.patch.stop)
         self.read = own_read()
+
+    def test_two_native_suppliers_with_same_display_name_are_not_linked(self):
+        from hero_integration.services.binding_registry import BindingConflict
+
+        self.fake.masters.extend({'doctype': 'Supplier', 'supplier_name': 'Krannich Solar', 'name': name}
+                                 for name in ('SUP-001', 'SUP-002'))
+        with self.assertRaisesRegex(BindingConflict, 'supplier name'):
+            pm.upsert(SUPPLIER_ROW, None, pm._Masters(), 'source-a', read=self.read)
+        self.assertFalse(self.fake.links)
+        self.assertFalse(any(item.get('supplier_items') for item in self.fake.items.values()))
 
     def initial_import(self, read=None):
         self.read = read or self.read

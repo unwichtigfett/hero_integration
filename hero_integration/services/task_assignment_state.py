@@ -3,6 +3,17 @@ from contextlib import contextmanager
 from contextvars import ContextVar
 
 _active = ContextVar('hero_managed_assignment', default=False)
+_completing = ContextVar('hero_completing_task', default=None)
+
+
+@contextmanager
+def completing_task(name):
+    """Recognize ERPNext closing the exact managed ToDo during inbound completion."""
+    token = _completing.set(name)
+    try:
+        yield
+    finally:
+        _completing.reset(token)
 
 
 @contextmanager
@@ -77,6 +88,13 @@ def observe_local_todo(doc, method=None):
     for row in names:
         state = frappe.get_doc('HERO Task Assignment State', row.name, for_update=True)
         with managed_assignment():
-            state.state = 'LOCAL'
+            previous = doc.get_doc_before_save() if _completing.get() == task else None
+            if (previous and method == 'on_update' and state.state == 'SYSTEM'
+                    and state.task_name == task and state.todo == doc.name
+                    and previous.status == 'Open' and doc.status == 'Closed'
+                    and str(previous.modified) == str(state.todo_modified)):
+                state.todo_modified = doc.modified
+            else:
+                state.state = 'LOCAL'
             state.state_revision = int(state.state_revision) + 1
             state.save(ignore_permissions=True)

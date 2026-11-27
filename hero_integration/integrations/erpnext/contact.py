@@ -158,8 +158,14 @@ def _set_primary_child(contact, table: str, value_field: str, primary_field: str
         return changed
     primary_rows = [row for row in rows if _field_value(row, primary_field)]
     if len(primary_rows) == 1:
-        _set_field(primary_rows[0], value_field, value)
-        return True
+        row = primary_rows[0]
+        other_flag = {"is_primary_phone": "is_primary_mobile_no", "is_primary_mobile_no": "is_primary_phone"}.get(primary_field)
+        if other_flag and _field_value(row, other_flag):
+            # Keep the shared number for the other role and give this role a new row.
+            _set_field(row, primary_field, 0)
+        else:
+            _set_field(row, value_field, value)
+            return True
     contact.append(table, {value_field: value, primary_field: 1})
     return True
 

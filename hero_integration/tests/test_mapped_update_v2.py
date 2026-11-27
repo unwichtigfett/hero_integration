@@ -48,6 +48,14 @@ def mapping(area='HeroTasks'):
 
 
 class TestMappedUpdateSchema(TestCase):
+
+    def test_observed_recurring_event_is_refused_before_baseline_projection(self):
+        ctx = SimpleNamespace(content={"area": "HeroCalendarEvents"}, raw_schema={})
+        row = {"id": 7, "readonly": False, "is_recurring": True}
+        with patch.object(update, "_schema", side_effect=AssertionError("unexpected projection")):
+            with self.assertRaisesRegex(update.MappedUpdateError, "recurring HERO events"):
+                update._prepare(ctx, None, preview_only=True, observed_record=row)
+
     def test_project_update_guard_requires_the_bound_uid_and_explicit_active_lifecycle(self):
         ctx = SimpleNamespace(content={"area": "HeroProjectMatches"}, hero_id="42")
         for row in ({"id": 42}, {"id": 42, "is_deleted": True}, {"id": 42, "is_deleted": 0},
@@ -244,8 +252,13 @@ class TestMappedUpdatePrepare(TestCase):
         ctx=self.context('HeroTasks');ctx.snapshot=SimpleNamespace(schema_fingerprint='schema');ctx.hero_id='7'
         prepared=SimpleNamespace(fingerprint='x',changes=[{'label':'name'}],conflicts=[],variables={'input':{'id':7}},mutation_id=7)
         transport=Mock();transport.execute_once.return_value={'update_task':{'id':7}}
-        audit=SimpleNamespace(correlation_id='audit')
-        with patch('hero_integration.services.mapping_contract_v1.materialize_saved_mutation', side_effect=lambda snapshot, document, variables, **kwargs: SimpleNamespace(document=document, variables=variables)), patch.object(api,'_assert_mutation_execution_released'),patch.object(update,'_load_context',return_value=ctx), \
+        audit=SimpleNamespace(name='audit', correlation_id='audit', delivery_stage='Prepared', save=Mock())
+        proof={'object':'scope', 'snapshot':'schema','mapping_revision':1,'mutation_id':'7'}
+        with patch.object(update, '_intent', return_value=proof), patch.object(update,'_check_authority'), \
+             patch('hero_integration.services.sync_engine.FrappeSyncLedger'), \
+             patch.object(update.frappe,'get_doc',return_value=audit), patch.object(update.frappe, '_', side_effect=lambda text:text), \
+             patch.object(update.frappe,'throw',side_effect=lambda text: (_ for _ in ()).throw(ValueError(text))), \
+             patch('hero_integration.services.mapping_contract_v1.materialize_saved_mutation', side_effect=lambda snapshot, document, variables, **kwargs: SimpleNamespace(document=document, variables=variables)), patch.object(api,'_assert_mutation_execution_released'),patch.object(update,'_load_context',return_value=ctx), \
              patch('hero_integration.services.writeback_source.validate_source'),patch.object(update,'_prepare',return_value=prepared), \
              patch.object(api,'_reserve_mutation',return_value=audit),patch.object(api,'_finalize_mutation') as finalize, \
              patch.object(update,'_read_record',side_effect=ValueError('unverified')),patch.object(update.frappe,'db',Mock()), \
@@ -481,3 +494,24 @@ class TestMappedUpdateContractScope(TestCase):
                 update._load_context('map', 'Task', 'task')
             plan.assert_not_called();remote.assert_not_called()
             self.assertNotIn(('HERO GraphQL Service', 'must-not-load'), [call.args for call in get_doc.call_args_list])
+
+
+class TestTaskReadbackBaseline(TestCase):
+    def test_whole_task_acknowledgement_requires_the_preimage_and_only_verified_changes(self):
+        from hero_integration.services.migration import _digest as migration_digest
+
+        before = {"id": 31, "comment": "initial", "title": "other", "modified": "first"}
+        digest = migration_digest(dict(before, _hero_source_instance="fixture"))
+        link = SimpleNamespace(source_payload_hash=digest, observed_source_hash=digest)
+        ctx = SimpleNamespace(link=link, proof=SimpleNamespace(source_instance="fixture"),
+                              content={"assignments": [{"id": "description", "read_path": "comment"}]})
+        prepared = SimpleNamespace(remote=before, changes=[{"id": "description"}])
+        after = dict(before, comment="confirmed", modified="second")
+        self.assertEqual(update._confirmed_task_payload(ctx, prepared, after),
+                         migration_digest(dict(after, _hero_source_instance="fixture")))
+        for different in (dict(after, title="concurrent"), {"id":31, "comment":"confirmed"}, dict(after, extra=None)):
+            self.assertIsNone(update._confirmed_task_payload(ctx, prepared, different))
+        link.observed_source_hash = "other-observation"
+        self.assertIsNone(update._confirmed_task_payload(ctx, prepared, after))
+        link.observed_source_hash = link.source_payload_hash = "different-preimage"
+        self.assertIsNone(update._confirmed_task_payload(ctx, prepared, after))
